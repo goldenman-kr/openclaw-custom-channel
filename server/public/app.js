@@ -510,7 +510,8 @@ function extractMediaRefs(text) {
     visibleLines.push(line);
   }
 
-  return { text: visibleLines.join('\n').trim() || text, refs };
+  const visibleText = visibleLines.join('\n').trim();
+  return { text: visibleText || (refs.length > 0 ? '' : text), refs };
 }
 
 function isImageRef(ref) {

@@ -33,6 +33,7 @@ const stateDir = resolve(process.cwd(), "state");
 const historyMediaDir = resolve(process.env.HISTORY_MEDIA_DIR ?? join(stateDir, "history-media"));
 const mediaRoots = [
   resolve(process.env.MEDIA_ROOT ?? "/home/orbsian/.openclaw/workspace"),
+  resolve(process.env.OPENCLAW_MEDIA_DIR ?? "/home/orbsian/.openclaw/media"),
   resolve(process.env.UPLOAD_DIR ?? join(process.cwd(), "state", "uploads")),
   stateDir,
 ];
