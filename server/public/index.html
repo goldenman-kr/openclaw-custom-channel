@@ -50,6 +50,17 @@
 
       <section id="messages" class="messages" aria-live="polite"></section>
 
+      <div id="mediaViewer" class="media-viewer hidden" role="dialog" aria-modal="true" aria-label="이미지 보기">
+        <div class="media-viewer-backdrop" data-media-viewer-close></div>
+        <div class="media-viewer-panel">
+          <div class="media-viewer-actions">
+            <a id="mediaViewerDownload" class="ghost-button media-viewer-download" href="#" download>다운로드</a>
+            <button id="mediaViewerClose" class="ghost-button" type="button" aria-label="닫기">닫기</button>
+          </div>
+          <img id="mediaViewerImage" alt="첨부 이미지" />
+        </div>
+      </div>
+
       <form id="messageForm" class="composer">
         <input id="attachmentInput" class="hidden-file-input" type="file" multiple accept="image/jpeg,image/png,image/webp,application/pdf,text/plain,application/zip" />
         <div id="attachmentTray" class="attachment-tray hidden" aria-live="polite"></div>
