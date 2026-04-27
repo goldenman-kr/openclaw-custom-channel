@@ -1,5 +1,6 @@
 :root {
   color-scheme: light dark;
+  --shell-x: 14px;
   --bg: #0f172a;
   --panel: #111827;
   --panel-soft: #1f2937;
@@ -34,7 +35,7 @@ button, input, textarea, select { font: inherit; }
   margin: 0 auto;
   display: flex;
   flex-direction: column;
-  padding: max(14px, env(safe-area-inset-top)) 14px max(14px, env(safe-area-inset-bottom));
+  padding: 0 var(--shell-x) max(14px, env(safe-area-inset-bottom));
   overflow: hidden;
 }
 
@@ -47,8 +48,9 @@ button, input, textarea, select { font: inherit; }
   justify-content: space-between;
   align-items: center;
   gap: 12px;
-  padding: 6px 4px 14px;
-  background: linear-gradient(180deg, var(--bg) 78%, transparent);
+  margin: 0 calc(var(--shell-x) * -1) 12px;
+  padding: max(14px, env(safe-area-inset-top)) var(--shell-x) 14px;
+  background: linear-gradient(180deg, var(--bg) 82%, rgba(15, 23, 42, 0));
 }
 
 .eyebrow {
