@@ -51,6 +51,11 @@ function isMobileLikeInput() {
   return window.matchMedia('(pointer: coarse)').matches || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
 }
 
+function isLocationAwareSlashCommand(message) {
+  const command = message.trimStart().split(/\s+/, 1)[0].toLowerCase();
+  return ['/weather', '/route'].includes(command);
+}
+
 function loadSettings() {
   const fallback = {
     apiUrl: window.location.origin,
@@ -1127,7 +1132,7 @@ async function handleSubmit(event) {
   try {
     const outgoingMessage = rawMessage || '첨부 파일을 확인하고 사용자의 의도에 맞게 분석해주세요.';
     const isSlashCommand = rawMessage.startsWith('/');
-    const shouldIncludeLocation = elements.includeLocationInput.checked || (!isSlashCommand && rawMessage.includes('여기'));
+    const shouldIncludeLocation = elements.includeLocationInput.checked || isLocationAwareSlashCommand(rawMessage) || (!isSlashCommand && rawMessage.includes('여기'));
     let metadata;
     if (shouldIncludeLocation) {
       setStatus('현재 위치를 가져오는 중입니다...');
