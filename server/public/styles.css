@@ -322,6 +322,7 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); }
   bottom: 0;
   display: grid;
   gap: 6px;
+  min-width: 0;
   padding-top: 8px;
   background: linear-gradient(180deg, transparent, var(--bg) 22%);
 }
@@ -376,12 +377,16 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); }
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
 }
 
 .attachment-chip {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  min-width: 0;
   max-width: 100%;
   padding: 6px 8px;
   border: 1px solid var(--border);
@@ -392,6 +397,8 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); }
 }
 
 .attachment-chip span {
+  min-width: 0;
+  max-width: min(72vw, 520px);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -448,6 +455,7 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); }
 }
 
 .attachment-remove {
+  flex: 0 0 auto;
   width: 22px;
   height: 22px;
   padding: 0;
@@ -472,17 +480,20 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); }
 
 .input-row {
   display: grid;
-  grid-template-columns: auto 1fr auto;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   gap: 8px;
   align-items: stretch;
+  min-width: 0;
 }
 
 .input-row textarea {
+  min-width: 0;
   min-height: 74px;
 }
 
 .input-row #sendButton {
   align-self: stretch;
+  min-width: max-content;
   min-height: 74px;
   padding-inline: 15px;
 }
