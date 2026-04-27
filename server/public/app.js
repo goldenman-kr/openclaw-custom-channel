@@ -954,14 +954,39 @@ async function fetchJob(jobId) {
   return body;
 }
 
+async function isJobResolvedInHistory(jobId) {
+  try {
+    const history = await fetchHistory();
+    return history.some((item) => item.id === jobId && !isPendingHistoryMessage(item));
+  } catch {
+    return false;
+  }
+}
+
 async function waitForJob(jobId, onTick = () => {}) {
+  let transientFailures = 0;
+  let lastError = null;
   for (let attempt = 0; attempt < 240; attempt += 1) {
     await delay(attempt < 10 ? 1000 : 3000);
-    const job = await fetchJob(jobId);
-    onTick(job);
-    if (job.state === 'completed' || job.state === 'failed') {
-      clearPendingJob();
-      return job;
+    try {
+      const job = await fetchJob(jobId);
+      transientFailures = 0;
+      lastError = null;
+      onTick(job);
+      if (job.state === 'completed' || job.state === 'failed') {
+        clearPendingJob();
+        return job;
+      }
+    } catch (error) {
+      lastError = error;
+      transientFailures += 1;
+      if (await isJobResolvedInHistory(jobId)) {
+        clearPendingJob();
+        return { id: jobId, state: 'completed' };
+      }
+      if (transientFailures >= 5) {
+        throw lastError;
+      }
     }
   }
   throw new Error('응답 작업 확인 시간이 초과되었습니다. 잠시 후 대화 기록을 새로고침해주세요.');
@@ -1038,9 +1063,11 @@ async function handleSubmit(event) {
     setStatus('OpenClaw 응답을 기다리는 중입니다...');
 
     const thinkingMessage = startThinkingMessage();
+    let activeJobId = null;
     try {
       const response = await sendMessage(outgoingMessage, attachments, metadata);
       if (response.job_id) {
+        activeJobId = response.job_id;
         savePendingJob({ job_id: response.job_id, startedAt: Date.now() });
         setStatus('서버에서 응답을 처리 중입니다. 앱을 닫아도 작업은 계속됩니다.');
         const job = await waitForJob(response.job_id, () => refreshHistoryIfChanged());
@@ -1060,6 +1087,14 @@ async function handleSubmit(event) {
       setStatus('');
       window.setTimeout(refreshHistoryIfChanged, 800);
     } catch (error) {
+      if (activeJobId && await isJobResolvedInHistory(activeJobId)) {
+        clearPendingJob();
+        thinkingMessage.stop();
+        thinkingMessage.node.remove();
+        setStatus('');
+        notifyReplyReady();
+        return;
+      }
       const errorMessage = error instanceof Error ? error.message : String(error);
       thinkingMessage.stop();
       renderMessageNode(thinkingMessage.node, 'system', errorMessage, { force: true });
