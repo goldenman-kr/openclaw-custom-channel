@@ -28,18 +28,28 @@ npm run dev
 기본 개발 API Key는 `dev-api-key`입니다.
 운영/공유 환경에서는 `BRIDGE_API_KEYS` 환경변수로 쉼표 구분 API Key 목록을 설정합니다.
 
-실제 OpenClaw CLI transport는 `openclaw message send` 형식에 맞춰 아래 환경변수를 사용합니다.
+기본 OpenClaw transport는 `openclaw agent`입니다. 모바일 `device_id`는 브릿지에서 `mobile-<device_id>` 세션으로 매핑되고, 아래 형식으로 OpenClaw Gateway agent turn을 실행합니다.
 
 ```bash
-OPENCLAW_CHANNEL=telegram \
-OPENCLAW_TARGET='<telegram-chat-id-or-username>' \
 npm run dev
 ```
 
-선택적으로 특정 채널 계정 id를 지정할 수 있습니다.
+선택적으로 특정 agent/thinking/timeout을 지정할 수 있습니다.
 
 ```bash
-OPENCLAW_ACCOUNT='<account-id>' npm run dev
+OPENCLAW_AGENT=main \
+OPENCLAW_THINKING=medium \
+OPENCLAW_AGENT_TIMEOUT_SECONDS=600 \
+npm run dev
+```
+
+외부 채널 발송용 `openclaw message send` transport가 필요하면 명시적으로 켭니다.
+
+```bash
+OPENCLAW_TRANSPORT=cli-message \
+OPENCLAW_CHANNEL=telegram \
+OPENCLAW_TARGET='<telegram-chat-id-or-username>' \
+npm run dev
 ```
 
 OpenClaw CLI 없이 모바일/브릿지 연동만 먼저 검증하려면 mock transport로 실행합니다.
@@ -83,6 +93,7 @@ npm test
   - 인증, DTO 검증, 세션 매핑, OpenClawClient 호출
 - `src/openclaw/`
   - `OpenClawClient` 인터페이스
+  - Gateway agent turn 기반 `AgentOpenClawClient`
   - CLI 기반 `CliOpenClawClient`
   - 개발 검증용 `MockOpenClawClient`
 - `src/session/SessionStore.ts`
@@ -90,6 +101,6 @@ npm test
 
 ## 다음 작업 제안
 
-- OpenClaw CLI 실제 옵션 확인 및 CLI 어댑터 보정
+- Agent JSON 응답 구조에 맞춘 reply 추출 정교화
 - 표준 로그 포맷 정리
 
