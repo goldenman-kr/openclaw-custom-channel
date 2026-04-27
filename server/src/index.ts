@@ -16,9 +16,16 @@ const validApiKeys = new Set(
 const openClawClient = createOpenClawClient();
 const sessionStore = new InMemorySessionStore();
 
+const corsHeaders = {
+  "access-control-allow-origin": "*",
+  "access-control-allow-methods": "GET,POST,OPTIONS",
+  "access-control-allow-headers": "authorization,content-type,x-device-id,x-user-id",
+};
+
 function sendJson(response: ServerResponse, statusCode: number, body: unknown): void {
   response.writeHead(statusCode, {
     "content-type": "application/json; charset=utf-8",
+    ...corsHeaders,
   });
   response.end(JSON.stringify(body));
 }
@@ -45,6 +52,12 @@ function invalidJsonResponse(): ErrorResponseDto {
 
 const server = createServer(async (request, response) => {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);
+
+  if (request.method === "OPTIONS") {
+    response.writeHead(204, corsHeaders);
+    response.end();
+    return;
+  }
 
   if (request.method === "GET" && url.pathname === "/health") {
     sendJson(response, 200, {
