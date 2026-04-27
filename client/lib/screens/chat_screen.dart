@@ -1,5 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:flutter/services.dart';
+import 'package:markdown/markdown.dart' as md;
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:url_launcher/url_launcher_string.dart';
 
 import '../engine/attachment_service.dart';
 import '../engine/chat_engine.dart';
@@ -7,14 +11,20 @@ import '../engine/location_service.dart';
 import '../models/api_contract_v1.dart';
 import '../models/slash_command.dart';
 import '../settings/app_settings.dart';
+import '../settings/chat_history_repository.dart';
 
 enum _ChatMessageRole { user, assistant, system }
 
 class _ChatMessage {
-  const _ChatMessage({required this.role, required this.text});
+  const _ChatMessage({
+    required this.role,
+    required this.text,
+    required this.createdAt,
+  });
 
   final _ChatMessageRole role;
   final String text;
+  final DateTime createdAt;
 }
 
 class ChatScreen extends StatefulWidget {
@@ -40,6 +50,7 @@ class _ChatScreenState extends State<ChatScreen> {
   bool _isSending = false;
   bool _sendCurrentLocation = false;
   String _currentInput = '';
+  ChatHistoryRepository? _chatHistoryRepository;
 
   bool get _hasServerSettings =>
       widget.settings.apiUrl.trim().isNotEmpty &&
@@ -56,9 +67,57 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   @override
+  void initState() {
+    super.initState();
+    _loadChatHistory();
+  }
+
+  @override
   void dispose() {
     _messageController.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadChatHistory() async {
+    final preferences = await SharedPreferences.getInstance();
+    final repository = ChatHistoryRepository(preferences);
+    final history = await repository.load();
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _chatHistoryRepository = repository;
+      _messages
+        ..clear()
+        ..addAll(
+          history.map(
+            (item) => _ChatMessage(
+              role: _chatRoleFromHistoryRole(item.role),
+              text: item.text,
+              createdAt: item.createdAt,
+            ),
+          ),
+        );
+    });
+  }
+
+  Future<void> _persistChatHistory() async {
+    final repository = _chatHistoryRepository;
+    if (repository == null) {
+      return;
+    }
+
+    final messages = _messages
+        .map(
+          (item) => ChatHistoryMessage(
+            role: _historyRoleFromChatRole(item.role),
+            text: item.text,
+            createdAt: item.createdAt,
+          ),
+        )
+        .toList(growable: false);
+    await repository.save(messages);
   }
 
   Future<void> _sendMessage() async {
@@ -101,12 +160,14 @@ class _ChatScreenState extends State<ChatScreen> {
           _ChatMessage(
             role: _ChatMessageRole.user,
             text: _formatUserMessage(outgoingMessage, outgoingAttachments),
+            createdAt: DateTime.now(),
           ),
         );
         _messageController.clear();
         _currentInput = '';
         _attachments.clear();
       });
+      _persistChatHistory();
 
       final response = await widget.chatEngine.sendMessage(
         settings: widget.settings,
@@ -120,9 +181,14 @@ class _ChatScreenState extends State<ChatScreen> {
 
       setState(() {
         _messages.add(
-          _ChatMessage(role: _ChatMessageRole.assistant, text: response.reply),
+          _ChatMessage(
+            role: _ChatMessageRole.assistant,
+            text: response.reply,
+            createdAt: DateTime.now(),
+          ),
         );
       });
+      _persistChatHistory();
     } on Object catch (error) {
       if (!mounted) {
         return;
@@ -137,9 +203,14 @@ class _ChatScreenState extends State<ChatScreen> {
       };
       setState(() {
         _messages.add(
-          _ChatMessage(role: _ChatMessageRole.system, text: message),
+          _ChatMessage(
+            role: _ChatMessageRole.system,
+            text: message,
+            createdAt: DateTime.now(),
+          ),
         );
       });
+      _persistChatHistory();
     } finally {
       if (mounted) {
         setState(() {
@@ -248,15 +319,17 @@ class _ChatScreenState extends State<ChatScreen> {
       body: Column(
         children: [
           Expanded(
-            child: _messages.isEmpty
-                ? const Center(child: Text('메시지 목록 영역'))
-                : ListView.builder(
-                    padding: const EdgeInsets.all(12),
-                    itemCount: _messages.length,
-                    itemBuilder: (context, index) {
-                      return _MessageBubble(message: _messages[index]);
-                    },
-                  ),
+            child: SelectionArea(
+              child: _messages.isEmpty
+                  ? const Center(child: Text('메시지 목록 영역'))
+                  : ListView.builder(
+                      padding: const EdgeInsets.all(12),
+                      itemCount: _messages.length,
+                      itemBuilder: (context, index) {
+                        return _MessageBubble(message: _messages[index]);
+                      },
+                    ),
+            ),
           ),
           if (!_hasServerSettings)
             Padding(
@@ -393,6 +466,22 @@ String _formatUserMessage(String message, List<MessageAttachment> attachments) {
   return '$message\n\n첨부: $attachmentNames';
 }
 
+ChatHistoryRole _historyRoleFromChatRole(_ChatMessageRole role) {
+  return switch (role) {
+    _ChatMessageRole.user => ChatHistoryRole.user,
+    _ChatMessageRole.assistant => ChatHistoryRole.assistant,
+    _ChatMessageRole.system => ChatHistoryRole.system,
+  };
+}
+
+_ChatMessageRole _chatRoleFromHistoryRole(ChatHistoryRole role) {
+  return switch (role) {
+    ChatHistoryRole.user => _ChatMessageRole.user,
+    ChatHistoryRole.assistant => _ChatMessageRole.assistant,
+    ChatHistoryRole.system => _ChatMessageRole.system,
+  };
+}
+
 int _totalAttachmentBytes(List<MessageAttachment> attachments) {
   return attachments
       .map((item) => _decodedBase64Length(item.contentBase64))
@@ -458,6 +547,11 @@ class _MessageBubble extends StatelessWidget {
       _ChatMessageRole.assistant => colorScheme.secondaryContainer,
       _ChatMessageRole.system => colorScheme.errorContainer,
     };
+    final timeLabel = switch (message.role) {
+      _ChatMessageRole.user => "입력 ${_formatTime(message.createdAt)}",
+      _ChatMessageRole.assistant => "응답 ${_formatTime(message.createdAt)}",
+      _ChatMessageRole.system => "시스템 ${_formatTime(message.createdAt)}",
+    };
 
     return Align(
       alignment: alignment,
@@ -473,7 +567,18 @@ class _MessageBubble extends StatelessWidget {
               children: [
                 Align(
                   alignment: Alignment.centerLeft,
-                  child: SelectableText(message.text),
+                  child: MarkdownBody(
+                    data: _normalizeMarkdown(message.text),
+                    extensionSet: md.ExtensionSet.gitHubWeb,
+                    softLineBreak: true,
+                    styleSheet: MarkdownStyleSheet.fromTheme(Theme.of(context)),
+                    onTapLink: (text, href, title) {
+                      if (href == null || href.trim().isEmpty) {
+                        return;
+                      }
+                      _openLink(context, _normalizeHref(href));
+                    },
+                  ),
                 ),
                 const SizedBox(height: 4),
                 IconButton(
@@ -487,6 +592,10 @@ class _MessageBubble extends StatelessWidget {
                   },
                   icon: const Icon(Icons.copy, size: 18),
                 ),
+                SelectableText(
+                  timeLabel,
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
               ],
             ),
           ),
@@ -494,4 +603,39 @@ class _MessageBubble extends StatelessWidget {
       ),
     );
   }
+}
+
+String _formatTime(DateTime dateTime) {
+  final hour = dateTime.hour.toString().padLeft(2, "0");
+  final minute = dateTime.minute.toString().padLeft(2, "0");
+  final second = dateTime.second.toString().padLeft(2, "0");
+  return "$hour:$minute:$second";
+}
+
+String _normalizeMarkdown(String input) {
+  return input
+      .replaceAll(r"\*", "*")
+      .replaceAll(r"\_", "_")
+      .replaceAll(r"\`", "`")
+      .trimRight();
+}
+
+Future<void> _openLink(BuildContext context, String href) async {
+  final ok = await launchUrlString(href, webOnlyWindowName: "_blank");
+  if (!ok && context.mounted) {
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text('링크를 열지 못했습니다: $href')));
+  }
+}
+
+String _normalizeHref(String href) {
+  final trimmed = href.trim();
+  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+    return trimmed;
+  }
+  if (trimmed.startsWith('www.')) {
+    return 'https://$trimmed';
+  }
+  return trimmed;
 }
