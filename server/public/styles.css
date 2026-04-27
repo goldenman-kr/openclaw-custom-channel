@@ -231,6 +231,21 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); }
   animation: pendingPulse 1.4s ease-in-out infinite;
 }
 
+.message-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.message-action-button {
+  padding: 7px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(251, 191, 36, 0.38);
+  background: rgba(251, 191, 36, 0.14);
+  color: inherit;
+  font-size: 12px;
+}
+
 @keyframes pendingPulse {
   0%, 100% { opacity: 0.62; }
   50% { opacity: 1; }

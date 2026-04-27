@@ -342,9 +342,11 @@ async function runMessageJob(job: MessageJob, headers: IncomingMessage["headers"
 
   if (result.statusCode >= 200 && result.statusCode < 300 && "reply" in result.body) {
     if (shouldPersistMessage(payload.message)) {
-      await historyStore.append(job.sessionId, [
-        { role: "assistant", text: result.body.reply, savedAt: new Date().toISOString() },
-      ]);
+      await historyStore.replaceById(job.sessionId, job.id, {
+        role: "assistant",
+        text: result.body.reply,
+        savedAt: new Date().toISOString(),
+      });
     }
     updateJob(job, { state: "completed" });
     return;
@@ -352,9 +354,11 @@ async function runMessageJob(job: MessageJob, headers: IncomingMessage["headers"
 
   const errorMessage = "error" in result.body ? result.body.error.message : "OpenClaw request failed.";
   if (shouldPersistMessage(payload.message)) {
-    await historyStore.append(job.sessionId, [
-      { role: "system", text: `전송 실패: ${errorMessage}`, savedAt: new Date().toISOString() },
-    ]);
+    await historyStore.replaceById(job.sessionId, job.id, {
+      role: "system",
+      text: `전송 실패: ${errorMessage}`,
+      savedAt: new Date().toISOString(),
+    });
   }
   updateJob(job, { state: "failed", error: errorMessage });
 }
@@ -543,12 +547,24 @@ const server = createServer(async (request, response) => {
       updatedAt: now,
     };
     jobs.set(job.id, job);
+    if (shouldPersistMessage(payload.message)) {
+      await historyStore.append(sessionId, [
+        {
+          id: job.id,
+          role: "assistant",
+          text: "응답을 처리 중입니다…",
+          savedAt: now,
+        },
+      ]);
+    }
     runMessageJob(job, request.headers, payload).catch(async (error) => {
       const errorMessage = error instanceof Error ? error.message : String(error);
       if (shouldPersistMessage(payload.message)) {
-        await historyStore.append(sessionId, [
-          { role: "system", text: `전송 실패: ${errorMessage}`, savedAt: new Date().toISOString() },
-        ]).catch(() => {});
+        await historyStore.replaceById(sessionId, job.id, {
+          role: "system",
+          text: `전송 실패: ${errorMessage}`,
+          savedAt: new Date().toISOString(),
+        }).catch(() => {});
       }
       updateJob(job, { state: "failed", error: errorMessage });
     });
