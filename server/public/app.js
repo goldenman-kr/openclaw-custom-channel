@@ -1207,7 +1207,9 @@ async function handleSubmit(event) {
     setStatus('');
   } finally {
     setSending(false);
-    elements.messageInput.focus();
+    if (!isMobileLikeInput()) {
+      elements.messageInput.focus();
+    }
   }
 }
 
