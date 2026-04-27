@@ -28,6 +28,20 @@ npm run dev
 기본 개발 API Key는 `dev-api-key`입니다.
 운영/공유 환경에서는 `BRIDGE_API_KEYS` 환경변수로 쉼표 구분 API Key 목록을 설정합니다.
 
+실제 OpenClaw CLI transport는 `openclaw message send` 형식에 맞춰 아래 환경변수를 사용합니다.
+
+```bash
+OPENCLAW_CHANNEL=telegram \
+OPENCLAW_TARGET='<telegram-chat-id-or-username>' \
+npm run dev
+```
+
+선택적으로 특정 채널 계정 id를 지정할 수 있습니다.
+
+```bash
+OPENCLAW_ACCOUNT='<account-id>' npm run dev
+```
+
 OpenClaw CLI 없이 모바일/브릿지 연동만 먼저 검증하려면 mock transport로 실행합니다.
 
 ```bash
