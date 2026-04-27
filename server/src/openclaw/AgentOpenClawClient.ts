@@ -66,6 +66,11 @@ export class AgentOpenClawClient implements OpenClawClient {
 function extractReply(stdout: string): string | null {
   try {
     const parsed = JSON.parse(stdout) as Record<string, unknown>;
+    const nestedText = pickNestedText(parsed);
+    if (nestedText) {
+      return nestedText;
+    }
+
     for (const key of ["reply", "message", "text", "output", "content"]) {
       const value = parsed[key];
       if (typeof value === "string" && value.trim()) {
@@ -77,4 +82,39 @@ function extractReply(stdout: string): string | null {
   }
 
   return null;
+}
+
+function pickNestedText(parsed: Record<string, unknown>): string | null {
+  const result = asRecord(parsed.result);
+  const payloads = asArray(result?.payloads);
+  const firstPayload = asRecord(payloads?.[0]);
+  const payloadText = asString(firstPayload?.text);
+  if (payloadText) {
+    return payloadText;
+  }
+
+  const meta = asRecord(result?.meta);
+  const finalAssistantVisibleText = asString(meta?.finalAssistantVisibleText);
+  if (finalAssistantVisibleText) {
+    return finalAssistantVisibleText;
+  }
+
+  const finalAssistantRawText = asString(meta?.finalAssistantRawText);
+  if (finalAssistantRawText) {
+    return finalAssistantRawText;
+  }
+
+  return null;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : null;
+}
+
+function asArray(value: unknown): unknown[] | null {
+  return Array.isArray(value) ? value : null;
+}
+
+function asString(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
 }
