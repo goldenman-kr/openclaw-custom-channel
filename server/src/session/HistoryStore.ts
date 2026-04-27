@@ -1,0 +1,72 @@
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+
+export type HistoryRole = "user" | "assistant" | "system";
+
+export interface HistoryMessage {
+  role: HistoryRole;
+  text: string;
+  savedAt: string;
+}
+
+export interface HistoryStore {
+  list(sessionId: string): Promise<HistoryMessage[]>;
+  append(sessionId: string, messages: HistoryMessage[]): Promise<void>;
+  clear(sessionId: string): Promise<void>;
+}
+
+const MAX_HISTORY_MESSAGES = 200;
+
+export class FileHistoryStore implements HistoryStore {
+  constructor(private readonly baseDir: string) {}
+
+  async list(sessionId: string): Promise<HistoryMessage[]> {
+    try {
+      const raw = await readFile(this.filePath(sessionId), "utf8");
+      const parsed = JSON.parse(raw) as unknown;
+      if (!Array.isArray(parsed)) {
+        return [];
+      }
+      return parsed.filter(isHistoryMessage).slice(-MAX_HISTORY_MESSAGES);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        return [];
+      }
+      throw error;
+    }
+  }
+
+  async append(sessionId: string, messages: HistoryMessage[]): Promise<void> {
+    const current = await this.list(sessionId);
+    await this.write(sessionId, [...current, ...messages].slice(-MAX_HISTORY_MESSAGES));
+  }
+
+  async clear(sessionId: string): Promise<void> {
+    await this.write(sessionId, []);
+  }
+
+  private async write(sessionId: string, messages: HistoryMessage[]): Promise<void> {
+    await mkdir(this.baseDir, { recursive: true });
+    await writeFile(this.filePath(sessionId), JSON.stringify(messages, null, 2), "utf8");
+  }
+
+  private filePath(sessionId: string): string {
+    return join(this.baseDir, `${sanitizeSessionId(sessionId)}.json`);
+  }
+}
+
+function sanitizeSessionId(sessionId: string): string {
+  return sessionId.replace(/[^a-zA-Z0-9_.-]/g, "_");
+}
+
+function isHistoryMessage(value: unknown): value is HistoryMessage {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+  const candidate = value as Record<string, unknown>;
+  return (
+    ["user", "assistant", "system"].includes(String(candidate.role)) &&
+    typeof candidate.text === "string" &&
+    typeof candidate.savedAt === "string"
+  );
+}

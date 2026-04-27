@@ -1,0 +1,18 @@
+{
+  "name": "OpenClaw Web Channel",
+  "short_name": "OpenClaw",
+  "description": "Location-aware OpenClaw chat channel",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0f172a",
+  "theme_color": "#111827",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

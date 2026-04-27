@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#111827" />
+    <title>OpenClaw Mobile</title>
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">OpenClaw Channel</p>
+          <h1>로디</h1>
+        </div>
+        <button id="settingsButton" class="ghost-button" type="button" aria-label="설정">⚙️</button>
+      </header>
+
+      <section id="settingsPanel" class="settings-panel hidden" aria-label="설정">
+        <label>
+          API URL
+          <input id="apiUrlInput" type="url" placeholder="비워두면 현재 서버 사용" />
+        </label>
+        <label>
+          API Key
+          <input id="apiKeyInput" type="password" placeholder="dev-api-key" />
+        </label>
+        <label>
+          Device ID
+          <input id="deviceIdInput" type="text" placeholder="자동 생성" />
+        </label>
+        <label>
+          Theme
+          <select id="themeModeInput">
+            <option value="system">System</option>
+            <option value="dark">Dark</option>
+            <option value="light">Light</option>
+          </select>
+        </label>
+        <div class="settings-actions">
+          <button id="saveSettingsButton" type="button">저장</button>
+          <button id="healthCheckButton" class="ghost-button" type="button">연결 테스트</button>
+          <button id="clearHistoryButton" class="ghost-button danger-button" type="button">대화 기록 삭제</button>
+        </div>
+      </section>
+
+      <section id="messages" class="messages" aria-live="polite"></section>
+
+      <form id="messageForm" class="composer">
+        <label class="location-toggle">
+          <input id="includeLocationInput" type="checkbox" />
+          <span>현재위치 포함</span>
+        </label>
+        <div class="input-row">
+          <textarea id="messageInput" rows="1" placeholder="메시지를 입력하세요. 예: 여기서 서울역까지"></textarea>
+          <button id="sendButton" type="submit">전송</button>
+        </div>
+        <p id="statusText" class="status-text"></p>
+      </form>
+    </main>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>
