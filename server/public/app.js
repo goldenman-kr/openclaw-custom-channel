@@ -1126,9 +1126,8 @@ async function handleSubmit(event) {
 
   try {
     const outgoingMessage = rawMessage || '첨부 파일을 확인하고 사용자의 의도에 맞게 분석해주세요.';
-    const shouldIncludeLocation = !rawMessage.startsWith('/') && (
-      elements.includeLocationInput.checked || rawMessage.includes('여기')
-    );
+    const isSlashCommand = rawMessage.startsWith('/');
+    const shouldIncludeLocation = elements.includeLocationInput.checked || (!isSlashCommand && rawMessage.includes('여기'));
     let metadata;
     if (shouldIncludeLocation) {
       setStatus('현재 위치를 가져오는 중입니다...');
