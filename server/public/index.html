@@ -42,6 +42,7 @@
         <div class="settings-actions">
           <button id="saveSettingsButton" type="button">저장</button>
           <button id="healthCheckButton" class="ghost-button" type="button">연결 테스트</button>
+          <button id="refreshAppButton" class="ghost-button" type="button">새로고침</button>
           <button id="clearHistoryButton" class="ghost-button danger-button" type="button">대화 기록 삭제</button>
         </div>
       </section>
@@ -49,15 +50,17 @@
       <section id="messages" class="messages" aria-live="polite"></section>
 
       <form id="messageForm" class="composer">
-        <label class="location-toggle">
-          <input id="includeLocationInput" type="checkbox" />
-          <span>현재위치 포함</span>
-        </label>
         <input id="attachmentInput" class="hidden-file-input" type="file" multiple accept="image/jpeg,image/png,image/webp,application/pdf,text/plain,application/zip" />
         <div id="attachmentTray" class="attachment-tray hidden" aria-live="polite"></div>
         <div class="input-row">
-          <button id="attachButton" class="attach-button" type="button" aria-label="파일 첨부">＋</button>
-          <textarea id="messageInput" rows="1" placeholder="메시지를 입력하세요. 예: 여기서 서울역까지"></textarea>
+          <div class="composer-tools" aria-label="입력 도구">
+            <label class="location-toggle" title="현재위치 포함" aria-label="현재위치 포함">
+              <input id="includeLocationInput" type="checkbox" />
+              <span aria-hidden="true">📍</span>
+            </label>
+            <button id="attachButton" class="attach-button" type="button" aria-label="파일 첨부">＋</button>
+          </div>
+          <textarea id="messageInput" rows="2" placeholder="메시지를 입력하세요. 예: 여기서 서울역까지"></textarea>
           <button id="sendButton" type="submit">전송</button>
         </div>
         <p id="statusText" class="status-text"></p>

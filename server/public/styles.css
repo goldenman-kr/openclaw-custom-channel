@@ -247,20 +247,54 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); }
   position: sticky;
   bottom: 0;
   display: grid;
-  gap: 8px;
-  padding-top: 10px;
-  background: linear-gradient(180deg, transparent, var(--bg) 20%);
+  gap: 6px;
+  padding-top: 8px;
+  background: linear-gradient(180deg, transparent, var(--bg) 22%);
+}
+
+.composer-tools {
+  display: grid;
+  grid-template-rows: 1fr 1fr;
+  gap: 6px;
+  align-self: stretch;
 }
 
 .location-toggle {
-  display: flex;
-  align-items: center;
-  grid-template-columns: auto 1fr;
-  gap: 8px;
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  min-width: 40px;
+  min-height: 34px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--panel-soft);
   color: var(--text);
+  cursor: pointer;
+  user-select: none;
 }
 
-.location-toggle input { width: auto; }
+.location-toggle input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.location-toggle span {
+  font-size: 18px;
+  line-height: 1;
+  filter: grayscale(0.25);
+}
+
+.location-toggle:has(input:checked) {
+  border-color: rgba(56, 189, 248, 0.92);
+  background: rgba(14, 165, 233, 0.2);
+  box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.16) inset;
+}
 
 .hidden-file-input { display: none; }
 
@@ -299,22 +333,38 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); }
 }
 
 .attach-button {
-  align-self: end;
-  width: 44px;
-  min-width: 44px;
-  height: 44px;
+  width: 40px;
+  min-width: 40px;
+  min-height: 34px;
+  height: 100%;
   padding: 0;
   border-radius: 14px;
   background: var(--panel-soft);
   color: var(--text);
   border: 1px solid var(--border);
-  font-size: 24px;
+  font-size: 22px;
   line-height: 1;
 }
 
-.input-row { display: grid; grid-template-columns: auto 1fr auto; gap: 8px; align-items: end; }
+.input-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 8px;
+  align-items: stretch;
+}
 
-.status-text { min-height: 18px; margin: 0; color: var(--muted); font-size: 12px; }
+.input-row textarea {
+  min-height: 74px;
+}
+
+.input-row #sendButton {
+  align-self: stretch;
+  min-height: 74px;
+  padding-inline: 15px;
+}
+
+.status-text { margin: 0; color: var(--muted); font-size: 12px; }
+.status-text:empty { display: none; }
 
 html[data-theme="light"] {
   color-scheme: light;
