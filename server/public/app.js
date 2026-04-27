@@ -414,7 +414,8 @@ async function importLegacyHistoryIfNeeded(serverHistory) {
   return legacyHistory;
 }
 
-async function renderHistory() {
+async function renderHistory(options = {}) {
+  const { scrollToLatest = false } = options;
   clearRenderedMessages();
   if (!canUseApi()) {
     appendMessage('system', '설정에서 API Key를 입력하면 대화를 시작할 수 있습니다.', { persist: false });
@@ -432,6 +433,10 @@ async function renderHistory() {
       if (typeof item?.role === 'string' && typeof item?.text === 'string') {
         appendMessage(item.role, item.text, { persist: false, autoScroll: false, mediaRefs: mediaRefsFromHistoryAttachments(item.attachments), pending: isPendingHistoryMessage(item) });
       }
+    }
+    if (scrollToLatest) {
+      scrollToBottom({ force: true });
+      window.setTimeout(() => scrollToBottom({ force: true }), 250);
     }
   } catch (error) {
     appendMessage('system', error instanceof Error ? error.message : String(error), { persist: false });
@@ -1309,7 +1314,7 @@ function acceptSelectedSlashCommand() {
 }
 
 applySettingsToForm();
-renderHistory().then(() => resumePendingJobIfNeeded()).catch(() => {});
+renderHistory({ scrollToLatest: true }).then(() => resumePendingJobIfNeeded()).catch(() => {});
 startHistoryPolling();
 
 elements.settingsButton.addEventListener('click', () => {
