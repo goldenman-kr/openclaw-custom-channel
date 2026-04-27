@@ -1,0 +1,15 @@
+.DS_Store
+
+# Node / TypeScript
+node_modules/
+dist/
+
+# Flutter / Dart
+build/
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+
+# FVM keeps the project Flutter SDK pointer/config here.
+# The selected version is tracked in .fvmrc.
+.fvm/
