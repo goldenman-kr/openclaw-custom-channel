@@ -22,6 +22,7 @@ const elements = {
   saveSettingsButton: document.querySelector('#saveSettingsButton'),
   healthCheckButton: document.querySelector('#healthCheckButton'),
   refreshAppButton: document.querySelector('#refreshAppButton'),
+  clearCacheButton: document.querySelector('#clearCacheButton'),
   notificationButton: document.querySelector('#notificationButton'),
   clearHistoryButton: document.querySelector('#clearHistoryButton'),
   messages: document.querySelector('#messages'),
@@ -1290,6 +1291,28 @@ async function handleSubmit(event) {
   }
 }
 
+async function clearAppCacheAndReload() {
+  setStatus('캐시를 삭제하는 중입니다...');
+  try {
+    if (navigator.serviceWorker?.getRegistrations) {
+      const registrations = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(registrations.map((registration) => registration.unregister()));
+    }
+    if (window.caches?.keys) {
+      const keys = await caches.keys();
+      await Promise.all(keys.map((key) => caches.delete(key)));
+    }
+    if (window.OpenClawAndroid?.clearWebCache) {
+      window.OpenClawAndroid.clearWebCache();
+      window.setTimeout(() => window.location.reload(), 350);
+      return;
+    }
+  } catch (error) {
+    appendMessage('system', `캐시 삭제 실패: ${error instanceof Error ? error.message : String(error)}`, { persist: false });
+  }
+  window.location.reload();
+}
+
 async function healthCheck() {
   settings = readSettingsFromForm();
   try {
@@ -1447,6 +1470,7 @@ elements.clearHistoryButton.addEventListener('click', async () => {
 
 elements.healthCheckButton.addEventListener('click', healthCheck);
 elements.refreshAppButton.addEventListener('click', () => window.location.reload());
+elements.clearCacheButton.addEventListener('click', clearAppCacheAndReload);
 elements.notificationButton.addEventListener('click', enableNotifications);
 elements.mediaViewerDownload.addEventListener('click', downloadCurrentMedia);
 elements.mediaViewerClose.addEventListener('click', closeMediaViewer);

@@ -22,6 +22,7 @@ import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
+import android.webkit.WebStorage;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout;
@@ -174,6 +175,16 @@ public class MainActivity extends Activity {
             } catch (Exception error) {
                 runOnUiThread(() -> Toast.makeText(MainActivity.this, "다운로드 실패: " + error.getMessage(), Toast.LENGTH_LONG).show());
             }
+        }
+
+        @JavascriptInterface
+        public void clearWebCache() {
+            runOnUiThread(() -> {
+                webView.clearCache(true);
+                webView.clearFormData();
+                WebStorage.getInstance().deleteAllData();
+                Toast.makeText(MainActivity.this, "캐시를 삭제했습니다.", Toast.LENGTH_SHORT).show();
+            });
         }
     }
 
