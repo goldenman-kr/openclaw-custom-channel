@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../engine/attachment_service.dart';
 import '../engine/chat_engine.dart';
@@ -466,7 +467,28 @@ class _MessageBubble extends StatelessWidget {
           color: backgroundColor,
           child: Padding(
             padding: const EdgeInsets.all(12),
-            child: Text(message.text),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: SelectableText(message.text),
+                ),
+                const SizedBox(height: 4),
+                IconButton(
+                  tooltip: '메시지 복사',
+                  visualDensity: VisualDensity.compact,
+                  onPressed: () {
+                    Clipboard.setData(ClipboardData(text: message.text));
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('메시지를 복사했습니다.')),
+                    );
+                  },
+                  icon: const Icon(Icons.copy, size: 18),
+                ),
+              ],
+            ),
           ),
         ),
       ),
