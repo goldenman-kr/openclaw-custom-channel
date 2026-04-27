@@ -1,16 +1,32 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 export type HistoryRole = "user" | "assistant" | "system";
+
+export interface HistoryAttachment {
+  name: string;
+  mime_type: string;
+  type: "image" | "file";
+  path: string;
+  size?: number;
+}
 
 export interface HistoryMessage {
   role: HistoryRole;
   text: string;
   savedAt: string;
+  attachments?: HistoryAttachment[];
+}
+
+export interface HistoryMeta {
+  version: string;
+  size: number;
+  mtimeMs: number;
 }
 
 export interface HistoryStore {
   list(sessionId: string): Promise<HistoryMessage[]>;
+  meta(sessionId: string): Promise<HistoryMeta>;
   append(sessionId: string, messages: HistoryMessage[]): Promise<void>;
   clear(sessionId: string): Promise<void>;
 }
@@ -31,6 +47,22 @@ export class FileHistoryStore implements HistoryStore {
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") {
         return [];
+      }
+      throw error;
+    }
+  }
+
+  async meta(sessionId: string): Promise<HistoryMeta> {
+    try {
+      const fileStat = await stat(this.filePath(sessionId));
+      return {
+        version: `${Math.round(fileStat.mtimeMs)}:${fileStat.size}`,
+        size: fileStat.size,
+        mtimeMs: fileStat.mtimeMs,
+      };
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        return { version: "0:0", size: 0, mtimeMs: 0 };
       }
       throw error;
     }
@@ -67,6 +99,7 @@ function isHistoryMessage(value: unknown): value is HistoryMessage {
   return (
     ["user", "assistant", "system"].includes(String(candidate.role)) &&
     typeof candidate.text === "string" &&
-    typeof candidate.savedAt === "string"
+    typeof candidate.savedAt === "string" &&
+    (candidate.attachments === undefined || Array.isArray(candidate.attachments))
   );
 }

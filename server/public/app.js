@@ -1,5 +1,15 @@
 const STORAGE_KEY = 'openclaw-web-channel-settings-v1';
 const LEGACY_HISTORY_KEY_PREFIX = 'openclaw-web-channel-history-v1';
+const MAX_ATTACHMENTS = 3;
+const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
+const ALLOWED_ATTACHMENT_TYPES = new Set([
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+  'application/pdf',
+  'text/plain',
+  'application/zip',
+]);
 
 const elements = {
   settingsButton: document.querySelector('#settingsButton'),
@@ -15,6 +25,9 @@ const elements = {
   messageForm: document.querySelector('#messageForm'),
   messageInput: document.querySelector('#messageInput'),
   includeLocationInput: document.querySelector('#includeLocationInput'),
+  attachmentInput: document.querySelector('#attachmentInput'),
+  attachButton: document.querySelector('#attachButton'),
+  attachmentTray: document.querySelector('#attachmentTray'),
   sendButton: document.querySelector('#sendButton'),
   statusText: document.querySelector('#statusText'),
 };
@@ -24,6 +37,10 @@ function randomDeviceId() {
     return crypto.randomUUID();
   }
   return `web-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function isMobileLikeInput() {
+  return window.matchMedia('(pointer: coarse)').matches || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
 }
 
 function loadSettings() {
@@ -48,6 +65,9 @@ function saveSettings(settings) {
 let settings = loadSettings();
 let historyPollTimer = null;
 let isSendingMessage = false;
+let selectedAttachments = [];
+let lastHistoryVersion = null;
+const mediaUrlCache = new Map();
 
 function applyTheme(themeMode) {
   document.documentElement.dataset.theme = ['light', 'dark'].includes(themeMode) ? themeMode : 'system';
@@ -59,6 +79,94 @@ function applySettingsToForm() {
   elements.deviceIdInput.value = settings.deviceId || randomDeviceId();
   elements.themeModeInput.value = settings.themeMode || 'dark';
   applyTheme(settings.themeMode || 'dark');
+}
+
+function formatBytes(bytes) {
+  if (!Number.isFinite(bytes)) {
+    return '';
+  }
+  if (bytes >= 1024 * 1024) {
+    return `${(bytes / 1024 / 1024).toFixed(1)}MB`;
+  }
+  if (bytes >= 1024) {
+    return `${Math.round(bytes / 1024)}KB`;
+  }
+  return `${bytes}B`;
+}
+
+function renderAttachmentTray() {
+  elements.attachmentTray.replaceChildren();
+  elements.attachmentTray.classList.toggle('hidden', selectedAttachments.length === 0);
+
+  for (const [index, file] of selectedAttachments.entries()) {
+    const item = document.createElement('div');
+    item.className = 'attachment-chip';
+    const label = document.createElement('span');
+    label.textContent = `${file.name} · ${formatBytes(file.size)}`;
+    const removeButton = document.createElement('button');
+    removeButton.type = 'button';
+    removeButton.className = 'attachment-remove';
+    removeButton.setAttribute('aria-label', `${file.name} 첨부 제거`);
+    removeButton.textContent = '×';
+    removeButton.addEventListener('click', () => {
+      selectedAttachments = selectedAttachments.filter((_, itemIndex) => itemIndex !== index);
+      renderAttachmentTray();
+    });
+    item.append(label, removeButton);
+    elements.attachmentTray.append(item);
+  }
+}
+
+function validateAttachmentFile(file) {
+  if (!ALLOWED_ATTACHMENT_TYPES.has(file.type)) {
+    throw new Error(`${file.name}: 지원하지 않는 파일 형식입니다.`);
+  }
+  if (file.size > MAX_ATTACHMENT_BYTES) {
+    throw new Error(`${file.name}: 파일은 ${formatBytes(MAX_ATTACHMENT_BYTES)} 이하만 첨부할 수 있습니다.`);
+  }
+}
+
+function addAttachmentFiles(files) {
+  const nextFiles = [...selectedAttachments];
+  for (const file of files) {
+    validateAttachmentFile(file);
+    if (nextFiles.length >= MAX_ATTACHMENTS) {
+      throw new Error(`첨부 파일은 최대 ${MAX_ATTACHMENTS}개까지 가능합니다.`);
+    }
+    nextFiles.push(file);
+  }
+  selectedAttachments = nextFiles;
+  renderAttachmentTray();
+}
+
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.addEventListener('load', () => {
+      const result = String(reader.result || '');
+      resolve(result.includes(',') ? result.split(',').pop() : result);
+    });
+    reader.addEventListener('error', () => reject(reader.error || new Error('파일을 읽지 못했습니다.')));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function buildAttachmentsPayload() {
+  return Promise.all(
+    selectedAttachments.map(async (file) => ({
+      type: file.type.startsWith('image/') ? 'image' : 'file',
+      name: file.name,
+      mime_type: file.type,
+      content_base64: await fileToBase64(file),
+    })),
+  );
+}
+
+function attachmentSummary(files = selectedAttachments) {
+  if (files.length === 0) {
+    return '';
+  }
+  return `\n\n첨부 파일:\n${files.map((file) => `- ${file.name} (${file.type || 'unknown'}, ${formatBytes(file.size)})`).join('\n')}`;
 }
 
 function normalizeApiKey(value) {
@@ -86,10 +194,20 @@ function setStatus(message) {
   elements.statusText.textContent = message || '';
 }
 
-function scrollToBottom() {
+function isNearBottom(threshold = 120) {
+  return elements.messages.scrollHeight - elements.messages.scrollTop - elements.messages.clientHeight < threshold;
+}
+
+function scrollToBottom(options = {}) {
+  const { force = false, autoScroll = true } = options;
+  if (!autoScroll) {
+    return;
+  }
+  if (!force && !isNearBottom()) {
+    return;
+  }
   requestAnimationFrame(() => {
     elements.messages.scrollTop = elements.messages.scrollHeight;
-    window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
   });
 }
 
@@ -139,7 +257,18 @@ async function fetchHistory() {
     throw new Error(`대화 기록을 불러오지 못했습니다: HTTP ${response.status}`);
   }
   const body = await response.json();
+  lastHistoryVersion = body.version || lastHistoryVersion;
   return Array.isArray(body.messages) ? body.messages : [];
+}
+
+async function fetchHistoryMeta() {
+  const response = await fetch(`${settings.apiUrl}/v1/history?meta=1`, {
+    headers: await historyHeaders(),
+  });
+  if (!response.ok) {
+    throw new Error(`대화 기록 상태를 확인하지 못했습니다: HTTP ${response.status}`);
+  }
+  return response.json();
 }
 
 async function clearServerHistory() {
@@ -149,6 +278,20 @@ async function clearServerHistory() {
   });
   if (!response.ok) {
     throw new Error(`대화 기록을 삭제하지 못했습니다: HTTP ${response.status}`);
+  }
+}
+
+async function appendServerHistoryMessages(messages) {
+  const response = await fetch(`${settings.apiUrl}/v1/history`, {
+    method: 'POST',
+    headers: {
+      ...(await historyHeaders()),
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({ messages }),
+  });
+  if (!response.ok) {
+    throw new Error(`대화 기록을 저장하지 못했습니다: HTTP ${response.status}`);
   }
 }
 
@@ -204,7 +347,7 @@ async function renderHistory() {
 
     for (const item of history) {
       if (typeof item?.role === 'string' && typeof item?.text === 'string') {
-        appendMessage(item.role, item.text, { persist: false });
+        appendMessage(item.role, item.text, { persist: false, autoScroll: false, mediaRefs: mediaRefsFromHistoryAttachments(item.attachments) });
       }
     }
   } catch (error) {
@@ -294,9 +437,15 @@ function appendMarkdown(parent, text) {
   }
 }
 
+function messageTextWithoutAttachmentPreview(node) {
+  const clone = node.cloneNode(true);
+  clone.querySelectorAll('.message-attachments').forEach((preview) => preview.remove());
+  return clone.textContent || '';
+}
+
 function currentRenderedHistorySignature() {
   return [...elements.messages.querySelectorAll('.message')]
-    .map((node) => `${[...node.classList].find((className) => className !== 'message') || ''}:${node.textContent || ''}`)
+    .map((node) => `${[...node.classList].find((className) => className !== 'message') || ''}:${messageTextWithoutAttachmentPreview(node)}`)
     .join('\n---\n');
 }
 
@@ -310,13 +459,30 @@ async function refreshHistoryIfChanged() {
   }
 
   try {
+    const meta = await fetchHistoryMeta();
+    if (lastHistoryVersion && meta.version === lastHistoryVersion) {
+      return;
+    }
+
     const history = await fetchHistory();
+    lastHistoryVersion = meta.version || lastHistoryVersion;
     if (history.length > 0 && historySignature(history) !== currentRenderedHistorySignature()) {
+      const shouldFollow = isNearBottom();
+      const previousScrollTop = elements.messages.scrollTop;
       clearRenderedMessages();
       for (const item of history) {
         if (typeof item?.role === 'string' && typeof item?.text === 'string') {
-          appendMessage(item.role, item.text, { persist: false });
+          appendMessage(item.role, item.text, {
+            persist: false,
+            autoScroll: false,
+            mediaRefs: mediaRefsFromHistoryAttachments(item.attachments),
+          });
         }
+      }
+      if (shouldFollow) {
+        scrollToBottom({ force: true });
+      } else {
+        elements.messages.scrollTop = previousScrollTop;
       }
     }
   } catch {
@@ -331,18 +497,195 @@ function startHistoryPolling() {
   historyPollTimer = window.setInterval(refreshHistoryIfChanged, 5000);
 }
 
-function renderMessageNode(node, role, text) {
+function extractMediaRefs(text) {
+  const refs = [];
+  const visibleLines = [];
+
+  for (const line of text.split('\n')) {
+    const mediaMatch = line.match(/^\s*MEDIA:\s*(.+?)\s*$/);
+    if (mediaMatch) {
+      refs.push(mediaMatch[1]);
+      continue;
+    }
+    visibleLines.push(line);
+  }
+
+  return { text: visibleLines.join('\n').trim() || text, refs };
+}
+
+function isImageRef(ref) {
+  return /\.(png|jpe?g|webp|gif|svg)(\?.*)?$/i.test(ref);
+}
+
+function mediaRefsFromHistoryAttachments(attachments) {
+  if (!Array.isArray(attachments)) {
+    return [];
+  }
+  return attachments
+    .filter((attachment) => typeof attachment?.path === 'string')
+    .map((attachment) => ({
+      path: attachment.path,
+      name: attachment.name,
+      type: attachment.mime_type,
+      size: attachment.size,
+    }));
+}
+
+async function getAuthorizedMediaUrl(ref) {
+  if (mediaUrlCache.has(ref)) {
+    return mediaUrlCache.get(ref);
+  }
+
+  const response = await fetch(`${settings.apiUrl}/v1/media?path=${encodeURIComponent(ref)}`, {
+    headers: await historyHeaders(),
+    cache: 'force-cache',
+  });
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  mediaUrlCache.set(ref, url);
+  return url;
+}
+
+function appendMediaRef(parent, rawRef) {
+  const refInfo = typeof rawRef === 'string' ? { path: rawRef } : rawRef;
+  const ref = refInfo?.path;
+  if (!ref) {
+    return;
+  }
+
+  const preview = parent.querySelector('.message-attachments') || document.createElement('div');
+  preview.className = 'message-attachments';
+  if (!preview.parentElement) {
+    parent.append(preview);
+  }
+
+  const item = document.createElement('div');
+  item.className = 'message-attachment';
+  const isRemote = /^https?:\/\//i.test(ref);
+  const fileName = refInfo.name || ref.split('/').pop() || ref;
+  const captionText = refInfo.size ? `${fileName} · ${formatBytes(refInfo.size)}` : fileName;
+  let image = null;
+
+  if (isImageRef(ref) || refInfo.type?.startsWith('image/')) {
+    image = document.createElement('img');
+    image.alt = fileName;
+    image.loading = 'lazy';
+    item.classList.add('image-attachment');
+    item.append(image);
+  } else {
+    const icon = document.createElement('span');
+    icon.className = 'attachment-file-icon';
+    icon.textContent = '📎';
+    item.append(icon);
+  }
+
+  const caption = document.createElement('a');
+  caption.className = 'attachment-caption';
+  caption.textContent = captionText;
+  caption.target = '_blank';
+  caption.rel = 'noopener noreferrer';
+  caption.download = fileName;
+  item.append(caption);
+  preview.append(item);
+
+  if (isRemote) {
+    caption.href = ref;
+    if (image) {
+      image.src = ref;
+    }
+    return;
+  }
+
+  if (mediaUrlCache.has(ref)) {
+    const cachedUrl = mediaUrlCache.get(ref);
+    caption.href = cachedUrl;
+    caption.textContent = captionText;
+    if (image) {
+      image.src = cachedUrl;
+    }
+    return;
+  }
+
+  caption.removeAttribute('href');
+  caption.textContent = `${captionText} · 불러오는 중`;
+  getAuthorizedMediaUrl(ref)
+    .then((url) => {
+      caption.href = url;
+      caption.textContent = captionText;
+      if (image) {
+        image.src = url;
+      }
+    })
+    .catch(() => {
+      caption.textContent = `${captionText} · 불러오기 실패`;
+      if (image) {
+        item.replaceChildren();
+        const icon = document.createElement('span');
+        icon.className = 'attachment-file-icon';
+        icon.textContent = '⚠️';
+        item.append(icon, caption);
+      }
+    });
+}
+
+function renderMessageNode(node, role, text, options = {}) {
+  const media = extractMediaRefs(text);
   node.className = `message ${role}`;
   node.replaceChildren();
-  appendMarkdown(node, text);
-  scrollToBottom();
+  appendMarkdown(node, media.text);
+  for (const ref of [...media.refs, ...(node._mediaRefs || [])]) {
+    appendMediaRef(node, ref);
+  }
+  scrollToBottom(options);
+}
+
+function appendAttachmentPreview(parent, files) {
+  if (!files?.length) {
+    return;
+  }
+
+  const preview = document.createElement('div');
+  preview.className = 'message-attachments';
+
+  for (const file of files) {
+    const item = document.createElement('div');
+    item.className = 'message-attachment';
+
+    if (file.type?.startsWith('image/')) {
+      const image = document.createElement('img');
+      image.src = URL.createObjectURL(file);
+      image.alt = file.name;
+      image.loading = 'lazy';
+      image.addEventListener('load', () => URL.revokeObjectURL(image.src), { once: true });
+      item.classList.add('image-attachment');
+      item.append(image);
+    } else {
+      const icon = document.createElement('span');
+      icon.className = 'attachment-file-icon';
+      icon.textContent = '📎';
+      item.append(icon);
+    }
+
+    const caption = document.createElement('span');
+    caption.className = 'attachment-caption';
+    caption.textContent = `${file.name} · ${formatBytes(file.size)}`;
+    item.append(caption);
+    preview.append(item);
+  }
+
+  parent.append(preview);
 }
 
 function appendMessage(role, text, options = {}) {
   const node = document.createElement('article');
-  renderMessageNode(node, role, text);
+  node._mediaRefs = options.mediaRefs || [];
+  renderMessageNode(node, role, text, options);
+  appendAttachmentPreview(node, options.files || []);
   elements.messages.append(node);
-  scrollToBottom();
+  scrollToBottom(options);
   if (options.persist !== false) {
     persistMessage(role, text);
   }
@@ -355,7 +698,7 @@ function startThinkingMessage() {
   node.classList.add('pending');
   const timer = window.setInterval(() => {
     const elapsedSeconds = Math.max(1, Math.round((Date.now() - startedAt) / 1000));
-    renderMessageNode(node, 'assistant pending', `응답을 작성 중입니다… (${elapsedSeconds}초)`);
+    renderMessageNode(node, 'assistant pending', `응답을 작성 중입니다… (${elapsedSeconds}초)`, { force: true });
   }, 1000);
   return {
     node,
@@ -428,7 +771,7 @@ async function getCurrentLocationText() {
   }
 }
 
-async function sendMessage(message) {
+async function sendMessage(message, attachments = []) {
   assertValidApiKey(settings.apiKey);
   const response = await fetch(`${settings.apiUrl}/v1/message`, {
     method: 'POST',
@@ -437,7 +780,7 @@ async function sendMessage(message) {
       authorization: `Bearer ${settings.apiKey}`,
       'x-user-id': await sharedUserId(),
     },
-    body: JSON.stringify({ message }),
+    body: JSON.stringify({ message, attachments }),
   });
 
   const body = await response.json().catch(() => null);
@@ -451,7 +794,7 @@ async function sendMessage(message) {
 async function handleSubmit(event) {
   event.preventDefault();
   const rawMessage = elements.messageInput.value.trim();
-  if (!rawMessage) {
+  if (!rawMessage && selectedAttachments.length === 0) {
     return;
   }
 
@@ -465,27 +808,39 @@ async function handleSubmit(event) {
   setStatus('메시지를 준비하는 중입니다...');
 
   try {
-    let outgoingMessage = rawMessage;
+    let outgoingMessage = rawMessage || '첨부 파일을 확인하고 사용자의 의도에 맞게 분석해주세요.';
     if (elements.includeLocationInput.checked && !rawMessage.startsWith('/')) {
       setStatus('현재 위치를 가져오는 중입니다...');
       outgoingMessage = `${rawMessage}\n\n${await getCurrentLocationText()}`;
     }
 
-    appendMessage('user', outgoingMessage);
+    setStatus('첨부 파일을 준비하는 중입니다...');
+    const attachedFiles = [...selectedAttachments];
+    const attachments = await buildAttachmentsPayload();
+    const displayedUserText = `${outgoingMessage}${attachmentSummary(attachedFiles)}`;
+    appendMessage('user', displayedUserText, { files: attachedFiles });
     elements.messageInput.value = '';
+    selectedAttachments = [];
+    renderAttachmentTray();
+    elements.attachmentInput.value = '';
     elements.includeLocationInput.checked = false;
     setStatus('OpenClaw 응답을 기다리는 중입니다...');
 
     const thinkingMessage = startThinkingMessage();
     try {
-      const response = await sendMessage(outgoingMessage);
+      const response = await sendMessage(outgoingMessage, attachments);
       thinkingMessage.stop();
-      renderMessageNode(thinkingMessage.node, 'assistant', response.reply || '(빈 응답)');
+      renderMessageNode(thinkingMessage.node, 'assistant', response.reply || '(빈 응답)', { force: true });
       setStatus('');
       window.setTimeout(refreshHistoryIfChanged, 800);
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
       thinkingMessage.stop();
-      renderMessageNode(thinkingMessage.node, 'system', error instanceof Error ? error.message : String(error));
+      renderMessageNode(thinkingMessage.node, 'system', errorMessage, { force: true });
+      await appendServerHistoryMessages([
+        { role: 'user', text: displayedUserText, savedAt: new Date().toISOString() },
+        { role: 'system', text: `전송 실패: ${errorMessage}`, savedAt: new Date().toISOString() },
+      ]).catch(() => {});
       setStatus('');
     }
   } catch (error) {
@@ -552,6 +907,7 @@ elements.saveSettingsButton.addEventListener('click', () => {
   saveSettings(settings);
   applySettingsToForm();
   if (previousApiKey !== settings.apiKey) {
+    lastHistoryVersion = null;
     renderHistory();
   }
   appendMessage('system', '설정을 저장했습니다.');
@@ -576,9 +932,22 @@ elements.clearHistoryButton.addEventListener('click', async () => {
 });
 
 elements.healthCheckButton.addEventListener('click', healthCheck);
+elements.attachButton.addEventListener('click', () => elements.attachmentInput.click());
+elements.attachmentInput.addEventListener('change', () => {
+  try {
+    addAttachmentFiles(elements.attachmentInput.files || []);
+  } catch (error) {
+    appendMessage('system', error instanceof Error ? error.message : String(error), { persist: false });
+  } finally {
+    elements.attachmentInput.value = '';
+  }
+});
 elements.messageForm.addEventListener('submit', handleSubmit);
 elements.messageInput.addEventListener('input', autoResizeTextarea);
 elements.messageInput.addEventListener('keydown', (event) => {
+  if (isMobileLikeInput()) {
+    return;
+  }
   if (event.key === 'Enter' && !event.shiftKey) {
     event.preventDefault();
     elements.messageForm.requestSubmit();

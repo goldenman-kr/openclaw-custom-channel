@@ -1,4 +1,7 @@
+import { randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
+import { mkdir, writeFile } from "node:fs/promises";
+import { basename, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import type { MessageAttachment } from "../contracts/apiContractV1.js";
 import type { OpenClawClient } from "./OpenClawClient.js";
@@ -9,18 +12,20 @@ export class AgentOpenClawClient implements OpenClawClient {
   constructor(
     private readonly command = process.env.OPENCLAW_BIN ?? "openclaw",
     private readonly timeoutMs = Number(process.env.OPENCLAW_TIMEOUT_MS ?? 600_000),
+    private readonly uploadDir = resolve(process.env.UPLOAD_DIR ?? join(process.cwd(), "state", "uploads")),
   ) {}
 
   async sendMessage(input: Parameters<OpenClawClient["sendMessage"]>[0]) {
+    const savedAttachments = await this.saveAttachments(input.sessionId, input.attachments ?? []);
+    const message = this.buildMessage(input.message, savedAttachments);
     const args = [
       "agent",
       "--session-id",
       input.sessionId,
       "--message",
-      this.buildMessage(input.message, input.attachments ?? []),
+      message,
       "--json",
     ];
-
     if (process.env.OPENCLAW_AGENT) {
       args.push("--agent", process.env.OPENCLAW_AGENT);
     }
@@ -44,23 +49,49 @@ export class AgentOpenClawClient implements OpenClawClient {
       raw: {
         stdout: result.stdout,
         stderr: result.stderr,
-        args: args.map((arg) => (arg === input.message ? "<message>" : arg)),
+        args: args.map((arg) => (arg === message ? "<message>" : arg)),
         sessionId: input.sessionId,
       },
     };
   }
 
-  private buildMessage(message: string, attachments: MessageAttachment[]): string {
+  private async saveAttachments(sessionId: string, attachments: MessageAttachment[]): Promise<SavedAttachment[]> {
+    if (attachments.length === 0) {
+      return [];
+    }
+
+    const safeSessionId = sessionId.replace(/[^a-zA-Z0-9_.-]/g, "_");
+    const targetDir = join(this.uploadDir, safeSessionId, randomUUID());
+    await mkdir(targetDir, { recursive: true });
+
+    return Promise.all(
+      attachments.map(async (attachment, index) => {
+        const safeName = basename(attachment.name).replace(/[^a-zA-Z0-9가-힣._ -]/g, "_") || `attachment-${index + 1}`;
+        const filePath = join(targetDir, `${index + 1}-${safeName}`);
+        await writeFile(filePath, Buffer.from(attachment.content_base64, "base64"));
+        return { ...attachment, filePath };
+      }),
+    );
+  }
+
+  private buildMessage(message: string, attachments: SavedAttachment[]): string {
     if (attachments.length === 0) {
       return message;
     }
 
     const attachmentSummary = attachments
-      .map((attachment) => `- ${attachment.name} (${attachment.mime_type}, ${attachment.type})`)
+      .map(
+        (attachment) =>
+          `- ${attachment.name} (${attachment.mime_type}, ${attachment.type})\n  저장 경로: ${attachment.filePath}`,
+      )
       .join("\n");
 
-    return `${message}\n\n첨부 파일:\n${attachmentSummary}`;
+    return `${message}\n\n첨부 파일이 서버에 저장되어 있습니다. 필요한 경우 도구로 아래 경로의 파일을 직접 읽거나 분석하세요.\n${attachmentSummary}`;
   }
+}
+
+interface SavedAttachment extends MessageAttachment {
+  filePath: string;
 }
 
 function extractReply(stdout: string): string | null {
