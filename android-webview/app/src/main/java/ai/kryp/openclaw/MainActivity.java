@@ -2,12 +2,20 @@ package ai.kryp.openclaw;
 
 import android.Manifest;
 import android.app.Activity;
+import android.content.ContentValues;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Environment;
+import android.provider.MediaStore;
+import android.util.Base64;
 import android.view.ViewGroup;
+import android.widget.Toast;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.OutputStream;
 import android.webkit.GeolocationPermissions;
 import android.webkit.JavascriptInterface;
 import android.webkit.ValueCallback;
@@ -155,6 +163,62 @@ public class MainActivity extends Activity {
         public void setCanRefresh(boolean canRefresh) {
             runOnUiThread(() -> swipeRefreshLayout.setEnabled(canRefresh));
         }
+
+        @JavascriptInterface
+        public void downloadBlob(String fileName, String mimeType, String base64Data) {
+            try {
+                byte[] bytes = Base64.decode(base64Data, Base64.DEFAULT);
+                String safeName = safeFileName(fileName);
+                saveToDownloads(safeName, mimeType, bytes);
+                runOnUiThread(() -> Toast.makeText(MainActivity.this, "다운로드 완료: " + safeName, Toast.LENGTH_SHORT).show());
+            } catch (Exception error) {
+                runOnUiThread(() -> Toast.makeText(MainActivity.this, "다운로드 실패: " + error.getMessage(), Toast.LENGTH_LONG).show());
+            }
+        }
+    }
+
+    private String safeFileName(String fileName) {
+        String fallback = "openclaw-image.png";
+        if (fileName == null || fileName.trim().isEmpty()) {
+            return fallback;
+        }
+        String safe = fileName.replaceAll("[\\\\/:*?\"<>|]", "_").trim();
+        return safe.isEmpty() ? fallback : safe;
+    }
+
+    private void saveToDownloads(String fileName, String mimeType, byte[] bytes) throws Exception {
+        String type = (mimeType == null || mimeType.isEmpty()) ? "application/octet-stream" : mimeType;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            ContentValues values = new ContentValues();
+            values.put(MediaStore.MediaColumns.DISPLAY_NAME, fileName);
+            values.put(MediaStore.MediaColumns.MIME_TYPE, type);
+            values.put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/OpenClaw");
+            values.put(MediaStore.MediaColumns.IS_PENDING, 1);
+            Uri uri = getContentResolver().insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values);
+            if (uri == null) {
+                throw new IllegalStateException("다운로드 항목을 만들 수 없습니다.");
+            }
+            try (OutputStream output = getContentResolver().openOutputStream(uri)) {
+                if (output == null) {
+                    throw new IllegalStateException("다운로드 파일을 열 수 없습니다.");
+                }
+                output.write(bytes);
+            }
+            values.clear();
+            values.put(MediaStore.MediaColumns.IS_PENDING, 0);
+            getContentResolver().update(uri, values, null, null);
+            return;
+        }
+
+        File directory = new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "OpenClaw");
+        if (!directory.exists() && !directory.mkdirs()) {
+            throw new IllegalStateException("다운로드 폴더를 만들 수 없습니다.");
+        }
+        File file = new File(directory, fileName);
+        try (OutputStream output = new FileOutputStream(file)) {
+            output.write(bytes);
+        }
+        sendBroadcast(new Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE, Uri.fromFile(file)));
     }
 
     @Override

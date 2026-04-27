@@ -76,6 +76,8 @@ let historyPollTimer = null;
 let isSendingMessage = false;
 let selectedAttachments = [];
 let lastHistoryVersion = null;
+let mediaViewerCurrentUrl = '';
+let mediaViewerCurrentName = 'openclaw-image.png';
 const mediaUrlCache = new Map();
 const slashCommands = [
   { command: '/status', title: '상태 확인', description: '현재 세션/모델/토큰/설정 상태를 확인합니다.' },
@@ -604,11 +606,13 @@ function isImageRef(ref) {
   return /\.(png|jpe?g|webp|gif|svg)(\?.*)?$/i.test(ref);
 }
 
-function openMediaViewer(url, fileName = 'image') {
+function openMediaViewer(url, fileName = 'openclaw-image.png') {
+  mediaViewerCurrentUrl = url;
+  mediaViewerCurrentName = fileName || 'openclaw-image.png';
   elements.mediaViewerImage.src = url;
-  elements.mediaViewerImage.alt = fileName;
+  elements.mediaViewerImage.alt = mediaViewerCurrentName;
   elements.mediaViewerDownload.href = url;
-  elements.mediaViewerDownload.download = fileName;
+  elements.mediaViewerDownload.download = mediaViewerCurrentName;
   elements.mediaViewer.classList.remove('hidden');
 }
 
@@ -616,6 +620,41 @@ function closeMediaViewer() {
   elements.mediaViewer.classList.add('hidden');
   elements.mediaViewerImage.removeAttribute('src');
   elements.mediaViewerDownload.removeAttribute('href');
+  mediaViewerCurrentUrl = '';
+}
+
+function blobToBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || '').split(',')[1] || '');
+    reader.onerror = () => reject(reader.error || new Error('파일을 읽지 못했습니다.'));
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function downloadCurrentMedia(event) {
+  if (!mediaViewerCurrentUrl) {
+    return;
+  }
+  if (!window.OpenClawAndroid?.downloadBlob) {
+    return;
+  }
+  event.preventDefault();
+  const originalText = elements.mediaViewerDownload.textContent;
+  elements.mediaViewerDownload.textContent = '저장 중…';
+  try {
+    const response = await fetch(mediaViewerCurrentUrl);
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    const blob = await response.blob();
+    const base64 = await blobToBase64(blob);
+    window.OpenClawAndroid.downloadBlob(mediaViewerCurrentName, blob.type || 'application/octet-stream', base64);
+  } catch (error) {
+    appendMessage('system', `다운로드 실패: ${error instanceof Error ? error.message : String(error)}`, { persist: false });
+  } finally {
+    elements.mediaViewerDownload.textContent = originalText;
+  }
 }
 
 function mediaRefsFromHistoryAttachments(attachments) {
@@ -1316,6 +1355,7 @@ elements.clearHistoryButton.addEventListener('click', async () => {
 elements.healthCheckButton.addEventListener('click', healthCheck);
 elements.refreshAppButton.addEventListener('click', () => window.location.reload());
 elements.notificationButton.addEventListener('click', enableNotifications);
+elements.mediaViewerDownload.addEventListener('click', downloadCurrentMedia);
 elements.mediaViewerClose.addEventListener('click', closeMediaViewer);
 elements.mediaViewer.addEventListener('click', (event) => {
   if (event.target?.hasAttribute?.('data-media-viewer-close')) {
