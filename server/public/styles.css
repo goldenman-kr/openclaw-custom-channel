@@ -191,6 +191,16 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); }
   border-bottom-left-radius: 6px;
 }
 
+.message.pending {
+  color: var(--muted);
+  animation: pendingPulse 1.4s ease-in-out infinite;
+}
+
+@keyframes pendingPulse {
+  0%, 100% { opacity: 0.62; }
+  50% { opacity: 1; }
+}
+
 .message.system {
   align-self: center;
   max-width: 96%;

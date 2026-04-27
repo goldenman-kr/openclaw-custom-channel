@@ -47,6 +47,7 @@ function saveSettings(settings) {
 
 let settings = loadSettings();
 let historyPollTimer = null;
+let isSendingMessage = false;
 
 function applyTheme(themeMode) {
   document.documentElement.dataset.theme = ['light', 'dark'].includes(themeMode) ? themeMode : 'system';
@@ -60,9 +61,22 @@ function applySettingsToForm() {
   applyTheme(settings.themeMode || 'dark');
 }
 
+function normalizeApiKey(value) {
+  return value.trim().replace(/[\s\u200B-\u200D\uFEFF]/g, '');
+}
+
+function assertValidApiKey(apiKey) {
+  if (!apiKey) {
+    throw new Error('API Key를 입력해주세요.');
+  }
+  if (!/^[A-Za-z0-9._~+-]+$/.test(apiKey)) {
+    throw new Error('API Key에 사용할 수 없는 문자가 포함되어 있습니다. 키만 다시 복사해서 붙여넣어 주세요.');
+  }
+}
+
 function readSettingsFromForm() {
   const apiUrl = elements.apiUrlInput.value.trim().replace(/\/+$/, '') || window.location.origin;
-  const apiKey = elements.apiKeyInput.value.trim();
+  const apiKey = normalizeApiKey(elements.apiKeyInput.value);
   const deviceId = elements.deviceIdInput.value.trim() || randomDeviceId();
   const themeMode = elements.themeModeInput.value || 'dark';
   return { apiUrl, apiKey, deviceId, themeMode };
@@ -106,6 +120,7 @@ function clearRenderedMessages() {
 }
 
 async function historyHeaders() {
+  assertValidApiKey(settings.apiKey);
   return {
     authorization: `Bearer ${settings.apiKey}`,
     'x-user-id': await sharedUserId(),
@@ -290,7 +305,7 @@ function historySignature(history) {
 }
 
 async function refreshHistoryIfChanged() {
-  if (!canUseApi() || document.hidden) {
+  if (!canUseApi() || document.hidden || isSendingMessage) {
     return;
   }
 
@@ -316,10 +331,16 @@ function startHistoryPolling() {
   historyPollTimer = window.setInterval(refreshHistoryIfChanged, 5000);
 }
 
+function renderMessageNode(node, role, text) {
+  node.className = `message ${role}`;
+  node.replaceChildren();
+  appendMarkdown(node, text);
+  scrollToBottom();
+}
+
 function appendMessage(role, text, options = {}) {
   const node = document.createElement('article');
-  node.className = `message ${role}`;
-  appendMarkdown(node, text);
+  renderMessageNode(node, role, text);
   elements.messages.append(node);
   scrollToBottom();
   if (options.persist !== false) {
@@ -328,7 +349,25 @@ function appendMessage(role, text, options = {}) {
   return node;
 }
 
+function startThinkingMessage() {
+  const startedAt = Date.now();
+  const node = appendMessage('assistant', '응답을 작성 중입니다…', { persist: false });
+  node.classList.add('pending');
+  const timer = window.setInterval(() => {
+    const elapsedSeconds = Math.max(1, Math.round((Date.now() - startedAt) / 1000));
+    renderMessageNode(node, 'assistant pending', `응답을 작성 중입니다… (${elapsedSeconds}초)`);
+  }, 1000);
+  return {
+    node,
+    stop() {
+      window.clearInterval(timer);
+      node.classList.remove('pending');
+    },
+  };
+}
+
 function setSending(isSending) {
+  isSendingMessage = isSending;
   elements.sendButton.disabled = isSending;
   elements.messageInput.disabled = isSending;
   elements.includeLocationInput.disabled = isSending;
@@ -390,6 +429,7 @@ async function getCurrentLocationText() {
 }
 
 async function sendMessage(message) {
+  assertValidApiKey(settings.apiKey);
   const response = await fetch(`${settings.apiUrl}/v1/message`, {
     method: 'POST',
     headers: {
@@ -436,9 +476,18 @@ async function handleSubmit(event) {
     elements.includeLocationInput.checked = false;
     setStatus('OpenClaw 응답을 기다리는 중입니다...');
 
-    const response = await sendMessage(outgoingMessage);
-    appendMessage('assistant', response.reply || '(빈 응답)');
-    setStatus('');
+    const thinkingMessage = startThinkingMessage();
+    try {
+      const response = await sendMessage(outgoingMessage);
+      thinkingMessage.stop();
+      renderMessageNode(thinkingMessage.node, 'assistant', response.reply || '(빈 응답)');
+      setStatus('');
+      window.setTimeout(refreshHistoryIfChanged, 800);
+    } catch (error) {
+      thinkingMessage.stop();
+      renderMessageNode(thinkingMessage.node, 'system', error instanceof Error ? error.message : String(error));
+      setStatus('');
+    }
   } catch (error) {
     appendMessage('system', error instanceof Error ? error.message : String(error));
     setStatus('');
@@ -451,6 +500,7 @@ async function handleSubmit(event) {
 async function healthCheck() {
   settings = readSettingsFromForm();
   try {
+    assertValidApiKey(settings.apiKey);
     const healthResponse = await fetch(`${settings.apiUrl}/health`);
     if (!healthResponse.ok) {
       throw new Error(`서버 상태 확인 실패: HTTP ${healthResponse.status}`);
@@ -491,8 +541,14 @@ elements.settingsButton.addEventListener('click', () => {
 });
 
 elements.saveSettingsButton.addEventListener('click', () => {
-  settings = readSettingsFromForm();
   const previousApiKey = settings.apiKey;
+  settings = readSettingsFromForm();
+  try {
+    assertValidApiKey(settings.apiKey);
+  } catch (error) {
+    appendMessage('system', error instanceof Error ? error.message : String(error), { persist: false });
+    return;
+  }
   saveSettings(settings);
   applySettingsToForm();
   if (previousApiKey !== settings.apiKey) {
