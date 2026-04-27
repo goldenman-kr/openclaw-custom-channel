@@ -1140,10 +1140,13 @@ async function handleSubmit(event) {
       }
       const errorMessage = error instanceof Error ? error.message : String(error);
       thinkingMessage.stop();
+      if (activeJobId) {
+        thinkingMessage.node.remove();
+        setStatus('응답 상태 확인이 일시적으로 끊겼습니다. 대화 기록을 새로고침하면 이어서 확인합니다.');
+        window.setTimeout(refreshHistoryIfChanged, 800);
+        return;
+      }
       renderMessageNode(thinkingMessage.node, 'system', errorMessage, { force: true });
-      await appendServerHistoryMessages([
-        { role: 'system', text: `전송 상태 확인 실패: ${errorMessage}`, savedAt: new Date().toISOString() },
-      ]).catch(() => {});
       setStatus('');
     }
   } catch (error) {
