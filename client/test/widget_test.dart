@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:openclaw_custom_channel_client/main.dart';
 import 'package:openclaw_custom_channel_client/settings/app_settings.dart';
 import 'package:openclaw_custom_channel_client/settings/settings_repository.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class FakeSettingsRepository implements SettingsRepository {
   AppSettings savedSettings = AppSettings.empty;
@@ -18,6 +19,7 @@ class FakeSettingsRepository implements SettingsRepository {
 
 void main() {
   testWidgets('renders chat shell', (tester) async {
+    SharedPreferences.setMockInitialValues({});
     await tester.pumpWidget(
       OpenClawClientApp(settingsRepository: FakeSettingsRepository()),
     );
