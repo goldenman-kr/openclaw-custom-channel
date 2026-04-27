@@ -19,6 +19,8 @@ const elements = {
   apiKeyInput: document.querySelector('#apiKeyInput'),
   deviceIdInput: document.querySelector('#deviceIdInput'),
   themeModeInput: document.querySelector('#themeModeInput'),
+  fontSizeInput: document.querySelector('#fontSizeInput'),
+  fontSizeValue: document.querySelector('#fontSizeValue'),
   saveSettingsButton: document.querySelector('#saveSettingsButton'),
   healthCheckButton: document.querySelector('#healthCheckButton'),
   refreshAppButton: document.querySelector('#refreshAppButton'),
@@ -67,6 +69,7 @@ function loadSettings() {
     apiKey: '',
     deviceId: randomDeviceId(),
     themeMode: 'dark',
+    fontSize: 16,
     notificationsEnabled: false,
   };
 
@@ -107,6 +110,27 @@ function applyTheme(themeMode) {
   document.documentElement.dataset.theme = ['light', 'dark'].includes(themeMode) ? themeMode : 'system';
 }
 
+function normalizeFontSize(value) {
+  const size = Number(value);
+  if (!Number.isFinite(size)) {
+    return 16;
+  }
+  return Math.min(20, Math.max(12, Math.round(size)));
+}
+
+function applyDisplaySettings() {
+  const fontSize = normalizeFontSize(settings.fontSize);
+  settings.fontSize = fontSize;
+  document.documentElement.style.setProperty('--app-font-size', `${fontSize}px`);
+  if (elements.fontSizeInput) {
+    elements.fontSizeInput.value = String(fontSize);
+  }
+  if (elements.fontSizeValue) {
+    elements.fontSizeValue.value = `${fontSize}px`;
+    elements.fontSizeValue.textContent = `${fontSize}px`;
+  }
+}
+
 function applySettingsToForm() {
   elements.apiUrlInput.value = settings.apiUrl || window.location.origin;
   elements.apiKeyInput.value = settings.apiKey || '';
@@ -114,6 +138,7 @@ function applySettingsToForm() {
   elements.themeModeInput.value = settings.themeMode || 'dark';
   updateNotificationButton();
   applyTheme(settings.themeMode || 'dark');
+  applyDisplaySettings();
 }
 
 function formatBytes(bytes) {
@@ -281,7 +306,8 @@ function readSettingsFromForm() {
   const apiKey = normalizeApiKey(elements.apiKeyInput.value);
   const deviceId = elements.deviceIdInput.value.trim() || randomDeviceId();
   const themeMode = elements.themeModeInput.value || 'dark';
-  return { apiUrl, apiKey, deviceId, themeMode };
+  const fontSize = normalizeFontSize(elements.fontSizeInput.value);
+  return { ...settings, apiUrl, apiKey, deviceId, themeMode, fontSize };
 }
 
 function setStatus(message) {
@@ -1453,6 +1479,12 @@ elements.saveSettingsButton.addEventListener('click', () => {
 
 elements.themeModeInput.addEventListener('change', () => {
   applyTheme(elements.themeModeInput.value);
+});
+
+elements.fontSizeInput.addEventListener('input', () => {
+  settings = { ...settings, fontSize: normalizeFontSize(elements.fontSizeInput.value) };
+  applyDisplaySettings();
+  saveSettings(settings);
 });
 
 elements.clearHistoryButton.addEventListener('click', async () => {
