@@ -22,6 +22,7 @@ const elements = {
   saveSettingsButton: document.querySelector('#saveSettingsButton'),
   healthCheckButton: document.querySelector('#healthCheckButton'),
   refreshAppButton: document.querySelector('#refreshAppButton'),
+  notificationButton: document.querySelector('#notificationButton'),
   clearHistoryButton: document.querySelector('#clearHistoryButton'),
   messages: document.querySelector('#messages'),
   messageForm: document.querySelector('#messageForm'),
@@ -52,6 +53,7 @@ function loadSettings() {
     apiKey: '',
     deviceId: randomDeviceId(),
     themeMode: 'dark',
+    notificationsEnabled: false,
   };
 
   try {
@@ -93,6 +95,7 @@ function applySettingsToForm() {
   elements.apiKeyInput.value = settings.apiKey || '';
   elements.deviceIdInput.value = settings.deviceId || randomDeviceId();
   elements.themeModeInput.value = settings.themeMode || 'dark';
+  updateNotificationButton();
   applyTheme(settings.themeMode || 'dark');
 }
 
@@ -107,6 +110,65 @@ function formatBytes(bytes) {
     return `${Math.round(bytes / 1024)}KB`;
   }
   return `${bytes}B`;
+}
+
+function notificationsSupported() {
+  return 'Notification' in window;
+}
+
+function updateNotificationButton() {
+  if (!elements.notificationButton) {
+    return;
+  }
+  if (!notificationsSupported()) {
+    elements.notificationButton.textContent = '알림 미지원';
+    elements.notificationButton.disabled = true;
+    return;
+  }
+  if (Notification.permission === 'granted' && settings.notificationsEnabled) {
+    elements.notificationButton.textContent = '알림 켜짐';
+    return;
+  }
+  if (Notification.permission === 'denied') {
+    elements.notificationButton.textContent = '알림 차단됨';
+    return;
+  }
+  elements.notificationButton.textContent = '알림 허용';
+}
+
+async function enableNotifications() {
+  if (!notificationsSupported()) {
+    appendMessage('system', '이 환경은 브라우저 알림을 지원하지 않습니다.', { persist: false });
+    return;
+  }
+  const permission = await Notification.requestPermission();
+  settings.notificationsEnabled = permission === 'granted';
+  saveSettings(settings);
+  updateNotificationButton();
+  appendMessage('system', permission === 'granted' ? '응답 도착 알림을 켰습니다.' : '알림 권한이 허용되지 않았습니다.', { persist: false });
+}
+
+function notifyReplyReady(title = 'OpenClaw 응답 도착', body = '새 답변이 도착했습니다.') {
+  if (!settings.notificationsEnabled || !notificationsSupported() || Notification.permission !== 'granted') {
+    return;
+  }
+  if (!document.hidden && document.hasFocus()) {
+    return;
+  }
+  try {
+    const notification = new Notification(title, {
+      body,
+      tag: 'openclaw-reply-ready',
+      renotify: true,
+      silent: false,
+    });
+    notification.onclick = () => {
+      window.focus();
+      notification.close();
+    };
+  } catch {
+    // Some WebView builds expose Notification but do not allow constructing it.
+  }
 }
 
 function renderAttachmentTray() {
@@ -879,9 +941,11 @@ async function resumePendingJobIfNeeded() {
     thinkingMessage.stop();
     if (job.state === 'failed') {
       renderMessageNode(thinkingMessage.node, 'system', job.error || '응답 작업이 실패했습니다.', { force: true });
+      notifyReplyReady('OpenClaw 응답 실패', job.error || '응답 작업이 실패했습니다.');
     } else {
       thinkingMessage.node.remove();
       await renderHistory();
+      notifyReplyReady();
     }
   } catch (error) {
     thinkingMessage.stop();
@@ -940,9 +1004,11 @@ async function handleSubmit(event) {
         thinkingMessage.stop();
         if (job.state === 'failed') {
           renderMessageNode(thinkingMessage.node, 'system', job.error || '응답 작업이 실패했습니다.', { force: true });
+          notifyReplyReady('OpenClaw 응답 실패', job.error || '응답 작업이 실패했습니다.');
         } else {
           thinkingMessage.node.remove();
           await refreshHistoryIfChanged();
+          notifyReplyReady();
         }
       } else {
         thinkingMessage.stop();
@@ -1125,6 +1191,7 @@ elements.clearHistoryButton.addEventListener('click', async () => {
 
 elements.healthCheckButton.addEventListener('click', healthCheck);
 elements.refreshAppButton.addEventListener('click', () => window.location.reload());
+elements.notificationButton.addEventListener('click', enableNotifications);
 elements.attachButton.addEventListener('click', () => elements.attachmentInput.click());
 elements.attachmentInput.addEventListener('change', () => {
   try {
