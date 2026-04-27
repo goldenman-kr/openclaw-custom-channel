@@ -1,4 +1,5 @@
 const STORAGE_KEY = 'openclaw-web-channel-settings-v1';
+const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
 const LEGACY_HISTORY_KEY_PREFIX = 'openclaw-web-channel-history-v1';
 const MAX_ATTACHMENTS = 3;
 const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
@@ -29,6 +30,7 @@ const elements = {
   attachmentInput: document.querySelector('#attachmentInput'),
   attachButton: document.querySelector('#attachButton'),
   attachmentTray: document.querySelector('#attachmentTray'),
+  slashCommandPalette: document.querySelector('#slashCommandPalette'),
   sendButton: document.querySelector('#sendButton'),
   statusText: document.querySelector('#statusText'),
 };
@@ -69,6 +71,18 @@ let isSendingMessage = false;
 let selectedAttachments = [];
 let lastHistoryVersion = null;
 const mediaUrlCache = new Map();
+const slashCommands = [
+  { command: '/status', title: '상태 확인', description: '현재 세션/모델/토큰/설정 상태를 확인합니다.' },
+  { command: '/model ', title: '모델 변경', description: '모델을 지정합니다. 예: /model gpt-5.5' },
+  { command: '/models', title: '모델 목록', description: '사용 가능한 모델 목록을 봅니다.' },
+  { command: '/new', title: '새 대화', description: '새 세션/대화 흐름을 시작합니다.' },
+  { command: '/reset', title: '대화 초기화', description: '현재 대화 맥락을 초기화합니다.' },
+  { command: '/reasoning', title: '추론 표시 전환', description: 'reasoning 설정을 켜거나 끕니다.' },
+  { command: '/help', title: '도움말', description: 'OpenClaw 명령 도움말을 표시합니다.' },
+  { command: '/memory', title: '메모리', description: '메모리 관련 명령을 확인하거나 실행합니다.' },
+  { command: '/tasks', title: '작업 목록', description: 'TaskFlow/작업 상태를 확인합니다.' },
+];
+let selectedSlashCommandIndex = 0;
 
 function applyTheme(themeMode) {
   document.documentElement.dataset.theme = ['light', 'dark'].includes(themeMode) ? themeMode : 'system';
@@ -694,13 +708,14 @@ function appendMessage(role, text, options = {}) {
   return node;
 }
 
-function startThinkingMessage() {
-  const startedAt = Date.now();
-  const node = appendMessage('assistant', '응답을 작성 중입니다…', { persist: false });
+function startThinkingMessage(options = {}) {
+  const startedAt = options.startedAt || Date.now();
+  const label = options.label || '응답을 작성 중입니다…';
+  const node = appendMessage('assistant', `${label} (${Math.max(1, Math.round((Date.now() - startedAt) / 1000))}초)`, { persist: false, force: true });
   node.classList.add('pending');
   const timer = window.setInterval(() => {
     const elapsedSeconds = Math.max(1, Math.round((Date.now() - startedAt) / 1000));
-    renderMessageNode(node, 'assistant pending', `응답을 작성 중입니다… (${elapsedSeconds}초)`, { force: true });
+    renderMessageNode(node, 'assistant pending', `${label} (${elapsedSeconds}초)`, { force: true });
   }, 1000);
   return {
     node,
@@ -736,9 +751,14 @@ function locationErrorMessage(error) {
   return rawMessage || '현재 위치를 가져오지 못했습니다.';
 }
 
-function formatLocationText(position) {
+function locationMetadata(position) {
   const { latitude, longitude, accuracy } = position.coords;
-  return `현재위치: ${latitude.toFixed(6)}, ${longitude.toFixed(6)} (정확도 약 ${Math.round(accuracy)}m)`;
+  return {
+    latitude,
+    longitude,
+    accuracy,
+    captured_at: new Date(position.timestamp || Date.now()).toISOString(),
+  };
 }
 
 function getCurrentPosition(options) {
@@ -747,7 +767,7 @@ function getCurrentPosition(options) {
   });
 }
 
-async function getCurrentLocationText() {
+async function getCurrentLocationMetadata() {
   if (!navigator.geolocation) {
     throw new Error('이 브라우저는 현재 위치 기능을 지원하지 않습니다.');
   }
@@ -758,7 +778,7 @@ async function getCurrentLocationText() {
       timeout: 7000,
       maximumAge: 5 * 60 * 1000,
     });
-    return formatLocationText(position);
+    return locationMetadata(position);
   } catch (firstError) {
     try {
       const position = await getCurrentPosition({
@@ -766,14 +786,18 @@ async function getCurrentLocationText() {
         timeout: 20000,
         maximumAge: 0,
       });
-      return formatLocationText(position);
+      return locationMetadata(position);
     } catch (secondError) {
       throw new Error(locationErrorMessage(secondError || firstError));
     }
   }
 }
 
-async function sendMessage(message, attachments = []) {
+function delay(ms) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+async function sendMessage(message, attachments = [], metadata = undefined) {
   assertValidApiKey(settings.apiKey);
   const response = await fetch(`${settings.apiUrl}/v1/message`, {
     method: 'POST',
@@ -782,7 +806,7 @@ async function sendMessage(message, attachments = []) {
       authorization: `Bearer ${settings.apiKey}`,
       'x-user-id': await sharedUserId(),
     },
-    body: JSON.stringify({ message, attachments }),
+    body: JSON.stringify({ message, attachments, ...(metadata ? { metadata } : {}) }),
   });
 
   const body = await response.json().catch(() => null);
@@ -791,6 +815,80 @@ async function sendMessage(message, attachments = []) {
     throw new Error(detail);
   }
   return body;
+}
+
+function pendingJobStorageKey() {
+  return `${PENDING_JOB_KEY}:${settings.apiUrl}:${settings.apiKey || 'anonymous'}`;
+}
+
+function savePendingJob(job) {
+  localStorage.setItem(pendingJobStorageKey(), JSON.stringify(job));
+}
+
+function loadPendingJob() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(pendingJobStorageKey()) || 'null');
+    return parsed?.job_id ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function clearPendingJob() {
+  localStorage.removeItem(pendingJobStorageKey());
+}
+
+async function fetchJob(jobId) {
+  const response = await fetch(`${settings.apiUrl}/v1/jobs/${encodeURIComponent(jobId)}`, {
+    headers: await historyHeaders(),
+  });
+  const body = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error(body?.error?.message || `Job HTTP ${response.status}`);
+  }
+  return body;
+}
+
+async function waitForJob(jobId, onTick = () => {}) {
+  for (let attempt = 0; attempt < 240; attempt += 1) {
+    await delay(attempt < 10 ? 1000 : 3000);
+    const job = await fetchJob(jobId);
+    onTick(job);
+    if (job.state === 'completed' || job.state === 'failed') {
+      clearPendingJob();
+      return job;
+    }
+  }
+  throw new Error('응답 작업 확인 시간이 초과되었습니다. 잠시 후 대화 기록을 새로고침해주세요.');
+}
+
+async function resumePendingJobIfNeeded() {
+  const pendingJob = loadPendingJob();
+  if (!pendingJob || !canUseApi()) {
+    return;
+  }
+
+  setStatus('이전 응답 작업을 확인하는 중입니다...');
+  const thinkingMessage = startThinkingMessage({
+    startedAt: pendingJob.startedAt,
+    label: '서버에서 응답을 처리 중입니다…',
+  });
+
+  try {
+    const job = await waitForJob(pendingJob.job_id);
+    thinkingMessage.stop();
+    if (job.state === 'failed') {
+      renderMessageNode(thinkingMessage.node, 'system', job.error || '응답 작업이 실패했습니다.', { force: true });
+    } else {
+      thinkingMessage.node.remove();
+      await renderHistory();
+    }
+  } catch (error) {
+    thinkingMessage.stop();
+    renderMessageNode(thinkingMessage.node, 'system', error instanceof Error ? error.message : String(error), { force: true });
+  } finally {
+    setStatus('');
+  }
 }
 
 async function handleSubmit(event) {
@@ -810,10 +908,14 @@ async function handleSubmit(event) {
   setStatus('메시지를 준비하는 중입니다...');
 
   try {
-    let outgoingMessage = rawMessage || '첨부 파일을 확인하고 사용자의 의도에 맞게 분석해주세요.';
-    if (elements.includeLocationInput.checked && !rawMessage.startsWith('/')) {
+    const outgoingMessage = rawMessage || '첨부 파일을 확인하고 사용자의 의도에 맞게 분석해주세요.';
+    const shouldIncludeLocation = !rawMessage.startsWith('/') && (
+      elements.includeLocationInput.checked || rawMessage.includes('여기')
+    );
+    let metadata;
+    if (shouldIncludeLocation) {
       setStatus('현재 위치를 가져오는 중입니다...');
-      outgoingMessage = `${rawMessage}\n\n${await getCurrentLocationText()}`;
+      metadata = { location: await getCurrentLocationMetadata() };
     }
 
     setStatus('첨부 파일을 준비하는 중입니다...');
@@ -830,9 +932,22 @@ async function handleSubmit(event) {
 
     const thinkingMessage = startThinkingMessage();
     try {
-      const response = await sendMessage(outgoingMessage, attachments);
-      thinkingMessage.stop();
-      renderMessageNode(thinkingMessage.node, 'assistant', response.reply || '(빈 응답)', { force: true });
+      const response = await sendMessage(outgoingMessage, attachments, metadata);
+      if (response.job_id) {
+        savePendingJob({ job_id: response.job_id, startedAt: Date.now() });
+        setStatus('서버에서 응답을 처리 중입니다. 앱을 닫아도 작업은 계속됩니다.');
+        const job = await waitForJob(response.job_id, () => refreshHistoryIfChanged());
+        thinkingMessage.stop();
+        if (job.state === 'failed') {
+          renderMessageNode(thinkingMessage.node, 'system', job.error || '응답 작업이 실패했습니다.', { force: true });
+        } else {
+          thinkingMessage.node.remove();
+          await refreshHistoryIfChanged();
+        }
+      } else {
+        thinkingMessage.stop();
+        renderMessageNode(thinkingMessage.node, 'assistant', response.reply || '(빈 응답)', { force: true });
+      }
       setStatus('');
       window.setTimeout(refreshHistoryIfChanged, 800);
     } catch (error) {
@@ -840,8 +955,7 @@ async function handleSubmit(event) {
       thinkingMessage.stop();
       renderMessageNode(thinkingMessage.node, 'system', errorMessage, { force: true });
       await appendServerHistoryMessages([
-        { role: 'user', text: displayedUserText, savedAt: new Date().toISOString() },
-        { role: 'system', text: `전송 실패: ${errorMessage}`, savedAt: new Date().toISOString() },
+        { role: 'system', text: `전송 상태 확인 실패: ${errorMessage}`, savedAt: new Date().toISOString() },
       ]).catch(() => {});
       setStatus('');
     }
@@ -870,6 +984,7 @@ async function healthCheck() {
         'content-type': 'application/json',
         authorization: `Bearer ${settings.apiKey}`,
         'x-user-id': `${await sharedUserId()}-connection-test`,
+        'x-openclaw-sync': '1',
       },
       body: JSON.stringify({ message: '연결 테스트입니다. OK만 답해주세요.' }),
     });
@@ -890,8 +1005,82 @@ function autoResizeTextarea() {
   elements.messageInput.style.height = `${Math.max(minHeight, Math.min(elements.messageInput.scrollHeight, 150))}px`;
 }
 
+function slashCommandQuery() {
+  const value = elements.messageInput.value;
+  const cursor = elements.messageInput.selectionStart ?? value.length;
+  if (cursor !== value.length || !value.startsWith('/')) {
+    return null;
+  }
+  if (value.includes('\n')) {
+    return null;
+  }
+  return value.slice(1).trim().toLowerCase();
+}
+
+function matchingSlashCommands() {
+  const query = slashCommandQuery();
+  if (query === null) {
+    return [];
+  }
+  return slashCommands.filter((item) => {
+    const haystack = `${item.command} ${item.title} ${item.description}`.toLowerCase();
+    return haystack.includes(query);
+  });
+}
+
+function applySlashCommand(command) {
+  elements.messageInput.value = command;
+  hideSlashCommandPalette();
+  autoResizeTextarea();
+  elements.messageInput.focus();
+  elements.messageInput.setSelectionRange(command.length, command.length);
+}
+
+function hideSlashCommandPalette() {
+  elements.slashCommandPalette.classList.add('hidden');
+  elements.slashCommandPalette.replaceChildren();
+}
+
+function renderSlashCommandPalette() {
+  const matches = matchingSlashCommands();
+  elements.slashCommandPalette.replaceChildren();
+
+  if (matches.length === 0) {
+    hideSlashCommandPalette();
+    return;
+  }
+
+  selectedSlashCommandIndex = Math.max(0, Math.min(selectedSlashCommandIndex, matches.length - 1));
+  for (const [index, item] of matches.entries()) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = `slash-command-item${index === selectedSlashCommandIndex ? ' selected' : ''}`;
+    button.setAttribute('role', 'option');
+    button.setAttribute('aria-selected', index === selectedSlashCommandIndex ? 'true' : 'false');
+    button.addEventListener('click', () => applySlashCommand(item.command));
+
+    const command = document.createElement('strong');
+    command.textContent = item.command.trim();
+    const text = document.createElement('span');
+    text.textContent = `${item.title} · ${item.description}`;
+    button.append(command, text);
+    elements.slashCommandPalette.append(button);
+  }
+
+  elements.slashCommandPalette.classList.remove('hidden');
+}
+
+function acceptSelectedSlashCommand() {
+  const matches = matchingSlashCommands();
+  if (matches.length === 0) {
+    return false;
+  }
+  applySlashCommand(matches[selectedSlashCommandIndex].command);
+  return true;
+}
+
 applySettingsToForm();
-renderHistory();
+renderHistory().then(() => resumePendingJobIfNeeded()).catch(() => {});
 startHistoryPolling();
 
 elements.settingsButton.addEventListener('click', () => {
@@ -947,8 +1136,37 @@ elements.attachmentInput.addEventListener('change', () => {
   }
 });
 elements.messageForm.addEventListener('submit', handleSubmit);
-elements.messageInput.addEventListener('input', autoResizeTextarea);
+elements.messageInput.addEventListener('input', () => {
+  autoResizeTextarea();
+  selectedSlashCommandIndex = 0;
+  renderSlashCommandPalette();
+});
+elements.messageInput.addEventListener('blur', () => {
+  window.setTimeout(hideSlashCommandPalette, 160);
+});
 elements.messageInput.addEventListener('keydown', (event) => {
+  const hasSlashPalette = !elements.slashCommandPalette.classList.contains('hidden');
+  if (hasSlashPalette && ['ArrowDown', 'ArrowUp', 'Tab', 'Enter'].includes(event.key)) {
+    const matches = matchingSlashCommands();
+    if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      selectedSlashCommandIndex = (selectedSlashCommandIndex + 1) % matches.length;
+      renderSlashCommandPalette();
+      return;
+    }
+    if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      selectedSlashCommandIndex = (selectedSlashCommandIndex - 1 + matches.length) % matches.length;
+      renderSlashCommandPalette();
+      return;
+    }
+    if (event.key === 'Tab' || (event.key === 'Enter' && !event.shiftKey)) {
+      event.preventDefault();
+      acceptSelectedSlashCommand();
+      return;
+    }
+  }
+
   if (isMobileLikeInput()) {
     return;
   }

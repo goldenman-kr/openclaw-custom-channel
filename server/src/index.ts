@@ -6,6 +6,7 @@ import { extname, join, normalize, resolve } from "node:path";
 import {
   API_CONTRACT_V1,
   extractBearerToken,
+  validateMessageRequestDto,
   type ErrorResponseDto,
   type MessageRequestDto,
 } from "./contracts/apiContractV1.js";
@@ -31,6 +32,19 @@ const historyStore = new FileHistoryStore(
 const publicDir = resolve(process.env.PUBLIC_DIR ?? join(process.cwd(), "public"));
 const stateDir = resolve(process.cwd(), "state");
 const historyMediaDir = resolve(process.env.HISTORY_MEDIA_DIR ?? join(stateDir, "history-media"));
+type JobState = "queued" | "running" | "completed" | "failed";
+
+interface MessageJob {
+  id: string;
+  sessionId: string;
+  state: JobState;
+  createdAt: string;
+  updatedAt: string;
+  error?: string;
+}
+
+const jobs = new Map<string, MessageJob>();
+
 const mediaRoots = [
   resolve(process.env.MEDIA_ROOT ?? "/home/orbsian/.openclaw/workspace"),
   resolve(process.env.OPENCLAW_MEDIA_DIR ?? "/home/orbsian/.openclaw/media"),
@@ -41,7 +55,7 @@ const mediaRoots = [
 const corsHeaders = {
   "access-control-allow-origin": "*",
   "access-control-allow-methods": "GET,POST,DELETE,OPTIONS",
-  "access-control-allow-headers": "authorization,content-type,x-device-id,x-user-id",
+  "access-control-allow-headers": "authorization,content-type,x-device-id,x-user-id,x-openclaw-sync",
 };
 
 function sendJson(response: ServerResponse, statusCode: number, body: unknown): void {
@@ -151,6 +165,44 @@ function shouldPersistMessage(message: string): boolean {
   return message.trim() !== "연결 테스트입니다. OK만 답해주세요.";
 }
 
+function statusForErrorCode(code: ErrorResponseDto["error"]["code"]): number {
+  switch (code) {
+    case "AUTH_INVALID_TOKEN":
+    case "AUTH_MISSING_TOKEN":
+      return 401;
+    case "UPSTREAM_OPENCLAW_TIMEOUT":
+      return 504;
+    case "UPSTREAM_OPENCLAW_UNAVAILABLE":
+      return 502;
+    case "INTERNAL_SERVER_ERROR":
+      return 500;
+    default:
+      return 400;
+  }
+}
+
+function makeErrorResponse(code: ErrorResponseDto["error"]["code"], message: string, details?: Record<string, unknown>): ErrorResponseDto {
+  return {
+    error: { code, message, ...(details ? { details } : {}) },
+    request_id: "req_unavailable",
+  };
+}
+
+function validateAuthorizedMessage(request: IncomingMessage, payload: MessageRequestDto): ErrorResponseDto | null {
+  const tokenOrError = extractBearerToken(getSingleHeader(request.headers, "authorization"));
+  if (typeof tokenOrError !== "string") {
+    return makeErrorResponse(tokenOrError.code, tokenOrError.message, tokenOrError.details);
+  }
+  if (!validApiKeys.has(tokenOrError)) {
+    return makeErrorResponse("AUTH_INVALID_TOKEN", "API key is invalid.");
+  }
+  const validationError = validateMessageRequestDto(payload);
+  if (validationError) {
+    return makeErrorResponse(validationError.code, validationError.message, validationError.details);
+  }
+  return null;
+}
+
 function formatUserHistoryText(payload: MessageRequestDto): string {
   const attachments = payload.attachments ?? [];
   if (attachments.length === 0) {
@@ -166,6 +218,21 @@ function formatUserHistoryText(payload: MessageRequestDto): string {
 function safeFileName(name: string, fallback: string): string {
   const trimmed = name.trim();
   return trimmed ? trimmed.replace(/[^a-zA-Z0-9가-힣._ -]/g, "_") : fallback;
+}
+
+async function persistUserHistory(sessionId: string, payload: MessageRequestDto): Promise<void> {
+  if (!shouldPersistMessage(payload.message)) {
+    return;
+  }
+  const attachments = await saveHistoryAttachments(sessionId, payload);
+  await historyStore.append(sessionId, [
+    {
+      role: "user",
+      text: formatUserHistoryText(payload),
+      savedAt: new Date().toISOString(),
+      ...(attachments.length > 0 ? { attachments } : {}),
+    },
+  ]);
 }
 
 async function saveHistoryAttachments(sessionId: string, payload: MessageRequestDto): Promise<HistoryAttachment[]> {
@@ -256,6 +323,42 @@ async function serveMediaFile(request: IncomingMessage, response: ServerResponse
   }
 }
 
+function updateJob(job: MessageJob, patch: Partial<Pick<MessageJob, "state" | "error">>): void {
+  Object.assign(job, patch, { updatedAt: new Date().toISOString() });
+  jobs.set(job.id, job);
+}
+
+async function runMessageJob(job: MessageJob, headers: IncomingMessage["headers"], payload: MessageRequestDto): Promise<void> {
+  updateJob(job, { state: "running" });
+  const result = await handlePostMessage(
+    {
+      openClawClient,
+      sessionStore,
+      validApiKeys,
+    },
+    headers,
+    payload,
+  );
+
+  if (result.statusCode >= 200 && result.statusCode < 300 && "reply" in result.body) {
+    if (shouldPersistMessage(payload.message)) {
+      await historyStore.append(job.sessionId, [
+        { role: "assistant", text: result.body.reply, savedAt: new Date().toISOString() },
+      ]);
+    }
+    updateJob(job, { state: "completed" });
+    return;
+  }
+
+  const errorMessage = "error" in result.body ? result.body.error.message : "OpenClaw request failed.";
+  if (shouldPersistMessage(payload.message)) {
+    await historyStore.append(job.sessionId, [
+      { role: "system", text: `전송 실패: ${errorMessage}`, savedAt: new Date().toISOString() },
+    ]);
+  }
+  updateJob(job, { state: "failed", error: errorMessage });
+}
+
 function normalizeHistoryAttachment(value: unknown): HistoryAttachment | null {
   if (typeof value !== "object" || value === null) {
     return null;
@@ -331,6 +434,22 @@ const server = createServer(async (request, response) => {
     return;
   }
 
+  if (request.method === "GET" && url.pathname.startsWith("/v1/jobs/")) {
+    if (!isAuthorized(request)) {
+      sendJson(response, 401, makeErrorResponse("AUTH_INVALID_TOKEN", "API key is invalid."));
+      return;
+    }
+    const jobId = decodeURIComponent(url.pathname.slice("/v1/jobs/".length));
+    const job = jobs.get(jobId);
+    const sessionId = sessionIdFromHeaders(request);
+    if (!job || job.sessionId !== sessionId) {
+      sendJson(response, 404, makeErrorResponse("INTERNAL_SERVER_ERROR", "Job not found."));
+      return;
+    }
+    sendJson(response, 200, job);
+    return;
+  }
+
   if (url.pathname === "/v1/history" && ["GET", "POST", "DELETE"].includes(request.method ?? "")) {
     if (!isAuthorized(request)) {
       sendJson(response, 401, {
@@ -391,31 +510,54 @@ const server = createServer(async (request, response) => {
 
   try {
     const payload = (await readJsonBody(request)) as MessageRequestDto;
-    const result = await handlePostMessage(
-      {
-        openClawClient,
-        sessionStore,
-        validApiKeys,
-      },
-      request.headers,
-      payload,
-    );
 
-    if (result.statusCode >= 200 && result.statusCode < 300 && "reply" in result.body && shouldPersistMessage(payload.message)) {
-      const sessionId = sessionIdFromHeaders(request);
-      const attachments = await saveHistoryAttachments(sessionId, payload);
-      await historyStore.append(sessionId, [
+    if (getSingleHeader(request.headers, "x-openclaw-sync") === "1") {
+      const result = await handlePostMessage(
         {
-          role: "user",
-          text: formatUserHistoryText(payload),
-          savedAt: new Date().toISOString(),
-          ...(attachments.length > 0 ? { attachments } : {}),
+          openClawClient,
+          sessionStore,
+          validApiKeys,
         },
-        { role: "assistant", text: result.body.reply, savedAt: new Date().toISOString() },
-      ]);
+        request.headers,
+        payload,
+      );
+      sendJson(response, result.statusCode, result.body);
+      return;
     }
 
-    sendJson(response, result.statusCode, result.body);
+    const validationError = validateAuthorizedMessage(request, payload);
+    if (validationError) {
+      sendJson(response, statusForErrorCode(validationError.error.code), validationError);
+      return;
+    }
+
+    const sessionId = sessionIdFromHeaders(request);
+    await persistUserHistory(sessionId, payload);
+
+    const now = new Date().toISOString();
+    const job: MessageJob = {
+      id: `job_${randomUUID()}`,
+      sessionId,
+      state: "queued",
+      createdAt: now,
+      updatedAt: now,
+    };
+    jobs.set(job.id, job);
+    runMessageJob(job, request.headers, payload).catch(async (error) => {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      if (shouldPersistMessage(payload.message)) {
+        await historyStore.append(sessionId, [
+          { role: "system", text: `전송 실패: ${errorMessage}`, savedAt: new Date().toISOString() },
+        ]).catch(() => {});
+      }
+      updateJob(job, { state: "failed", error: errorMessage });
+    });
+
+    sendJson(response, 202, {
+      job_id: job.id,
+      status: job.state,
+      session_id: sessionId,
+    });
   } catch (error) {
     if (error instanceof SyntaxError) {
       sendJson(response, 400, invalidJsonResponse());

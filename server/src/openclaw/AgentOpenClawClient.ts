@@ -3,7 +3,7 @@ import { execFile } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { promisify } from "node:util";
-import type { MessageAttachment } from "../contracts/apiContractV1.js";
+import type { MessageAttachment, MessageRequestMetadata } from "../contracts/apiContractV1.js";
 import type { OpenClawClient } from "./OpenClawClient.js";
 
 const execFileAsync = promisify(execFile);
@@ -17,7 +17,7 @@ export class AgentOpenClawClient implements OpenClawClient {
 
   async sendMessage(input: Parameters<OpenClawClient["sendMessage"]>[0]) {
     const savedAttachments = await this.saveAttachments(input.sessionId, input.attachments ?? []);
-    const message = this.buildMessage(input.message, savedAttachments);
+    const message = this.buildMessage(input.message, savedAttachments, input.metadata);
     const args = [
       "agent",
       "--session-id",
@@ -74,19 +74,29 @@ export class AgentOpenClawClient implements OpenClawClient {
     );
   }
 
-  private buildMessage(message: string, attachments: SavedAttachment[]): string {
-    if (attachments.length === 0) {
-      return message;
+  private buildMessage(message: string, attachments: SavedAttachment[], metadata?: MessageRequestMetadata): string {
+    const sections = [message];
+
+    const location = metadata?.location;
+    if (location) {
+      const accuracyText = Number.isFinite(location.accuracy) ? `, accuracy_m=${Math.round(location.accuracy ?? 0)}` : "";
+      const capturedAtText = location.captured_at ? `, captured_at=${location.captured_at}` : "";
+      sections.push(
+        `비공개 클라이언트 metadata: 사용자의 현재 위치가 제공되었습니다. 답변에 필요할 때만 참고하고, 좌표 자체는 사용자가 요청하지 않는 한 그대로 노출하지 마세요.\n- latitude=${location.latitude}, longitude=${location.longitude}${accuracyText}${capturedAtText}`,
+      );
     }
 
-    const attachmentSummary = attachments
-      .map(
-        (attachment) =>
-          `- ${attachment.name} (${attachment.mime_type}, ${attachment.type})\n  저장 경로: ${attachment.filePath}`,
-      )
-      .join("\n");
+    if (attachments.length > 0) {
+      const attachmentSummary = attachments
+        .map(
+          (attachment) =>
+            `- ${attachment.name} (${attachment.mime_type}, ${attachment.type})\n  저장 경로: ${attachment.filePath}`,
+        )
+        .join("\n");
+      sections.push(`첨부 파일이 서버에 저장되어 있습니다. 필요한 경우 도구로 아래 경로의 파일을 직접 읽거나 분석하세요.\n${attachmentSummary}`);
+    }
 
-    return `${message}\n\n첨부 파일이 서버에 저장되어 있습니다. 필요한 경우 도구로 아래 경로의 파일을 직접 읽거나 분석하세요.\n${attachmentSummary}`;
+    return sections.join("\n\n");
   }
 }
 
