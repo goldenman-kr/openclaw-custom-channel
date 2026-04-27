@@ -25,7 +25,7 @@
         </label>
         <label>
           API Key
-          <input id="apiKeyInput" type="password" placeholder="dev-api-key" />
+          <input id="apiKeyInput" type="password" placeholder="API Key" />
         </label>
         <label>
           Device ID
@@ -53,7 +53,10 @@
           <input id="includeLocationInput" type="checkbox" />
           <span>현재위치 포함</span>
         </label>
+        <input id="attachmentInput" class="hidden-file-input" type="file" multiple accept="image/jpeg,image/png,image/webp,application/pdf,text/plain,application/zip" />
+        <div id="attachmentTray" class="attachment-tray hidden" aria-live="polite"></div>
         <div class="input-row">
+          <button id="attachButton" class="attach-button" type="button" aria-label="파일 첨부">＋</button>
           <textarea id="messageInput" rows="1" placeholder="메시지를 입력하세요. 예: 여기서 서울역까지"></textarea>
           <button id="sendButton" type="submit">전송</button>
         </div>

@@ -1,5 +1,6 @@
+import { randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { stat } from "node:fs/promises";
+import { mkdir, stat, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { extname, join, normalize, resolve } from "node:path";
 import {
@@ -10,7 +11,7 @@ import {
 } from "./contracts/apiContractV1.js";
 import { handlePostMessage } from "./http/messageHandler.js";
 import { createOpenClawClient } from "./openclaw/createOpenClawClient.js";
-import { FileHistoryStore } from "./session/HistoryStore.js";
+import { FileHistoryStore, type HistoryAttachment } from "./session/HistoryStore.js";
 import { InMemorySessionStore } from "./session/SessionStore.js";
 
 const host = process.env.HOST ?? "0.0.0.0";
@@ -28,6 +29,13 @@ const historyStore = new FileHistoryStore(
   resolve(process.env.HISTORY_DIR ?? join(process.cwd(), "state", "history")),
 );
 const publicDir = resolve(process.env.PUBLIC_DIR ?? join(process.cwd(), "public"));
+const stateDir = resolve(process.cwd(), "state");
+const historyMediaDir = resolve(process.env.HISTORY_MEDIA_DIR ?? join(stateDir, "history-media"));
+const mediaRoots = [
+  resolve(process.env.MEDIA_ROOT ?? "/home/orbsian/.openclaw/workspace"),
+  resolve(process.env.UPLOAD_DIR ?? join(process.cwd(), "state", "uploads")),
+  stateDir,
+];
 
 const corsHeaders = {
   "access-control-allow-origin": "*",
@@ -58,6 +66,17 @@ function contentTypeFor(filePath: string): string {
       return "image/svg+xml";
     case ".png":
       return "image/png";
+    case ".jpg":
+    case ".jpeg":
+      return "image/jpeg";
+    case ".webp":
+      return "image/webp";
+    case ".gif":
+      return "image/gif";
+    case ".pdf":
+      return "application/pdf";
+    case ".txt":
+      return "text/plain; charset=utf-8";
     default:
       return "application/octet-stream";
   }
@@ -131,9 +150,131 @@ function shouldPersistMessage(message: string): boolean {
   return message.trim() !== "연결 테스트입니다. OK만 답해주세요.";
 }
 
+function formatUserHistoryText(payload: MessageRequestDto): string {
+  const attachments = payload.attachments ?? [];
+  if (attachments.length === 0) {
+    return payload.message;
+  }
+
+  const summary = attachments
+    .map((attachment) => `- ${attachment.name} (${attachment.mime_type}, ${attachment.type})`)
+    .join("\n");
+  return `${payload.message}\n\n첨부 파일:\n${summary}`;
+}
+
+function safeFileName(name: string, fallback: string): string {
+  const trimmed = name.trim();
+  return trimmed ? trimmed.replace(/[^a-zA-Z0-9가-힣._ -]/g, "_") : fallback;
+}
+
+async function saveHistoryAttachments(sessionId: string, payload: MessageRequestDto): Promise<HistoryAttachment[]> {
+  const attachments = payload.attachments ?? [];
+  if (attachments.length === 0) {
+    return [];
+  }
+
+  const safeSessionId = sessionId.replace(/[^a-zA-Z0-9_.-]/g, "_");
+  const targetDir = join(historyMediaDir, safeSessionId, randomUUID());
+  await mkdir(targetDir, { recursive: true });
+
+  return Promise.all(
+    attachments.map(async (attachment, index) => {
+      const name = safeFileName(attachment.name, `attachment-${index + 1}`);
+      const path = join(targetDir, `${index + 1}-${name}`);
+      const buffer = Buffer.from(attachment.content_base64, "base64");
+      await writeFile(path, buffer);
+      return {
+        name: attachment.name,
+        mime_type: attachment.mime_type,
+        type: attachment.type,
+        path,
+        size: buffer.byteLength,
+      };
+    }),
+  );
+}
+
 function isAuthorized(request: IncomingMessage): boolean {
   const tokenOrError = extractBearerToken(getSingleHeader(request.headers, "authorization"));
   return typeof tokenOrError === "string" && validApiKeys.has(tokenOrError);
+}
+
+function isWithinRoot(filePath: string, root: string): boolean {
+  return filePath === root || filePath.startsWith(`${root}/`);
+}
+
+function resolveAllowedMediaPath(rawPath: string): string | null {
+  const filePath = resolve(rawPath);
+  return mediaRoots.some((root) => isWithinRoot(filePath, root)) ? filePath : null;
+}
+
+async function serveMediaFile(request: IncomingMessage, response: ServerResponse, rawPath: string): Promise<void> {
+  if (!isAuthorized(request)) {
+    sendJson(response, 401, {
+      error: {
+        code: "AUTH_INVALID_TOKEN",
+        message: "API key is invalid.",
+      },
+      request_id: "req_unavailable",
+    } satisfies ErrorResponseDto);
+    return;
+  }
+
+  const filePath = resolveAllowedMediaPath(rawPath);
+  if (!filePath) {
+    sendJson(response, 403, {
+      error: {
+        code: "INTERNAL_SERVER_ERROR",
+        message: "Media path is not allowed.",
+      },
+      request_id: "req_unavailable",
+    } satisfies ErrorResponseDto);
+    return;
+  }
+
+  try {
+    const fileStat = await stat(filePath);
+    if (!fileStat.isFile()) {
+      throw new Error("not a file");
+    }
+    response.writeHead(200, {
+      "content-type": contentTypeFor(filePath),
+      "content-length": String(fileStat.size),
+      "content-disposition": `inline; filename*=UTF-8''${encodeURIComponent(filePath.split("/").pop() ?? "media")}`,
+      ...corsHeaders,
+    });
+    createReadStream(filePath).pipe(response);
+  } catch {
+    sendJson(response, 404, {
+      error: {
+        code: "INTERNAL_SERVER_ERROR",
+        message: "Media file not found.",
+      },
+      request_id: "req_unavailable",
+    } satisfies ErrorResponseDto);
+  }
+}
+
+function normalizeHistoryAttachment(value: unknown): HistoryAttachment | null {
+  if (typeof value !== "object" || value === null) {
+    return null;
+  }
+  const candidate = value as Record<string, unknown>;
+  if (
+    typeof candidate.name !== "string" ||
+    typeof candidate.mime_type !== "string" ||
+    typeof candidate.path !== "string" ||
+    !["image", "file"].includes(String(candidate.type))
+  ) {
+    return null;
+  }
+  return {
+    name: candidate.name,
+    mime_type: candidate.mime_type,
+    type: candidate.type as "image" | "file",
+    path: candidate.path,
+    ...(typeof candidate.size === "number" ? { size: candidate.size } : {}),
+  };
 }
 
 function normalizeHistoryMessages(payload: unknown) {
@@ -143,7 +284,7 @@ function normalizeHistoryMessages(payload: unknown) {
       : [];
 
   return rawMessages
-    .filter((item): item is { role: string; text: string; savedAt?: string } => {
+    .filter((item): item is { role: string; text: string; savedAt?: string; attachments?: unknown[] } => {
       if (typeof item !== "object" || item === null) {
         return false;
       }
@@ -154,11 +295,17 @@ function normalizeHistoryMessages(payload: unknown) {
         candidate.text.trim().length > 0
       );
     })
-    .map((item) => ({
-      role: item.role as "user" | "assistant" | "system",
-      text: item.text,
-      savedAt: typeof item.savedAt === "string" ? item.savedAt : new Date().toISOString(),
-    }));
+    .map((item) => {
+      const attachments = Array.isArray(item.attachments)
+        ? item.attachments.map(normalizeHistoryAttachment).filter((attachment): attachment is HistoryAttachment => Boolean(attachment))
+        : [];
+      return {
+        role: item.role as "user" | "assistant" | "system",
+        text: item.text,
+        savedAt: typeof item.savedAt === "string" ? item.savedAt : new Date().toISOString(),
+        ...(attachments.length > 0 ? { attachments } : {}),
+      };
+    });
 }
 
 const server = createServer(async (request, response) => {
@@ -178,6 +325,11 @@ const server = createServer(async (request, response) => {
     return;
   }
 
+  if (request.method === "GET" && url.pathname === "/v1/media") {
+    await serveMediaFile(request, response, url.searchParams.get("path") ?? "");
+    return;
+  }
+
   if (url.pathname === "/v1/history" && ["GET", "POST", "DELETE"].includes(request.method ?? "")) {
     if (!isAuthorized(request)) {
       sendJson(response, 401, {
@@ -191,8 +343,14 @@ const server = createServer(async (request, response) => {
     }
 
     if (request.method === "GET") {
+      const sessionId = sessionIdFromHeaders(request);
+      if (url.searchParams.get("meta") === "1") {
+        sendJson(response, 200, await historyStore.meta(sessionId));
+        return;
+      }
       sendJson(response, 200, {
-        messages: await historyStore.list(sessionIdFromHeaders(request)),
+        ...(await historyStore.meta(sessionId)),
+        messages: await historyStore.list(sessionId),
       });
       return;
     }
@@ -243,8 +401,15 @@ const server = createServer(async (request, response) => {
     );
 
     if (result.statusCode >= 200 && result.statusCode < 300 && "reply" in result.body && shouldPersistMessage(payload.message)) {
-      await historyStore.append(sessionIdFromHeaders(request), [
-        { role: "user", text: payload.message, savedAt: new Date().toISOString() },
+      const sessionId = sessionIdFromHeaders(request);
+      const attachments = await saveHistoryAttachments(sessionId, payload);
+      await historyStore.append(sessionId, [
+        {
+          role: "user",
+          text: formatUserHistoryText(payload),
+          savedAt: new Date().toISOString(),
+          ...(attachments.length > 0 ? { attachments } : {}),
+        },
         { role: "assistant", text: result.body.reply, savedAt: new Date().toISOString() },
       ]);
     }
