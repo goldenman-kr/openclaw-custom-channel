@@ -20,6 +20,7 @@ const elements = {
   themeModeInput: document.querySelector('#themeModeInput'),
   saveSettingsButton: document.querySelector('#saveSettingsButton'),
   healthCheckButton: document.querySelector('#healthCheckButton'),
+  refreshAppButton: document.querySelector('#refreshAppButton'),
   clearHistoryButton: document.querySelector('#clearHistoryButton'),
   messages: document.querySelector('#messages'),
   messageForm: document.querySelector('#messageForm'),
@@ -885,7 +886,8 @@ async function healthCheck() {
 
 function autoResizeTextarea() {
   elements.messageInput.style.height = 'auto';
-  elements.messageInput.style.height = `${Math.min(elements.messageInput.scrollHeight, 150)}px`;
+  const minHeight = Number.parseFloat(getComputedStyle(elements.messageInput).minHeight) || 74;
+  elements.messageInput.style.height = `${Math.max(minHeight, Math.min(elements.messageInput.scrollHeight, 150))}px`;
 }
 
 applySettingsToForm();
@@ -933,6 +935,7 @@ elements.clearHistoryButton.addEventListener('click', async () => {
 });
 
 elements.healthCheckButton.addEventListener('click', healthCheck);
+elements.refreshAppButton.addEventListener('click', () => window.location.reload());
 elements.attachButton.addEventListener('click', () => elements.attachmentInput.click());
 elements.attachmentInput.addEventListener('change', () => {
   try {

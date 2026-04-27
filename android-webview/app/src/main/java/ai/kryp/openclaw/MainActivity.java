@@ -7,7 +7,6 @@ import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
-import android.view.View;
 import android.webkit.GeolocationPermissions;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
@@ -15,12 +14,14 @@ import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import androidx.swiperefreshlayout.widget.SwipeRefreshLayout;
 
 public class MainActivity extends Activity {
     private static final String START_URL = "https://ai.kryp.xyz/";
     private static final int LOCATION_REQUEST = 42;
     private static final int FILE_REQUEST = 43;
 
+    private SwipeRefreshLayout swipeRefreshLayout;
     private WebView webView;
     private GeolocationPermissions.Callback pendingGeoCallback;
     private String pendingGeoOrigin;
@@ -29,8 +30,13 @@ public class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        swipeRefreshLayout = new SwipeRefreshLayout(this);
+        swipeRefreshLayout.setColorSchemeColors(0xFF38BDF8, 0xFF0EA5E9, 0xFF2563EB);
+        swipeRefreshLayout.setOnRefreshListener(() -> webView.reload());
+
         webView = new WebView(this);
-        setContentView(webView);
+        swipeRefreshLayout.addView(webView);
+        setContentView(swipeRefreshLayout);
 
         WebSettings settings = webView.getSettings();
         settings.setJavaScriptEnabled(true);
@@ -54,7 +60,16 @@ public class MainActivity extends Activity {
                 startActivity(new Intent(Intent.ACTION_VIEW, uri));
                 return true;
             }
+
+            @Override
+            public void onPageFinished(WebView view, String url) {
+                swipeRefreshLayout.setRefreshing(false);
+            }
         });
+
+        webView.setOnScrollChangeListener((view, scrollX, scrollY, oldScrollX, oldScrollY) ->
+            swipeRefreshLayout.setEnabled(scrollY == 0)
+        );
 
         webView.setWebChromeClient(new WebChromeClient() {
             @Override
