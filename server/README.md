@@ -24,6 +24,7 @@ npm install
 npm run dev
 ```
 
+기본 바인딩은 외부 접근 가능한 `HOST=0.0.0.0`, `PORT=29999`입니다.
 기본 개발 API Key는 `dev-api-key`입니다.
 운영/공유 환경에서는 `BRIDGE_API_KEYS` 환경변수로 쉼표 구분 API Key 목록을 설정합니다.
 
@@ -36,13 +37,13 @@ OPENCLAW_TRANSPORT=mock npm run dev
 Health check:
 
 ```bash
-curl http://localhost:3000/health
+curl http://localhost:29999/health
 ```
 
 Message test:
 
 ```bash
-curl -X POST http://localhost:3000/v1/message \
+curl -X POST http://localhost:29999/v1/message \
   -H "Authorization: Bearer dev-api-key" \
   -H "Content-Type: application/json" \
   -H "x-device-id: abc-123" \

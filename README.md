@@ -38,6 +38,8 @@ npm install
 OPENCLAW_TRANSPORT=mock npm run dev
 ```
 
+서버 기본 바인딩은 `0.0.0.0:29999`입니다.
+
 클라이언트:
 
 ```bash
@@ -48,8 +50,8 @@ fvm flutter run
 
 클라이언트 Settings에는 다음 값을 입력합니다.
 
-- API URL: `http://localhost:3000`
+- API URL: `http://localhost:29999`
 - API Key: `dev-api-key`
 
-Android emulator에서 로컬 서버에 접근할 때는 API URL에 `http://10.0.2.2:3000`을 사용합니다.
+Android emulator에서 로컬 서버에 접근할 때는 API URL에 `http://10.0.2.2:29999`을 사용합니다.
 

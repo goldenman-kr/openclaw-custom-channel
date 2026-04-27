@@ -4,7 +4,8 @@ import { handlePostMessage } from "./http/messageHandler.js";
 import { createOpenClawClient } from "./openclaw/createOpenClawClient.js";
 import { InMemorySessionStore } from "./session/SessionStore.js";
 
-const port = Number(process.env.PORT ?? 3000);
+const host = process.env.HOST ?? "0.0.0.0";
+const port = Number(process.env.PORT ?? 29999);
 const validApiKeys = new Set(
   (process.env.BRIDGE_API_KEYS ?? "dev-api-key")
     .split(",")
@@ -96,6 +97,6 @@ const server = createServer(async (request, response) => {
   }
 });
 
-server.listen(port, () => {
-  console.log(`Bridge server listening on http://localhost:${port}`);
+server.listen(port, host, () => {
+  console.log(`Bridge server listening on http://${host}:${port}`);
 });
