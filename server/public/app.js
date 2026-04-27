@@ -949,7 +949,9 @@ async function fetchJob(jobId) {
   });
   const body = await response.json().catch(() => null);
   if (!response.ok) {
-    throw new Error(body?.error?.message || `Job HTTP ${response.status}`);
+    const error = new Error(body?.error?.message || `Job HTTP ${response.status}`);
+    error.status = response.status;
+    throw error;
   }
   return body;
 }
@@ -984,6 +986,10 @@ async function waitForJob(jobId, onTick = () => {}) {
         clearPendingJob();
         return { id: jobId, state: 'completed' };
       }
+      if (error?.status === 404) {
+        clearPendingJob();
+        return { id: jobId, state: 'expired' };
+      }
       if (transientFailures >= 5) {
         throw lastError;
       }
@@ -1013,7 +1019,9 @@ async function resumePendingJobIfNeeded() {
     } else {
       thinkingMessage.node.remove();
       await renderHistory();
-      notifyReplyReady();
+      if (job.state === 'completed') {
+        notifyReplyReady();
+      }
     }
   } catch (error) {
     thinkingMessage.stop();
@@ -1078,7 +1086,9 @@ async function handleSubmit(event) {
         } else {
           thinkingMessage.node.remove();
           await refreshHistoryIfChanged();
-          notifyReplyReady();
+          if (job.state === 'completed') {
+            notifyReplyReady();
+          }
         }
       } else {
         thinkingMessage.stop();
