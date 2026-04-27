@@ -12,6 +12,7 @@ export interface HistoryAttachment {
 }
 
 export interface HistoryMessage {
+  id?: string;
   role: HistoryRole;
   text: string;
   savedAt: string;
@@ -28,6 +29,7 @@ export interface HistoryStore {
   list(sessionId: string): Promise<HistoryMessage[]>;
   meta(sessionId: string): Promise<HistoryMeta>;
   append(sessionId: string, messages: HistoryMessage[]): Promise<void>;
+  replaceById(sessionId: string, id: string, message: HistoryMessage): Promise<void>;
   clear(sessionId: string): Promise<void>;
 }
 
@@ -73,6 +75,15 @@ export class FileHistoryStore implements HistoryStore {
     await this.write(sessionId, [...current, ...messages].slice(-MAX_HISTORY_MESSAGES));
   }
 
+  async replaceById(sessionId: string, id: string, message: HistoryMessage): Promise<void> {
+    const current = await this.list(sessionId);
+    const next = current.map((item) => (item.id === id ? { ...message, id } : item));
+    if (!next.some((item) => item.id === id)) {
+      next.push({ ...message, id });
+    }
+    await this.write(sessionId, next.slice(-MAX_HISTORY_MESSAGES));
+  }
+
   async clear(sessionId: string): Promise<void> {
     await this.write(sessionId, []);
   }
@@ -97,6 +108,7 @@ function isHistoryMessage(value: unknown): value is HistoryMessage {
   }
   const candidate = value as Record<string, unknown>;
   return (
+    (candidate.id === undefined || typeof candidate.id === "string") &&
     ["user", "assistant", "system"].includes(String(candidate.role)) &&
     typeof candidate.text === "string" &&
     typeof candidate.savedAt === "string" &&

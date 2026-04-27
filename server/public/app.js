@@ -424,7 +424,7 @@ async function renderHistory() {
 
     for (const item of history) {
       if (typeof item?.role === 'string' && typeof item?.text === 'string') {
-        appendMessage(item.role, item.text, { persist: false, autoScroll: false, mediaRefs: mediaRefsFromHistoryAttachments(item.attachments) });
+        appendMessage(item.role, item.text, { persist: false, autoScroll: false, mediaRefs: mediaRefsFromHistoryAttachments(item.attachments), pending: isPendingHistoryMessage(item) });
       }
     }
   } catch (error) {
@@ -516,7 +516,7 @@ function appendMarkdown(parent, text) {
 
 function messageTextWithoutAttachmentPreview(node) {
   const clone = node.cloneNode(true);
-  clone.querySelectorAll('.message-attachments').forEach((preview) => preview.remove());
+  clone.querySelectorAll('.message-attachments, .message-actions').forEach((preview) => preview.remove());
   return clone.textContent || '';
 }
 
@@ -527,7 +527,11 @@ function currentRenderedHistorySignature() {
 }
 
 function historySignature(history) {
-  return history.map((item) => `${item.role}:${item.text}`).join('\n---\n');
+  return history.map((item) => `${item.id || ''}:${item.role}:${item.text}`).join('\n---\n');
+}
+
+function isPendingHistoryMessage(item) {
+  return typeof item?.id === 'string' && item.id.startsWith('job_') && item.role === 'assistant' && item.text.includes('처리 중');
 }
 
 async function refreshHistoryIfChanged() {
@@ -553,6 +557,7 @@ async function refreshHistoryIfChanged() {
             persist: false,
             autoScroll: false,
             mediaRefs: mediaRefsFromHistoryAttachments(item.attachments),
+            pending: isPendingHistoryMessage(item),
           });
         }
       }
@@ -709,14 +714,49 @@ function appendMediaRef(parent, rawRef) {
     });
 }
 
+function retryTextForNode(node) {
+  let current = node.previousElementSibling;
+  while (current) {
+    if (current.classList?.contains('user')) {
+      return messageTextWithoutAttachmentPreview(current).replace(/\n\n첨부 파일:\n[\s\S]*$/, '').trim();
+    }
+    current = current.previousElementSibling;
+  }
+  return '';
+}
+
+function appendRetryAction(node, role, text) {
+  if (role !== 'system' || !text.startsWith('전송 실패:')) {
+    return;
+  }
+  const retryText = retryTextForNode(node);
+  if (!retryText) {
+    return;
+  }
+  const actions = document.createElement('div');
+  actions.className = 'message-actions';
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'message-action-button';
+  button.textContent = '다시 시도';
+  button.addEventListener('click', () => {
+    elements.messageInput.value = retryText;
+    autoResizeTextarea();
+    elements.messageInput.focus();
+  });
+  actions.append(button);
+  node.append(actions);
+}
+
 function renderMessageNode(node, role, text, options = {}) {
   const media = extractMediaRefs(text);
-  node.className = `message ${role}`;
+  node.className = `message ${role}${options.pending ? ' pending' : ''}`;
   node.replaceChildren();
   appendMarkdown(node, media.text);
   for (const ref of [...media.refs, ...(node._mediaRefs || [])]) {
     appendMediaRef(node, ref);
   }
+  appendRetryAction(node, role, text);
   scrollToBottom(options);
 }
 
@@ -762,6 +802,9 @@ function appendMessage(role, text, options = {}) {
   node._mediaRefs = options.mediaRefs || [];
   renderMessageNode(node, role, text, options);
   appendAttachmentPreview(node, options.files || []);
+  if (options.pending) {
+    node.classList.add('pending');
+  }
   elements.messages.append(node);
   scrollToBottom(options);
   if (options.persist !== false) {
