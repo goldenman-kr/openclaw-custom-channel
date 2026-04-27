@@ -7,7 +7,9 @@ import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.view.ViewGroup;
 import android.webkit.GeolocationPermissions;
+import android.webkit.JavascriptInterface;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
@@ -31,10 +33,19 @@ public class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         swipeRefreshLayout = new SwipeRefreshLayout(this);
+        swipeRefreshLayout.setLayoutParams(new ViewGroup.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.MATCH_PARENT
+        ));
         swipeRefreshLayout.setColorSchemeColors(0xFF38BDF8, 0xFF0EA5E9, 0xFF2563EB);
+        swipeRefreshLayout.setEnabled(false);
         swipeRefreshLayout.setOnRefreshListener(() -> webView.reload());
 
         webView = new WebView(this);
+        webView.setLayoutParams(new SwipeRefreshLayout.LayoutParams(
+            SwipeRefreshLayout.LayoutParams.MATCH_PARENT,
+            SwipeRefreshLayout.LayoutParams.MATCH_PARENT
+        ));
         swipeRefreshLayout.addView(webView);
         setContentView(swipeRefreshLayout);
 
@@ -50,6 +61,8 @@ public class MainActivity extends Activity {
             settings.setSafeBrowsingEnabled(true);
         }
 
+        webView.addJavascriptInterface(new ScrollBridge(), "OpenClawAndroid");
+
         webView.setWebViewClient(new WebViewClient() {
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
@@ -64,12 +77,9 @@ public class MainActivity extends Activity {
             @Override
             public void onPageFinished(WebView view, String url) {
                 swipeRefreshLayout.setRefreshing(false);
+                installScrollReporter();
             }
         });
-
-        webView.setOnScrollChangeListener((view, scrollX, scrollY, oldScrollX, oldScrollY) ->
-            swipeRefreshLayout.setEnabled(scrollY == 0)
-        );
 
         webView.setWebChromeClient(new WebChromeClient() {
             @Override
@@ -115,12 +125,36 @@ public class MainActivity extends Activity {
         }
     }
 
+    private void installScrollReporter() {
+        webView.evaluateJavascript(
+            "(function(){" +
+                "var messages=document.getElementById('messages');" +
+                "if(!messages||!window.OpenClawAndroid){return;}" +
+                "function report(){OpenClawAndroid.setCanRefresh(messages.scrollTop<=0 && window.scrollY<=0);}" +
+                "messages.removeEventListener('scroll', window.__openClawRefreshReport);" +
+                "window.removeEventListener('scroll', window.__openClawRefreshReport);" +
+                "window.__openClawRefreshReport=report;" +
+                "messages.addEventListener('scroll', report, {passive:true});" +
+                "window.addEventListener('scroll', report, {passive:true});" +
+                "report();" +
+            "})();",
+            null
+        );
+    }
+
     private boolean hasLocationPermission() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
             return true;
         }
         return checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
             checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED;
+    }
+
+    private class ScrollBridge {
+        @JavascriptInterface
+        public void setCanRefresh(boolean canRefresh) {
+            runOnUiThread(() -> swipeRefreshLayout.setEnabled(canRefresh));
+        }
     }
 
     @Override
