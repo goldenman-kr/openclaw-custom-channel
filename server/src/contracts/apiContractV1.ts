@@ -20,9 +20,21 @@ export interface MessageAttachment {
   content_base64: string;
 }
 
+export interface MessageLocationMetadata {
+  latitude: number;
+  longitude: number;
+  accuracy?: number;
+  captured_at?: string;
+}
+
+export interface MessageRequestMetadata {
+  location?: MessageLocationMetadata;
+}
+
 export interface MessageRequestDto {
   message: string;
   attachments?: MessageAttachment[];
+  metadata?: MessageRequestMetadata;
 }
 
 export interface MessageResponseDto {

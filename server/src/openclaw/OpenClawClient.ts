@@ -1,4 +1,4 @@
-import type { MessageAttachment } from "../contracts/apiContractV1.js";
+import type { MessageAttachment, MessageRequestMetadata } from "../contracts/apiContractV1.js";
 
 export interface OpenClawClient {
   sendMessage(input: {
@@ -6,6 +6,7 @@ export interface OpenClawClient {
     message: string;
     userId?: string;
     attachments?: MessageAttachment[];
+    metadata?: MessageRequestMetadata;
   }): Promise<{
     reply: string;
     raw?: unknown;

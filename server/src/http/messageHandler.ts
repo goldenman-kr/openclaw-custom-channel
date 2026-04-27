@@ -117,6 +117,7 @@ export async function handlePostMessage(
       message: payload.message,
       userId,
       attachments: payload.attachments,
+      metadata: payload.metadata,
     });
 
     return {
