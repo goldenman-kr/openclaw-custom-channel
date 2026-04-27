@@ -494,11 +494,84 @@ function appendInlineMarkdown(parent, text) {
   }
 }
 
+function copyTextToClipboard(text) {
+  if (navigator.clipboard?.writeText) {
+    return navigator.clipboard.writeText(text);
+  }
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.setAttribute('readonly', '');
+  textarea.style.position = 'fixed';
+  textarea.style.opacity = '0';
+  document.body.append(textarea);
+  textarea.select();
+  const copied = document.execCommand('copy');
+  textarea.remove();
+  return copied ? Promise.resolve() : Promise.reject(new Error('복사하지 못했습니다.'));
+}
+
+function appendCodeBlock(parent, codeText, language = '') {
+  const wrapper = document.createElement('div');
+  wrapper.className = 'code-block';
+
+  const header = document.createElement('div');
+  header.className = 'code-block-header';
+  const label = document.createElement('span');
+  label.textContent = language || 'code';
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'code-copy-button';
+  button.textContent = '복사';
+  button.addEventListener('click', async () => {
+    const originalText = button.textContent;
+    try {
+      await copyTextToClipboard(codeText);
+      button.textContent = '복사됨';
+      window.setTimeout(() => { button.textContent = originalText; }, 1200);
+    } catch {
+      button.textContent = '실패';
+      window.setTimeout(() => { button.textContent = originalText; }, 1200);
+    }
+  });
+  header.append(label, button);
+
+  const pre = document.createElement('pre');
+  const code = document.createElement('code');
+  code.textContent = codeText;
+  pre.append(code);
+  wrapper.append(header, pre);
+  parent.append(wrapper);
+}
+
 function appendMarkdown(parent, text) {
   const lines = text.split('\n');
   let list = null;
+  let inCodeBlock = false;
+  let codeLanguage = '';
+  let codeLines = [];
 
   for (const line of lines) {
+    const fence = line.match(/^```\s*([^`]*)\s*$/);
+    if (fence) {
+      list = null;
+      if (inCodeBlock) {
+        appendCodeBlock(parent, codeLines.join('\n'), codeLanguage);
+        inCodeBlock = false;
+        codeLanguage = '';
+        codeLines = [];
+      } else {
+        inCodeBlock = true;
+        codeLanguage = fence[1]?.trim() || '';
+        codeLines = [];
+      }
+      continue;
+    }
+
+    if (inCodeBlock) {
+      codeLines.push(line);
+      continue;
+    }
+
     const heading = line.match(/^(#{1,3})\s+(.+)$/);
     const bullet = line.match(/^\s*[-*]\s+(.+)$/);
     const numbered = line.match(/^\s*\d+[.)]\s+(.+)$/);
@@ -533,11 +606,15 @@ function appendMarkdown(parent, text) {
     appendInlineMarkdown(paragraph, line);
     parent.append(paragraph);
   }
+
+  if (inCodeBlock) {
+    appendCodeBlock(parent, codeLines.join('\n'), codeLanguage);
+  }
 }
 
 function messageTextWithoutAttachmentPreview(node) {
   const clone = node.cloneNode(true);
-  clone.querySelectorAll('.message-attachments, .message-actions').forEach((preview) => preview.remove());
+  clone.querySelectorAll('.message-attachments, .message-actions, .code-block-header').forEach((preview) => preview.remove());
   return clone.textContent || '';
 }
 
