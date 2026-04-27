@@ -32,6 +32,10 @@ const elements = {
   attachButton: document.querySelector('#attachButton'),
   attachmentTray: document.querySelector('#attachmentTray'),
   slashCommandPalette: document.querySelector('#slashCommandPalette'),
+  mediaViewer: document.querySelector('#mediaViewer'),
+  mediaViewerImage: document.querySelector('#mediaViewerImage'),
+  mediaViewerDownload: document.querySelector('#mediaViewerDownload'),
+  mediaViewerClose: document.querySelector('#mediaViewerClose'),
   sendButton: document.querySelector('#sendButton'),
   statusText: document.querySelector('#statusText'),
 };
@@ -600,6 +604,20 @@ function isImageRef(ref) {
   return /\.(png|jpe?g|webp|gif|svg)(\?.*)?$/i.test(ref);
 }
 
+function openMediaViewer(url, fileName = 'image') {
+  elements.mediaViewerImage.src = url;
+  elements.mediaViewerImage.alt = fileName;
+  elements.mediaViewerDownload.href = url;
+  elements.mediaViewerDownload.download = fileName;
+  elements.mediaViewer.classList.remove('hidden');
+}
+
+function closeMediaViewer() {
+  elements.mediaViewer.classList.add('hidden');
+  elements.mediaViewerImage.removeAttribute('src');
+  elements.mediaViewerDownload.removeAttribute('href');
+}
+
 function mediaRefsFromHistoryAttachments(attachments) {
   if (!Array.isArray(attachments)) {
     return [];
@@ -674,10 +692,23 @@ function appendMediaRef(parent, rawRef) {
   item.append(caption);
   preview.append(item);
 
+  const wireImageViewer = (url) => {
+    if (!image) {
+      return;
+    }
+    const open = (event) => {
+      event.preventDefault();
+      openMediaViewer(url, fileName);
+    };
+    image.addEventListener('click', open);
+    caption.addEventListener('click', open);
+  };
+
   if (isRemote) {
     caption.href = ref;
     if (image) {
       image.src = ref;
+      wireImageViewer(ref);
     }
     return;
   }
@@ -688,6 +719,7 @@ function appendMediaRef(parent, rawRef) {
     caption.textContent = captionText;
     if (image) {
       image.src = cachedUrl;
+      wireImageViewer(cachedUrl);
     }
     return;
   }
@@ -700,6 +732,7 @@ function appendMediaRef(parent, rawRef) {
       caption.textContent = captionText;
       if (image) {
         image.src = url;
+        wireImageViewer(url);
       }
     })
     .catch(() => {
@@ -1280,6 +1313,17 @@ elements.clearHistoryButton.addEventListener('click', async () => {
 elements.healthCheckButton.addEventListener('click', healthCheck);
 elements.refreshAppButton.addEventListener('click', () => window.location.reload());
 elements.notificationButton.addEventListener('click', enableNotifications);
+elements.mediaViewerClose.addEventListener('click', closeMediaViewer);
+elements.mediaViewer.addEventListener('click', (event) => {
+  if (event.target?.hasAttribute?.('data-media-viewer-close')) {
+    closeMediaViewer();
+  }
+});
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && !elements.mediaViewer.classList.contains('hidden')) {
+    closeMediaViewer();
+  }
+});
 elements.attachButton.addEventListener('click', () => elements.attachmentInput.click());
 elements.attachmentInput.addEventListener('change', () => {
   try {
