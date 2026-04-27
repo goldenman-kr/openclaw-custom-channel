@@ -10,13 +10,7 @@
   </head>
   <body>
     <main class="app-shell">
-      <header class="topbar">
-        <div>
-          <p class="eyebrow">OpenClaw Channel</p>
-          <h1>로디</h1>
-        </div>
-        <button id="settingsButton" class="ghost-button" type="button" aria-label="설정">⚙️</button>
-      </header>
+      <button id="settingsButton" class="ghost-button floating-settings-button" type="button" aria-label="설정">⚙️</button>
 
       <section id="settingsPanel" class="settings-panel hidden" aria-label="설정">
         <label>
@@ -38,6 +32,13 @@
             <option value="dark">Dark</option>
             <option value="light">Light</option>
           </select>
+        </label>
+        <label>
+          글자 크기
+          <span class="range-row">
+            <input id="fontSizeInput" type="range" min="12" max="20" step="1" />
+            <output id="fontSizeValue" for="fontSizeInput">16px</output>
+          </span>
         </label>
         <div class="settings-actions">
           <button id="saveSettingsButton" type="button">저장</button>
