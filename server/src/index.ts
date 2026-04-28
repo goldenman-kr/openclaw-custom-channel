@@ -10,9 +10,11 @@ import {
   type ErrorResponseDto,
   type MessageRequestDto,
 } from "./contracts/apiContractV1.js";
+import { SseJobEventPublisher, type JobEventRecord } from "./events/SseJobEventPublisher.js";
 import { handlePostMessage } from "./http/messageHandler.js";
 import { createOpenClawClient } from "./openclaw/createOpenClawClient.js";
 import { deleteOpenClawSession } from "./openclaw/SessionCleaner.js";
+import { OpenClawChatRuntime } from "./runtime/OpenClawChatRuntime.js";
 import { FileHistoryStore, type HistoryAttachment } from "./session/HistoryStore.js";
 import { InMemorySessionStore } from "./session/SessionStore.js";
 import { SqliteChatStore, type ChatMessageRecord, type ConversationRecord } from "./session/SqliteChatStore.js";
@@ -27,6 +29,7 @@ const validApiKeys = new Set(
 );
 
 const openClawClient = createOpenClawClient();
+const chatRuntime = new OpenClawChatRuntime(openClawClient);
 const sessionStore = new InMemorySessionStore();
 const historyDir = resolve(process.env.HISTORY_DIR ?? join(process.cwd(), "state", "history"));
 const historyStore = new FileHistoryStore(historyDir);
@@ -342,7 +345,7 @@ function updateJob(job: MessageJob, patch: Partial<Pick<MessageJob, "state" | "e
   }
 }
 
-function jobForRequest(jobId: string, request: IncomingMessage, url: URL): MessageJob | ReturnType<typeof chatStore.getJob> | null {
+function jobForRequest(jobId: string, request: IncomingMessage, url: URL): JobEventRecord | null {
   const job = jobs.get(jobId) ?? chatStore.getJob(jobId);
   const conversationId = url.searchParams.get("conversation_id")?.trim();
   if (job && "conversationId" in job && job.conversationId) {
@@ -355,54 +358,14 @@ function jobForRequest(jobId: string, request: IncomingMessage, url: URL): Messa
   return null;
 }
 
-function writeSseEvent(response: ServerResponse, event: string, data: unknown): void {
-  response.write(`event: ${event}\n`);
-  response.write(`data: ${JSON.stringify(data)}\n\n`);
-}
-
-function serveJobEvents(request: IncomingMessage, response: ServerResponse, url: URL, jobId: string): void {
-  if (!isAuthorized(request)) {
-    sendJson(response, 401, makeErrorResponse("AUTH_INVALID_TOKEN", "API key is invalid."));
-    return;
-  }
-
-  const initialJob = jobForRequest(jobId, request, url);
-  if (!initialJob) {
-    sendJson(response, 404, makeErrorResponse("INTERNAL_SERVER_ERROR", "Job not found."));
-    return;
-  }
-
-  response.writeHead(200, {
-    "content-type": "text/event-stream; charset=utf-8",
-    "cache-control": "no-cache, no-transform",
-    connection: "keep-alive",
-    ...corsHeaders,
-  });
-
-  const sendCurrent = (): boolean => {
-    const job = jobForRequest(jobId, request, url);
-    if (!job) {
-      writeSseEvent(response, "expired", { id: jobId, state: "expired" });
-      return true;
-    }
-    writeSseEvent(response, "job", job);
-    return job.state === "completed" || job.state === "failed";
-  };
-
-  if (sendCurrent()) {
-    response.end();
-    return;
-  }
-
-  const interval = setInterval(() => {
-    if (sendCurrent()) {
-      clearInterval(interval);
-      response.end();
-    }
-  }, 2000);
-
-  request.on("close", () => clearInterval(interval));
-}
+const jobEventPublisher = new SseJobEventPublisher({
+  corsHeaders,
+  isAuthorized,
+  getJob: jobForRequest,
+  sendError(response, statusCode, code, message) {
+    sendJson(response, statusCode, makeErrorResponse(code as ErrorResponseDto["error"]["code"], message));
+  },
+});
 
 function jobQueueKey(job: MessageJob): string {
   return job.conversationId ? `conversation:${job.conversationId}` : `session:${job.sessionId}`;
@@ -448,7 +411,7 @@ async function runMessageJob(job: MessageJob, headers: IncomingMessage["headers"
   }
   const result = await handlePostMessage(
     {
-      openClawClient,
+      chatRuntime,
       sessionStore,
       validApiKeys,
       conversationStore: chatStore,
@@ -714,7 +677,7 @@ const server = createServer(async (request, response) => {
 
   if (request.method === "GET" && url.pathname.startsWith("/v1/jobs/") && url.pathname.endsWith("/events")) {
     const jobId = decodeURIComponent(url.pathname.slice("/v1/jobs/".length, -"/events".length));
-    serveJobEvents(request, response, url, jobId);
+    jobEventPublisher.serveJobEvents(request, response, url, jobId);
     return;
   }
 
@@ -916,7 +879,7 @@ const server = createServer(async (request, response) => {
     if (getSingleHeader(request.headers, "x-openclaw-sync") === "1") {
       const result = await handlePostMessage(
         {
-          openClawClient,
+          chatRuntime,
           sessionStore,
           validApiKeys,
           conversationStore: chatStore,

@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { handlePostMessage } from "./messageHandler.js";
-import type { OpenClawClient } from "../openclaw/OpenClawClient.js";
+import type { ChatRuntime } from "../runtime/ChatRuntime.js";
 import { InMemorySessionStore } from "../session/SessionStore.js";
 import type { ConversationStore } from "../session/SqliteChatStore.js";
 
 let capturedSessionId = "";
 
-const fakeOpenClawClient: OpenClawClient = {
+const fakeChatRuntime: ChatRuntime = {
   async sendMessage(input) {
     capturedSessionId = input.sessionId;
     return { reply: `reply:${input.message}` };
@@ -32,7 +32,7 @@ const conversationStore: Pick<ConversationStore, "getConversation"> = {
 
 function deps() {
   return {
-    openClawClient: fakeOpenClawClient,
+    chatRuntime: fakeChatRuntime,
     sessionStore: new InMemorySessionStore(),
     validApiKeys: new Set(["test-key"]),
     conversationStore,
