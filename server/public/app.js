@@ -14,6 +14,7 @@ const ALLOWED_ATTACHMENT_TYPES = new Set([
 const elements = {
   settingsButton: document.querySelector('#settingsButton'),
   floatingRefreshButton: document.querySelector('#floatingRefreshButton'),
+  scrollToLatestButton: document.querySelector('#scrollToLatestButton'),
   sidebarSettingsButton: document.querySelector('#sidebarSettingsButton'),
   mobileMenuButton: document.querySelector('#mobileMenuButton'),
   mobileDrawerBackdrop: document.querySelector('#mobileDrawerBackdrop'),
@@ -335,16 +336,26 @@ function isNearBottom(threshold = 120) {
   return elements.messages.scrollHeight - elements.messages.scrollTop - elements.messages.clientHeight < threshold;
 }
 
+function showScrollToLatestButton() {
+  elements.scrollToLatestButton?.classList.remove('hidden');
+}
+
+function hideScrollToLatestButton() {
+  elements.scrollToLatestButton?.classList.add('hidden');
+}
+
 function scrollToBottom(options = {}) {
   const { force = false, autoScroll = true } = options;
   if (!autoScroll) {
     return;
   }
   if (!force && !isNearBottom()) {
+    showScrollToLatestButton();
     return;
   }
   requestAnimationFrame(() => {
     elements.messages.scrollTop = elements.messages.scrollHeight;
+    hideScrollToLatestButton();
   });
 }
 
@@ -815,7 +826,7 @@ async function renderHistory(options = {}) {
 
     for (const item of history) {
       if (typeof item?.role === 'string' && typeof item?.text === 'string') {
-        appendMessage(item.role, item.text, { persist: false, autoScroll: false, mediaRefs: mediaRefsFromHistoryAttachments(item.attachments), pending: isPendingHistoryMessage(item) });
+        appendMessage(item.role, item.text, { persist: false, autoScroll: false, suppressScrollButton: true, mediaRefs: mediaRefsFromHistoryAttachments(item.attachments), pending: isPendingHistoryMessage(item) });
       }
     }
     if (scrollToLatest) {
@@ -1032,6 +1043,7 @@ async function refreshHistoryIfChanged() {
           appendMessage(item.role, item.text, {
             persist: false,
             autoScroll: false,
+            suppressScrollButton: true,
             mediaRefs: mediaRefsFromHistoryAttachments(item.attachments),
             pending: isPendingHistoryMessage(item),
           });
@@ -1041,6 +1053,9 @@ async function refreshHistoryIfChanged() {
         scrollToBottom({ force: true });
       } else {
         elements.messages.scrollTop = previousScrollTop;
+        if (history.some((item) => typeof item?.role === 'string' && item.role !== 'user' && !isPendingHistoryMessage(item))) {
+          showScrollToLatestButton();
+        }
       }
     }
   } catch {
@@ -1291,6 +1306,7 @@ function appendRetryAction(node, role, text) {
 }
 
 function renderMessageNode(node, role, text, options = {}) {
+  const wasNearBottom = isNearBottom();
   const media = extractMediaRefs(text);
   node.className = `message ${role}${options.pending ? ' pending' : ''}`;
   node.replaceChildren();
@@ -1299,7 +1315,13 @@ function renderMessageNode(node, role, text, options = {}) {
     appendMediaRef(node, ref);
   }
   appendRetryAction(node, role, text);
-  scrollToBottom(options);
+  if (options.autoScroll === false) {
+    if (!wasNearBottom && !options.pending && !options.suppressScrollButton) {
+      showScrollToLatestButton();
+    }
+    return;
+  }
+  scrollToBottom({ ...options, autoScroll: options.force || wasNearBottom });
 }
 
 function appendAttachmentPreview(parent, files) {
@@ -1348,7 +1370,13 @@ function appendMessage(role, text, options = {}) {
     node.classList.add('pending');
   }
   elements.messages.append(node);
-  scrollToBottom(options);
+  if (options.autoScroll === false) {
+    if (!isNearBottom() && !options.pending && !options.suppressScrollButton) {
+      showScrollToLatestButton();
+    }
+  } else {
+    scrollToBottom(options);
+  }
   if (options.persist !== false) {
     persistMessage(role, text);
   }
@@ -1358,11 +1386,11 @@ function appendMessage(role, text, options = {}) {
 function startThinkingMessage(options = {}) {
   const startedAt = options.startedAt || Date.now();
   const label = options.label || '응답을 작성 중입니다…';
-  const node = appendMessage('assistant', `${label} (${Math.max(1, Math.round((Date.now() - startedAt) / 1000))}초)`, { persist: false, force: true });
+  const node = appendMessage('assistant', `${label} (${Math.max(1, Math.round((Date.now() - startedAt) / 1000))}초)`, { persist: false });
   node.classList.add('pending');
   const timer = window.setInterval(() => {
     const elapsedSeconds = Math.max(1, Math.round((Date.now() - startedAt) / 1000));
-    renderMessageNode(node, 'assistant pending', `${label} (${elapsedSeconds}초)`, { force: true });
+    renderMessageNode(node, 'assistant pending', `${label} (${elapsedSeconds}초)`, { autoScroll: false });
   }, 1000);
   return {
     node,
@@ -1515,6 +1543,90 @@ async function fetchJob(jobId, conversationId = activeConversationId()) {
   return body;
 }
 
+function parseSseBlock(block) {
+  let event = 'message';
+  const dataLines = [];
+  for (const rawLine of block.split(/\r?\n/)) {
+    const line = rawLine.trimEnd();
+    if (!line || line.startsWith(':')) {
+      continue;
+    }
+    if (line.startsWith('event:')) {
+      event = line.slice('event:'.length).trim() || 'message';
+      continue;
+    }
+    if (line.startsWith('data:')) {
+      dataLines.push(line.slice('data:'.length).trimStart());
+    }
+  }
+  if (!dataLines.length) {
+    return { event, data: null };
+  }
+  const rawData = dataLines.join('\n');
+  try {
+    return { event, data: JSON.parse(rawData) };
+  } catch {
+    return { event, data: rawData };
+  }
+}
+
+async function waitForJobViaSse(jobId, onTick = () => {}, conversationId = activeConversationId()) {
+  if (!window.ReadableStream || !window.TextDecoder || !window.AbortController) {
+    throw new Error('이 브라우저는 SSE fetch stream을 지원하지 않습니다.');
+  }
+
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 720_000);
+  try {
+    const response = await fetch(apiUrl(`/v1/jobs/${encodeURIComponent(jobId)}/events`, { conversation_id: conversationId }), {
+      headers: await historyHeaders(),
+      signal: controller.signal,
+    });
+    if (!response.ok || !response.body) {
+      const body = await response.json().catch(() => null);
+      const error = new Error(body?.error?.message || `SSE HTTP ${response.status}`);
+      error.status = response.status;
+      throw error;
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    while (true) {
+      const { value, done } = await reader.read();
+      buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
+
+      let separatorIndex;
+      while ((separatorIndex = buffer.search(/\r?\n\r?\n/)) >= 0) {
+        const block = buffer.slice(0, separatorIndex);
+        const match = buffer.slice(separatorIndex).match(/^\r?\n\r?\n/);
+        buffer = buffer.slice(separatorIndex + (match ? match[0].length : 2));
+        const message = parseSseBlock(block);
+        if (message.event === 'expired') {
+          clearPendingJob(conversationId);
+          return { id: jobId, state: 'expired' };
+        }
+        if (message.event === 'job' && message.data) {
+          const job = message.data;
+          onTick(job);
+          if (job.state === 'completed' || job.state === 'failed') {
+            clearPendingJob(conversationId);
+            return job;
+          }
+        }
+      }
+
+      if (done) {
+        break;
+      }
+    }
+  } finally {
+    window.clearTimeout(timeout);
+  }
+
+  throw new Error('SSE 응답이 완료 상태 없이 종료되었습니다.');
+}
+
 async function isJobResolvedInHistory(jobId, conversationId = activeConversationId()) {
   try {
     const history = isActiveConversation(conversationId) ? await fetchHistory() : await fetchConversationHistory(conversationId);
@@ -1525,6 +1637,12 @@ async function isJobResolvedInHistory(jobId, conversationId = activeConversation
 }
 
 async function waitForJob(jobId, onTick = () => {}, conversationId = activeConversationId()) {
+  try {
+    return await waitForJobViaSse(jobId, onTick, conversationId);
+  } catch (error) {
+    console.warn('SSE job events unavailable; falling back to polling.', error);
+  }
+
   let transientFailures = 0;
   let lastError = null;
   for (let attempt = 0; attempt < 240; attempt += 1) {
@@ -1564,27 +1682,18 @@ async function resumePendingJobIfNeeded() {
   }
 
   setStatus('이전 응답 작업을 확인하는 중입니다...');
-  const thinkingMessage = startThinkingMessage({
-    startedAt: pendingJob.startedAt,
-    label: '서버에서 응답을 처리 중입니다…',
-  });
+  await refreshHistoryIfChanged();
 
   try {
     const job = await waitForJob(pendingJob.job_id, undefined, activeConversationId());
-    thinkingMessage.stop();
+    await renderHistory();
     if (job.state === 'failed') {
-      renderMessageNode(thinkingMessage.node, 'system', job.error || '응답 작업이 실패했습니다.', { force: true });
       notifyReplyReady('OpenClaw 응답 실패', job.error || '응답 작업이 실패했습니다.');
-    } else {
-      thinkingMessage.node.remove();
-      await renderHistory();
-      if (job.state === 'completed') {
-        notifyReplyReady();
-      }
+    } else if (job.state === 'completed') {
+      notifyReplyReady();
     }
   } catch (error) {
-    thinkingMessage.stop();
-    renderMessageNode(thinkingMessage.node, 'system', error instanceof Error ? error.message : String(error), { force: true });
+    appendMessage('system', error instanceof Error ? error.message : String(error), { persist: false });
   } finally {
     setStatus('');
   }
@@ -1628,7 +1737,6 @@ async function handleSubmit(event) {
     elements.includeLocationInput.checked = false;
     setStatus('OpenClaw 응답을 기다리는 중입니다...');
 
-    const thinkingMessage = startThinkingMessage();
     let activeJobId = null;
     try {
       const response = await sendMessage(outgoingMessage, attachments, metadata);
@@ -1640,28 +1748,23 @@ async function handleSubmit(event) {
         if (isActiveConversation(conversationId)) {
           setStatus('서버에서 응답을 처리 중입니다. 앱을 닫아도 작업은 계속됩니다.');
         }
+        await refreshHistoryIfChanged();
         const job = await waitForJob(response.job_id, () => {
           if (isActiveConversation(conversationId)) {
             refreshHistoryIfChanged();
           }
         }, conversationId);
-        thinkingMessage.stop();
+        if (isActiveConversation(conversationId)) {
+          await refreshHistoryIfChanged();
+        }
+        await refreshConversations().catch(() => {});
         if (job.state === 'failed') {
-          renderMessageNode(thinkingMessage.node, 'system', job.error || '응답 작업이 실패했습니다.', { force: true });
           notifyReplyReady('OpenClaw 응답 실패', job.error || '응답 작업이 실패했습니다.');
-        } else {
-          thinkingMessage.node.remove();
-          if (isActiveConversation(conversationId)) {
-            await refreshHistoryIfChanged();
-          }
-          await refreshConversations().catch(() => {});
-          if (job.state === 'completed') {
-            notifyReplyReady();
-          }
+        } else if (job.state === 'completed') {
+          notifyReplyReady();
         }
       } else {
-        thinkingMessage.stop();
-        renderMessageNode(thinkingMessage.node, 'assistant', response.reply || '(빈 응답)', { force: true });
+        appendMessage('assistant', response.reply || '(빈 응답)', { force: true });
       }
       setStatus('');
       window.setTimeout(refreshHistoryIfChanged, 800);
@@ -1669,21 +1772,17 @@ async function handleSubmit(event) {
     } catch (error) {
       if (activeJobId && await isJobResolvedInHistory(activeJobId, conversation.id)) {
         clearPendingJob();
-        thinkingMessage.stop();
-        thinkingMessage.node.remove();
         setStatus('');
         notifyReplyReady();
         return;
       }
       const errorMessage = error instanceof Error ? error.message : String(error);
-      thinkingMessage.stop();
       if (activeJobId) {
-        thinkingMessage.node.remove();
         setStatus('응답 상태 확인이 일시적으로 끊겼습니다. 대화 기록을 새로고침하면 이어서 확인합니다.');
         window.setTimeout(refreshHistoryIfChanged, 800);
         return;
       }
-      renderMessageNode(thinkingMessage.node, 'system', errorMessage, { force: true });
+      appendMessage('system', errorMessage, { persist: false });
       setStatus('');
     }
   } catch (error) {
@@ -1918,6 +2017,12 @@ elements.clearHistoryButton.addEventListener('click', async () => {
 elements.healthCheckButton.addEventListener('click', healthCheck);
 elements.refreshAppButton.addEventListener('click', () => window.location.reload());
 elements.floatingRefreshButton.addEventListener('click', () => window.location.reload());
+elements.scrollToLatestButton?.addEventListener('click', () => scrollToBottom({ force: true }));
+elements.messages.addEventListener('scroll', () => {
+  if (isNearBottom(80)) {
+    hideScrollToLatestButton();
+  }
+});
 elements.clearCacheButton.addEventListener('click', clearAppCacheAndReload);
 elements.notificationButton.addEventListener('click', enableNotifications);
 elements.mediaViewerDownload.addEventListener('click', downloadCurrentMedia);

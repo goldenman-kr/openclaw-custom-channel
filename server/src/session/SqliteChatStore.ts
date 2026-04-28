@@ -224,6 +224,7 @@ export class SqliteChatStore implements ConversationStore, MessageStore, JobStor
       return null;
     }
     const createdAt = patch.createdAt ?? current.created_at;
+    const updatedAt = patch.createdAt ?? new Date().toISOString();
     this.db
       .prepare(
         `UPDATE messages
@@ -237,7 +238,7 @@ export class SqliteChatStore implements ConversationStore, MessageStore, JobStor
         jobId: patch.jobId === undefined ? current.job_id : patch.jobId,
         createdAt,
       });
-    this.db.prepare("UPDATE conversations SET updated_at = ? WHERE id = ?").run(createdAt, current.conversation_id);
+    this.db.prepare("UPDATE conversations SET updated_at = ? WHERE id = ?").run(updatedAt, current.conversation_id);
     const row = this.db.prepare("SELECT * FROM messages WHERE id = ?").get(id) as MessageRow | undefined;
     return row ? mapMessage(row, this.attachmentsFor([id]).get(id) ?? []) : null;
   }
