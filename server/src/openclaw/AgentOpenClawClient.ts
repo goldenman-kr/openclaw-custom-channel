@@ -45,7 +45,7 @@ export class AgentOpenClawClient implements OpenClawClient {
     });
 
     return {
-      reply: extractReply(result.stdout) || result.stdout.trim() || result.stderr.trim() || "Agent turn completed.",
+      reply: extractReply(result.stdout) || extractReply(result.stderr) || "응답은 완료됐지만 출력 형식을 해석하지 못했습니다.",
       raw: {
         stdout: result.stdout,
         stderr: result.stderr,
@@ -105,36 +105,68 @@ interface SavedAttachment extends MessageAttachment {
 }
 
 function extractReply(stdout: string): string | null {
-  try {
-    const parsed = JSON.parse(stdout) as Record<string, unknown>;
-    const nestedText = pickNestedText(parsed);
-    if (nestedText) {
-      return nestedText;
-    }
-
-    for (const key of ["reply", "message", "text", "output", "content"]) {
-      const value = parsed[key];
-      if (typeof value === "string" && value.trim()) {
-        return value.trim();
-      }
-    }
-  } catch {
+  const parsed = parseAgentJson(stdout);
+  if (!parsed) {
     return null;
+  }
+
+  const nestedText = pickNestedText(parsed);
+  if (nestedText) {
+    return nestedText;
+  }
+
+  for (const key of ["reply", "message", "text", "output", "content"]) {
+    const value = parsed[key];
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
   }
 
   return null;
 }
 
-function pickNestedText(parsed: Record<string, unknown>): string | null {
-  const result = asRecord(parsed.result);
-  const payloads = asArray(result?.payloads);
-  const firstPayload = asRecord(payloads?.[0]);
-  const payloadText = asString(firstPayload?.text);
-  if (payloadText) {
-    return payloadText;
+function parseAgentJson(stdout: string): Record<string, unknown> | null {
+  const trimmed = stdout.trim();
+  if (!trimmed) {
+    return null;
   }
 
-  const meta = asRecord(result?.meta);
+  try {
+    return JSON.parse(trimmed) as Record<string, unknown>;
+  } catch {
+    // OpenClaw can print a human-readable fallback notice before the JSON result
+    // when the Gateway restarts mid-turn. In that case, recover the trailing JSON
+    // instead of saving the entire mixed stdout blob as the assistant reply.
+  }
+
+  const firstBrace = trimmed.indexOf("{");
+  const lastBrace = trimmed.lastIndexOf("}");
+  if (firstBrace < 0 || lastBrace <= firstBrace) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(trimmed.slice(firstBrace, lastBrace + 1)) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+function pickNestedText(parsed: Record<string, unknown>): string | null {
+  const directPayloadText = pickPayloadText(parsed);
+  if (directPayloadText) {
+    return directPayloadText;
+  }
+
+  const result = asRecord(parsed.result);
+  if (result) {
+    const resultPayloadText = pickPayloadText(result);
+    if (resultPayloadText) {
+      return resultPayloadText;
+    }
+  }
+
+  const meta = asRecord(result?.meta) ?? asRecord(parsed.meta);
   const finalAssistantVisibleText = asString(meta?.finalAssistantVisibleText);
   if (finalAssistantVisibleText) {
     return finalAssistantVisibleText;
@@ -146,6 +178,12 @@ function pickNestedText(parsed: Record<string, unknown>): string | null {
   }
 
   return null;
+}
+
+function pickPayloadText(parsed: Record<string, unknown>): string | null {
+  const payloads = asArray(parsed.payloads);
+  const firstPayload = asRecord(payloads?.[0]);
+  return asString(firstPayload?.text);
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
