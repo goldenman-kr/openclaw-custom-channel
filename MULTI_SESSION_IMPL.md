@@ -670,3 +670,64 @@ PLAN 7.4의 “SSE로 job 상태와 최종 응답 이벤트 제공” 단계를 
 주의:
 
 - 현재 단계는 상태/완료 이벤트 스트리밍이다. 토큰 단위 텍스트 streaming은 OpenClaw runtime/transport가 생성 중 텍스트 조각을 제공할 수 있을 때 `token`/`done` 이벤트를 추가하는 별도 단계로 남긴다.
+
+## 23. ChatRuntime 인터페이스 경계 1차 분리
+
+나중에 OpenClaw CLI transport를 Gateway/plugin/streaming transport로 교체하기 쉽게 하기 위해 server 내부 runtime 경계를 1차로 분리했다.
+
+변경 파일:
+
+- `server/src/runtime/ChatRuntime.ts`
+- `server/src/runtime/OpenClawChatRuntime.ts`
+- `server/src/http/messageHandler.ts`
+- `server/src/http/messageHandler.test.ts`
+- `server/src/http/conversationHandler.test.ts`
+- `server/src/index.ts`
+
+적용 내용:
+
+- `ChatRuntime` 인터페이스를 추가했다.
+  - 입력: `sessionId`, `message`, `userId`, `attachments`, `metadata`
+  - 출력: `reply`, optional `raw`
+- `OpenClawChatRuntime` adapter를 추가해 기존 `OpenClawClient` 구현체를 감싼다.
+- HTTP message handler는 더 이상 `OpenClawClient`에 직접 의존하지 않고 `ChatRuntime`에 의존한다.
+- 기존 `AgentOpenClawClient`/`CliOpenClawClient`/`MockOpenClawClient`는 그대로 유지해 기능 변경을 최소화했다.
+- 테스트 fake도 `OpenClawClient` 대신 `ChatRuntime` 기준으로 바꿨다.
+
+의미:
+
+- 현재 동작은 그대로 유지하면서, 이후 streaming 가능한 runtime을 추가할 때 `ChatRuntime` 구현체만 교체/확장하는 방향으로 갈 수 있다.
+- token-level streaming은 아직 구현하지 않았다. 다음 분리 후보는 SSE/polling 전달 책임을 `EventPublisher` 계층으로 빼는 작업이다.
+
+검증:
+
+- `npm --prefix server test` 통과
+- `npm --prefix server run build` 통과
+
+## 24. EventPublisher 경계 1차 분리
+
+SSE job event 전달 책임을 `index.ts`에서 분리해 `EventPublisher` 계층의 첫 구현체로 옮겼다.
+
+변경 파일:
+
+- `server/src/events/SseJobEventPublisher.ts`
+- `server/src/index.ts`
+- `MULTI_SESSION_IMPL.md`
+
+적용 내용:
+
+- `SseJobEventPublisher`를 추가했다.
+- `GET /v1/jobs/:id/events` 라우트는 계속 `index.ts`에서 잡지만, 실제 인증 확인, SSE header 작성, `event: job`/`event: expired` 송신, interval cleanup은 publisher가 담당한다.
+- publisher는 `getJob(jobId, request, url)` 콜백으로 job 상태를 가져오므로, polling/SSE/WebSocket 등 전달 방식이 job 저장소 구현에 직접 묶이지 않는다.
+- 기존 SSE endpoint contract와 Web/PWA fetch-stream fallback 동작은 유지했다.
+
+의미:
+
+- PLAN 12의 `EventPublisher` 분리 방향에 맞춰 첫 경계를 만들었다.
+- 이후 token-level streaming이 가능해지면 같은 publisher 계층에 `token`/`done` 이벤트를 추가하거나, WebSocket publisher를 별도 구현체로 추가할 수 있다.
+
+검증:
+
+- `npm --prefix server test` 통과
+- `npm --prefix server run build` 통과
+- mock server smoke에서 conversation 생성 → message enqueue → `/v1/jobs/:id/events?conversation_id=...` 수신 → `event: job` 및 `state: completed` 확인

@@ -1,14 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { handlePostMessage } from "./messageHandler.js";
-import type { OpenClawClient } from "../openclaw/OpenClawClient.js";
+import type { ChatRuntime } from "../runtime/ChatRuntime.js";
 import { InMemorySessionStore } from "../session/SessionStore.js";
 
-let fakeOpenClawCalls = 0;
+let fakeRuntimeCalls = 0;
 
-const fakeOpenClawClient: OpenClawClient = {
+const fakeChatRuntime: ChatRuntime = {
   async sendMessage(input) {
-    fakeOpenClawCalls += 1;
+    fakeRuntimeCalls += 1;
     return {
       reply: `reply:${input.message}`,
     };
@@ -17,7 +17,7 @@ const fakeOpenClawClient: OpenClawClient = {
 
 function deps() {
   return {
-    openClawClient: fakeOpenClawClient,
+    chatRuntime: fakeChatRuntime,
     sessionStore: new InMemorySessionStore(),
     validApiKeys: new Set(["test-key"]),
   };
@@ -69,7 +69,7 @@ test("rejects blank message", async () => {
 });
 
 test("blocks direct /new command before calling OpenClaw", async () => {
-  fakeOpenClawCalls = 0;
+  fakeRuntimeCalls = 0;
   const result = await handlePostMessage(
     deps(),
     { authorization: "Bearer test-key" },
@@ -77,7 +77,7 @@ test("blocks direct /new command before calling OpenClaw", async () => {
   );
 
   assert.equal(result.statusCode, 400);
-  assert.equal(fakeOpenClawCalls, 0);
+  assert.equal(fakeRuntimeCalls, 0);
   assert.equal("error" in result.body, true);
   if ("error" in result.body) {
     assert.equal(result.body.error.code, "VALIDATION_NEW_COMMAND_BLOCKED");

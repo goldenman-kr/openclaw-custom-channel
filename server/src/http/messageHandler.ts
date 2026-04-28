@@ -8,7 +8,7 @@ import {
   type MessageResponseDto,
   validateMessageRequestDto,
 } from "../contracts/apiContractV1.js";
-import type { OpenClawClient } from "../openclaw/OpenClawClient.js";
+import type { ChatRuntime } from "../runtime/ChatRuntime.js";
 import type { ConversationStore } from "../session/SqliteChatStore.js";
 import type { SessionStore } from "../session/SessionStore.js";
 
@@ -18,7 +18,7 @@ export interface HttpResult {
 }
 
 export interface MessageHandlerDeps {
-  openClawClient: OpenClawClient;
+  chatRuntime: ChatRuntime;
   sessionStore: SessionStore;
   validApiKeys: Set<string>;
   conversationStore?: Pick<ConversationStore, "getConversation">;
@@ -126,7 +126,7 @@ export async function handlePostMessage(
   const sessionId = conversation?.openclawSessionId ?? deps.sessionStore.getSessionId({ deviceId, userId });
 
   try {
-    const result = await deps.openClawClient.sendMessage({
+    const result = await deps.chatRuntime.sendMessage({
       sessionId,
       message: payload.message,
       userId,
