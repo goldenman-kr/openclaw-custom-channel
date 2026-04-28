@@ -32,6 +32,7 @@ export interface MessageRequestMetadata {
 }
 
 export interface MessageRequestDto {
+  conversation_id?: string;
   message: string;
   attachments?: MessageAttachment[];
   metadata?: MessageRequestMetadata;
@@ -41,6 +42,7 @@ export interface MessageResponseDto {
   reply: string;
   request_id: string;
   session_id: string;
+  conversation_id?: string;
 }
 
 export interface ErrorResponseDto {
@@ -57,10 +59,12 @@ export type ErrorCode =
   | "AUTH_MISSING_TOKEN"
   | "VALIDATION_MESSAGE_REQUIRED"
   | "VALIDATION_SLASH_WITH_ATTACHMENTS"
+  | "VALIDATION_NEW_COMMAND_BLOCKED"
   | "VALIDATION_ATTACHMENT_TYPE_NOT_ALLOWED"
   | "VALIDATION_ATTACHMENT_TOO_LARGE"
   | "VALIDATION_ATTACHMENT_TOTAL_TOO_LARGE"
   | "VALIDATION_ATTACHMENT_COUNT_EXCEEDED"
+  | "CONVERSATION_NOT_FOUND"
   | "UPSTREAM_OPENCLAW_UNAVAILABLE"
   | "UPSTREAM_OPENCLAW_TIMEOUT"
   | "INTERNAL_SERVER_ERROR";
@@ -121,7 +125,15 @@ export function validateMessageRequestDto(
     };
   }
 
+  const normalizedMessage = payload.message.trim();
   const attachments = payload.attachments ?? [];
+
+  if (normalizedMessage === "/new" || normalizedMessage.startsWith("/new ")) {
+    return {
+      code: "VALIDATION_NEW_COMMAND_BLOCKED",
+      message: "이 웹챗에서는 /new 대신 “새 대화 시작” 버튼을 사용해주세요.",
+    };
+  }
 
   if (payload.message.trimStart().startsWith("/") && attachments.length > 0) {
     return {

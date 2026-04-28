@@ -1,6 +1,5 @@
 const STORAGE_KEY = 'openclaw-web-channel-settings-v1';
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
-const LEGACY_HISTORY_KEY_PREFIX = 'openclaw-web-channel-history-v1';
 const MAX_ATTACHMENTS = 3;
 const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
 const ALLOWED_ATTACHMENT_TYPES = new Set([
@@ -15,6 +14,19 @@ const ALLOWED_ATTACHMENT_TYPES = new Set([
 const elements = {
   settingsButton: document.querySelector('#settingsButton'),
   floatingRefreshButton: document.querySelector('#floatingRefreshButton'),
+  sidebarSettingsButton: document.querySelector('#sidebarSettingsButton'),
+  mobileMenuButton: document.querySelector('#mobileMenuButton'),
+  mobileDrawerBackdrop: document.querySelector('#mobileDrawerBackdrop'),
+  newConversationButton: document.querySelector('#newConversationButton'),
+  conversationList: document.querySelector('#conversationList'),
+  conversationRenameDialog: document.querySelector('#conversationRenameDialog'),
+  conversationRenameInput: document.querySelector('#conversationRenameInput'),
+  conversationRenameCancel: document.querySelector('#conversationRenameCancel'),
+  conversationRenameConfirm: document.querySelector('#conversationRenameConfirm'),
+  conversationDeleteDialog: document.querySelector('#conversationDeleteDialog'),
+  conversationDeleteText: document.querySelector('#conversationDeleteText'),
+  conversationDeleteCancel: document.querySelector('#conversationDeleteCancel'),
+  conversationDeleteConfirm: document.querySelector('#conversationDeleteConfirm'),
   settingsPanel: document.querySelector('#settingsPanel'),
   apiUrlInput: document.querySelector('#apiUrlInput'),
   apiKeyInput: document.querySelector('#apiKeyInput'),
@@ -73,6 +85,7 @@ function loadSettings() {
     fontSize: 16,
     notificationsEnabled: false,
     sessionNonce: '',
+    lastActiveConversationId: '',
   };
 
   try {
@@ -91,6 +104,9 @@ let historyPollTimer = null;
 let isSendingMessage = false;
 let selectedAttachments = [];
 let lastHistoryVersion = null;
+let activeConversation = null;
+let openConversationMenuId = null;
+let conversations = [];
 let mediaViewerCurrentUrl = '';
 let mediaViewerCurrentName = 'openclaw-image.png';
 const mediaUrlCache = new Map();
@@ -98,7 +114,6 @@ const slashCommands = [
   { command: '/status', title: '상태 확인', description: '현재 세션/모델/토큰/설정 상태를 확인합니다.' },
   { command: '/model ', title: '모델 변경', description: '모델을 지정합니다. 예: /model gpt-5.5' },
   { command: '/models', title: '모델 목록', description: '사용 가능한 모델 목록을 봅니다.' },
-  { command: '/new', title: '새 대화', description: '새 세션/대화 흐름을 시작합니다.' },
   { command: '/reset', title: '대화 초기화', description: '현재 대화 맥락을 초기화합니다.' },
   { command: '/reasoning', title: '추론 표시 전환', description: 'reasoning 설정을 켜거나 끕니다.' },
   { command: '/help', title: '도움말', description: 'OpenClaw 명령 도움말을 표시합니다.' },
@@ -333,6 +348,24 @@ function scrollToBottom(options = {}) {
   });
 }
 
+function openMobileDrawer() {
+  document.body.classList.add('drawer-open');
+  elements.mobileMenuButton?.setAttribute('aria-expanded', 'true');
+}
+
+function closeMobileDrawer() {
+  document.body.classList.remove('drawer-open');
+  elements.mobileMenuButton?.setAttribute('aria-expanded', 'false');
+}
+
+function toggleMobileDrawer() {
+  if (document.body.classList.contains('drawer-open')) {
+    closeMobileDrawer();
+  } else {
+    openMobileDrawer();
+  }
+}
+
 async function hashText(text) {
   if (crypto.subtle) {
     const bytes = new TextEncoder().encode(text);
@@ -372,8 +405,378 @@ function canUseApi() {
   return Boolean(settings.apiUrl && settings.apiKey);
 }
 
+function apiUrl(path, params = {}) {
+  const url = new URL(path, settings.apiUrl);
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== null && String(value).trim()) {
+      url.searchParams.set(key, String(value));
+    }
+  }
+  return url.toString();
+}
+
+async function apiHeaders(extra = {}) {
+  return {
+    ...(await historyHeaders()),
+    ...extra,
+  };
+}
+
+function activeConversationId() {
+  return activeConversation?.id || settings.lastActiveConversationId || '';
+}
+
+function conversationTitle(conversation) {
+  const title = typeof conversation?.title === 'string' ? conversation.title.trim() : '';
+  return title || '새 대화';
+}
+
+function formatConversationDate(value) {
+  const time = Date.parse(value || '');
+  if (!Number.isFinite(time)) {
+    return '';
+  }
+  const date = new Date(time);
+  return date.toLocaleDateString('ko-KR', { month: 'short', day: 'numeric' });
+}
+
+function renderConversationList() {
+  if (!elements.conversationList) {
+    return;
+  }
+  elements.conversationList.replaceChildren();
+  if (!canUseApi()) {
+    const empty = document.createElement('p');
+    empty.className = 'conversation-empty';
+    empty.textContent = 'API Key를 저장하면 대화 목록이 표시됩니다.';
+    elements.conversationList.append(empty);
+    return;
+  }
+  if (conversations.length === 0) {
+    const empty = document.createElement('p');
+    empty.className = 'conversation-empty';
+    empty.textContent = '대화가 없습니다.';
+    elements.conversationList.append(empty);
+    return;
+  }
+  const activeId = activeConversationId();
+  for (const conversation of conversations) {
+    const item = document.createElement('div');
+    item.className = `conversation-item${conversation.id === activeId ? ' active' : ''}`;
+    item.dataset.conversationId = conversation.id;
+
+    const selectButton = document.createElement('button');
+    selectButton.type = 'button';
+    selectButton.className = 'conversation-select-button';
+    selectButton.addEventListener('click', () => selectConversation(conversation.id));
+
+    const title = document.createElement('span');
+    title.className = 'conversation-title';
+    title.textContent = conversationTitle(conversation);
+    const meta = document.createElement('span');
+    meta.className = 'conversation-meta';
+    meta.textContent = formatConversationDate(conversation.updated_at || conversation.created_at);
+    selectButton.append(title, meta);
+
+    const menuWrap = document.createElement('div');
+    menuWrap.className = 'conversation-menu-wrap';
+    const menuButton = document.createElement('button');
+    menuButton.type = 'button';
+    menuButton.className = 'conversation-menu-button ghost-button';
+    menuButton.setAttribute('aria-label', `${conversationTitle(conversation)} 메뉴`);
+    menuButton.setAttribute('aria-expanded', openConversationMenuId === conversation.id ? 'true' : 'false');
+    menuButton.textContent = '⋯';
+    menuButton.addEventListener('click', (event) => {
+      event.stopPropagation();
+      openConversationMenuId = openConversationMenuId === conversation.id ? null : conversation.id;
+      renderConversationList();
+    });
+
+    const menu = document.createElement('div');
+    menu.className = `conversation-menu${openConversationMenuId === conversation.id ? '' : ' hidden'}`;
+    const renameButton = document.createElement('button');
+    renameButton.type = 'button';
+    renameButton.textContent = '이름 변경';
+    renameButton.addEventListener('click', async (event) => {
+      event.stopPropagation();
+      openConversationMenuId = null;
+      renderConversationList();
+      await renameConversation(conversation.id);
+    });
+    const deleteButton = document.createElement('button');
+    deleteButton.type = 'button';
+    deleteButton.className = 'danger-menu-item';
+    deleteButton.textContent = '삭제';
+    deleteButton.addEventListener('click', async (event) => {
+      event.stopPropagation();
+      openConversationMenuId = null;
+      renderConversationList();
+      await deleteConversation(conversation.id);
+    });
+    menu.append(renameButton, deleteButton);
+    menuWrap.append(menuButton, menu);
+
+    item.append(selectButton, menuWrap);
+    elements.conversationList.append(item);
+  }
+}
+
+async function refreshConversations() {
+  if (!canUseApi()) {
+    conversations = [];
+    renderConversationList();
+    return conversations;
+  }
+  conversations = await fetchConversations();
+  renderConversationList();
+  return conversations;
+}
+
+async function selectConversation(conversationId) {
+  if (!conversationId || conversationId === activeConversationId()) {
+    return;
+  }
+  const conversation = conversations.find((item) => item.id === conversationId) || null;
+  if (!conversation) {
+    return;
+  }
+  activeConversation = conversation;
+  settings.lastActiveConversationId = conversation.id;
+  saveSettings(settings);
+  lastHistoryVersion = null;
+  clearPendingJob();
+  renderConversationList();
+  closeMobileDrawer();
+  await renderHistory({ scrollToLatest: true });
+  await resumePendingJobIfNeeded();
+}
+
+async function fetchConversations() {
+  const response = await fetch(apiUrl('/v1/conversations'), {
+    headers: await historyHeaders(),
+  });
+  if (!response.ok) {
+    throw new Error(`대화 목록을 불러오지 못했습니다: HTTP ${response.status}`);
+  }
+  const body = await response.json();
+  return Array.isArray(body.conversations) ? body.conversations : [];
+}
+
+async function createConversation(title = '새 대화') {
+  const response = await fetch(apiUrl('/v1/conversations'), {
+    method: 'POST',
+    headers: await apiHeaders({ 'content-type': 'application/json' }),
+    body: JSON.stringify({ title }),
+  });
+  const body = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error(body?.error?.message || `대화 생성을 실패했습니다: HTTP ${response.status}`);
+  }
+  return body.conversation;
+}
+
+async function updateConversationTitle(conversationId, title) {
+  const response = await fetch(apiUrl(`/v1/conversations/${encodeURIComponent(conversationId)}`), {
+    method: 'PATCH',
+    headers: await apiHeaders({ 'content-type': 'application/json' }),
+    body: JSON.stringify({ title }),
+  });
+  const body = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error(body?.error?.message || `대화 이름 변경을 실패했습니다: HTTP ${response.status}`);
+  }
+  return body.conversation;
+}
+
+async function destroyConversation(conversationId) {
+  const response = await fetch(apiUrl(`/v1/conversations/${encodeURIComponent(conversationId)}`), {
+    method: 'DELETE',
+    headers: await apiHeaders(),
+  });
+  const body = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error(body?.error?.message || `대화 삭제를 실패했습니다: HTTP ${response.status}`);
+  }
+  return body;
+}
+
+function closeDialog(dialog) {
+  if (!dialog) {
+    return;
+  }
+  if (typeof dialog.close === 'function' && dialog.open) {
+    dialog.close();
+    return;
+  }
+}
+
+function openRenameDialog(currentTitle) {
+  const dialog = elements.conversationRenameDialog;
+  if (!dialog || !elements.conversationRenameInput) {
+    const fallback = window.prompt('새 대화 이름을 입력하세요.', currentTitle);
+    return Promise.resolve(fallback === null ? null : fallback.trim());
+  }
+  elements.conversationRenameInput.value = currentTitle;
+  return new Promise((resolve) => {
+    let settled = false;
+    const settle = (value) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanup();
+      closeDialog(dialog);
+      resolve(value);
+    };
+    const cleanup = () => {
+      elements.conversationRenameConfirm?.removeEventListener('click', onConfirm);
+      elements.conversationRenameCancel?.removeEventListener('click', onCancel);
+      dialog.removeEventListener('cancel', onCancel);
+      dialog.removeEventListener('close', onClose);
+    };
+    const onConfirm = () => settle(elements.conversationRenameInput.value.trim());
+    const onCancel = () => settle(null);
+    const onClose = () => settle(null);
+    elements.conversationRenameConfirm?.addEventListener('click', onConfirm);
+    elements.conversationRenameCancel?.addEventListener('click', onCancel);
+    dialog.addEventListener('cancel', onCancel);
+    dialog.addEventListener('close', onClose);
+    dialog.showModal?.();
+    elements.conversationRenameInput.focus();
+    elements.conversationRenameInput.select();
+  });
+}
+
+function openDeleteDialog(title) {
+  const dialog = elements.conversationDeleteDialog;
+  if (!dialog) {
+    return Promise.resolve(window.confirm(`“${title}” 대화를 삭제할까요? 이 작업은 되돌릴 수 없습니다.`));
+  }
+  if (elements.conversationDeleteText) {
+    elements.conversationDeleteText.textContent = `“${title}” 대화를 삭제할까요?`;
+  }
+  return new Promise((resolve) => {
+    let settled = false;
+    const settle = (value) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanup();
+      closeDialog(dialog);
+      resolve(value);
+    };
+    const cleanup = () => {
+      elements.conversationDeleteConfirm?.removeEventListener('click', onConfirm);
+      elements.conversationDeleteCancel?.removeEventListener('click', onCancel);
+      dialog.removeEventListener('cancel', onCancel);
+      dialog.removeEventListener('close', onClose);
+    };
+    const onConfirm = () => settle(true);
+    const onCancel = () => settle(false);
+    const onClose = () => settle(false);
+    elements.conversationDeleteConfirm?.addEventListener('click', onConfirm);
+    elements.conversationDeleteCancel?.addEventListener('click', onCancel);
+    dialog.addEventListener('cancel', onCancel);
+    dialog.addEventListener('close', onClose);
+    dialog.showModal?.();
+  });
+}
+
+async function renameConversation(conversationId) {
+  const conversation = conversations.find((item) => item.id === conversationId);
+  if (!conversation) {
+    return;
+  }
+  const nextTitle = await openRenameDialog(conversationTitle(conversation));
+  if (!nextTitle || nextTitle === conversationTitle(conversation)) {
+    return;
+  }
+  try {
+    const updated = await updateConversationTitle(conversation.id, nextTitle);
+    conversations = conversations.map((item) => item.id === updated.id ? updated : item);
+    if (activeConversation?.id === updated.id) {
+      activeConversation = updated;
+    }
+    renderConversationList();
+    appendMessage('system', '대화 이름을 변경했습니다.', { persist: false });
+  } catch (error) {
+    appendMessage('system', error instanceof Error ? error.message : String(error), { persist: false });
+  }
+}
+
+async function deleteConversation(conversationId) {
+  const conversation = conversations.find((item) => item.id === conversationId);
+  if (!conversation) {
+    return;
+  }
+  const confirmed = await openDeleteDialog(conversationTitle(conversation));
+  if (!confirmed) {
+    return;
+  }
+  try {
+    await destroyConversation(conversation.id);
+    conversations = conversations.filter((item) => item.id !== conversation.id);
+    if (activeConversation?.id === conversation.id) {
+      activeConversation = conversations[0] || null;
+      settings.lastActiveConversationId = activeConversation?.id || '';
+      saveSettings(settings);
+      lastHistoryVersion = null;
+      clearPendingJob();
+      clearRenderedMessages();
+      if (activeConversation) {
+        await renderHistory({ scrollToLatest: true });
+      } else if (canUseApi()) {
+        activeConversation = await createConversation('새 대화');
+        conversations = [activeConversation];
+        settings.lastActiveConversationId = activeConversation.id;
+        saveSettings(settings);
+        await renderHistory({ scrollToLatest: true });
+      }
+    }
+    renderConversationList();
+    appendMessage('system', '대화를 삭제했습니다.', { persist: false });
+  } catch (error) {
+    appendMessage('system', error instanceof Error ? error.message : String(error), { persist: false });
+  }
+}
+
+async function ensureActiveConversation() {
+  if (activeConversation?.id) {
+    return activeConversation;
+  }
+  assertValidApiKey(settings.apiKey);
+  conversations = await fetchConversations();
+  const preferred = settings.lastActiveConversationId
+    ? conversations.find((conversation) => conversation.id === settings.lastActiveConversationId)
+    : null;
+  activeConversation = preferred || conversations[0] || await createConversation('새 대화');
+  settings.lastActiveConversationId = activeConversation.id;
+  if (!conversations.some((conversation) => conversation.id === activeConversation.id)) {
+    conversations = [activeConversation, ...conversations];
+  }
+  saveSettings(settings);
+  renderConversationList();
+  return activeConversation;
+}
+
+async function startNewConversation() {
+  activeConversation = await createConversation('새 대화');
+  settings.lastActiveConversationId = activeConversation.id;
+  conversations = [activeConversation, ...conversations.filter((conversation) => conversation.id !== activeConversation.id)];
+  saveSettings(settings);
+  lastHistoryVersion = null;
+  clearPendingJob();
+  clearRenderedMessages();
+  renderConversationList();
+  await renderHistory({ scrollToLatest: true });
+  closeMobileDrawer();
+  return activeConversation;
+}
+
 async function fetchHistory() {
-  const response = await fetch(`${settings.apiUrl}/v1/history`, {
+  const conversation = await ensureActiveConversation();
+  const response = await fetch(apiUrl('/v1/history', { conversation_id: conversation.id }), {
     headers: await historyHeaders(),
   });
   if (!response.ok) {
@@ -385,91 +788,14 @@ async function fetchHistory() {
 }
 
 async function fetchHistoryMeta() {
-  const response = await fetch(`${settings.apiUrl}/v1/history?meta=1`, {
+  const conversation = await ensureActiveConversation();
+  const response = await fetch(apiUrl('/v1/history', { meta: '1', conversation_id: conversation.id }), {
     headers: await historyHeaders(),
   });
   if (!response.ok) {
     throw new Error(`대화 기록 상태를 확인하지 못했습니다: HTTP ${response.status}`);
   }
   return response.json();
-}
-
-async function clearServerHistory() {
-  const response = await fetch(`${settings.apiUrl}/v1/history`, {
-    method: 'DELETE',
-    headers: await historyHeaders(),
-  });
-  if (!response.ok) {
-    throw new Error(`대화 기록을 삭제하지 못했습니다: HTTP ${response.status}`);
-  }
-}
-
-async function startNewOpenClawConversation() {
-  const response = await fetch(`${settings.apiUrl}/v1/message`, {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      authorization: `Bearer ${settings.apiKey}`,
-      'x-user-id': await sharedUserId(),
-      'x-openclaw-sync': '1',
-    },
-    body: JSON.stringify({ message: '/new' }),
-  });
-  const body = await response.json().catch(() => null);
-  if (!response.ok) {
-    const detail = body?.error?.message || `HTTP ${response.status}`;
-    throw new Error(`새 대화를 시작하지 못했습니다: ${detail}`);
-  }
-}
-
-async function appendServerHistoryMessages(messages) {
-  const response = await fetch(`${settings.apiUrl}/v1/history`, {
-    method: 'POST',
-    headers: {
-      ...(await historyHeaders()),
-      'content-type': 'application/json',
-    },
-    body: JSON.stringify({ messages }),
-  });
-  if (!response.ok) {
-    throw new Error(`대화 기록을 저장하지 못했습니다: HTTP ${response.status}`);
-  }
-}
-
-function loadLegacyHistory() {
-  try {
-    const key = `${LEGACY_HISTORY_KEY_PREFIX}:${settings.deviceId || 'anonymous'}`;
-    const parsed = JSON.parse(localStorage.getItem(key) || '[]');
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
-async function importLegacyHistoryIfNeeded(serverHistory) {
-  if (serverHistory.length > 0) {
-    return serverHistory;
-  }
-
-  const legacyHistory = loadLegacyHistory().filter(
-    (item) => typeof item?.role === 'string' && typeof item?.text === 'string',
-  );
-  if (legacyHistory.length === 0) {
-    return serverHistory;
-  }
-
-  const response = await fetch(`${settings.apiUrl}/v1/history`, {
-    method: 'POST',
-    headers: {
-      ...(await historyHeaders()),
-      'content-type': 'application/json',
-    },
-    body: JSON.stringify({ messages: legacyHistory }),
-  });
-  if (!response.ok) {
-    return legacyHistory;
-  }
-  return legacyHistory;
 }
 
 async function renderHistory(options = {}) {
@@ -481,7 +807,7 @@ async function renderHistory(options = {}) {
   }
 
   try {
-    const history = await importLegacyHistoryIfNeeded(await fetchHistory());
+    const history = await fetchHistory();
     if (history.length === 0) {
       appendMessage('system', 'OpenClaw Web Channel MVP입니다. 현재위치 포함을 켜면 전송 시 GPS 좌표가 메시지에 붙습니다.', { persist: false });
       return;
@@ -681,11 +1007,11 @@ function isPendingHistoryMessage(item) {
     return false;
   }
   const text = typeof item.text === 'string' ? item.text.trim() : '';
-  return text === '응답을 처리 중입니다…' || /^응답을 처리 중입니다\s*\(\d+초\)$/.test(text);
+  return text === '응답 대기 중입니다…' || text === '응답을 처리 중입니다…' || /^응답을 처리 중입니다\s*\(\d+초\)$/.test(text);
 }
 
 async function refreshHistoryIfChanged() {
-  if (!canUseApi() || document.hidden || isSendingMessage) {
+  if (!canUseApi() || document.hidden) {
     return;
   }
 
@@ -1052,7 +1378,12 @@ function setSending(isSending) {
   elements.sendButton.disabled = isSending;
   elements.messageInput.disabled = isSending;
   elements.includeLocationInput.disabled = isSending;
+  elements.attachButton.disabled = isSending;
   elements.sendButton.textContent = isSending ? '전송 중' : '전송';
+}
+
+function isActiveConversation(conversationId) {
+  return conversationId && conversationId === activeConversationId();
 }
 
 function locationErrorMessage(error) {
@@ -1120,14 +1451,15 @@ function delay(ms) {
 
 async function sendMessage(message, attachments = [], metadata = undefined) {
   assertValidApiKey(settings.apiKey);
-  const response = await fetch(`${settings.apiUrl}/v1/message`, {
+  const conversation = await ensureActiveConversation();
+  const response = await fetch(apiUrl('/v1/message'), {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
       authorization: `Bearer ${settings.apiKey}`,
       'x-user-id': await sharedUserId(),
     },
-    body: JSON.stringify({ message, attachments, ...(metadata ? { metadata } : {}) }),
+    body: JSON.stringify({ conversation_id: conversation.id, message, attachments, ...(metadata ? { metadata } : {}) }),
   });
 
   const body = await response.json().catch(() => null);
@@ -1138,29 +1470,40 @@ async function sendMessage(message, attachments = [], metadata = undefined) {
   return body;
 }
 
-function pendingJobStorageKey() {
-  return `${PENDING_JOB_KEY}:${settings.apiUrl}:${settings.apiKey || 'anonymous'}`;
+function pendingJobStorageKey(conversationId = activeConversationId()) {
+  return `${PENDING_JOB_KEY}:${settings.apiUrl}:${settings.apiKey || 'anonymous'}:${conversationId || 'no-conversation'}`;
 }
 
-function savePendingJob(job) {
-  localStorage.setItem(pendingJobStorageKey(), JSON.stringify(job));
+function savePendingJob(job, conversationId = activeConversationId()) {
+  localStorage.setItem(pendingJobStorageKey(conversationId), JSON.stringify(job));
 }
 
-function loadPendingJob() {
+function loadPendingJob(conversationId = activeConversationId()) {
   try {
-    const parsed = JSON.parse(localStorage.getItem(pendingJobStorageKey()) || 'null');
+    const parsed = JSON.parse(localStorage.getItem(pendingJobStorageKey(conversationId)) || 'null');
     return parsed?.job_id ? parsed : null;
   } catch {
     return null;
   }
 }
 
-function clearPendingJob() {
-  localStorage.removeItem(pendingJobStorageKey());
+function clearPendingJob(conversationId = activeConversationId()) {
+  localStorage.removeItem(pendingJobStorageKey(conversationId));
 }
 
-async function fetchJob(jobId) {
-  const response = await fetch(`${settings.apiUrl}/v1/jobs/${encodeURIComponent(jobId)}`, {
+async function fetchConversationHistory(conversationId) {
+  const response = await fetch(apiUrl('/v1/history', { conversation_id: conversationId }), {
+    headers: await historyHeaders(),
+  });
+  if (!response.ok) {
+    throw new Error(`대화 기록을 불러오지 못했습니다: HTTP ${response.status}`);
+  }
+  const body = await response.json();
+  return Array.isArray(body.messages) ? body.messages : [];
+}
+
+async function fetchJob(jobId, conversationId = activeConversationId()) {
+  const response = await fetch(apiUrl(`/v1/jobs/${encodeURIComponent(jobId)}`, { conversation_id: conversationId }), {
     headers: await historyHeaders(),
   });
   const body = await response.json().catch(() => null);
@@ -1172,38 +1515,38 @@ async function fetchJob(jobId) {
   return body;
 }
 
-async function isJobResolvedInHistory(jobId) {
+async function isJobResolvedInHistory(jobId, conversationId = activeConversationId()) {
   try {
-    const history = await fetchHistory();
+    const history = isActiveConversation(conversationId) ? await fetchHistory() : await fetchConversationHistory(conversationId);
     return history.some((item) => item.id === jobId && !isPendingHistoryMessage(item));
   } catch {
     return false;
   }
 }
 
-async function waitForJob(jobId, onTick = () => {}) {
+async function waitForJob(jobId, onTick = () => {}, conversationId = activeConversationId()) {
   let transientFailures = 0;
   let lastError = null;
   for (let attempt = 0; attempt < 240; attempt += 1) {
     await delay(attempt < 10 ? 1000 : 3000);
     try {
-      const job = await fetchJob(jobId);
+      const job = await fetchJob(jobId, conversationId);
       transientFailures = 0;
       lastError = null;
       onTick(job);
       if (job.state === 'completed' || job.state === 'failed') {
-        clearPendingJob();
+        clearPendingJob(conversationId);
         return job;
       }
     } catch (error) {
       lastError = error;
       transientFailures += 1;
-      if (await isJobResolvedInHistory(jobId)) {
-        clearPendingJob();
+      if (await isJobResolvedInHistory(jobId, conversationId)) {
+        clearPendingJob(conversationId);
         return { id: jobId, state: 'completed' };
       }
       if (error?.status === 404) {
-        clearPendingJob();
+        clearPendingJob(conversationId);
         return { id: jobId, state: 'expired' };
       }
       if (transientFailures >= 5) {
@@ -1227,7 +1570,7 @@ async function resumePendingJobIfNeeded() {
   });
 
   try {
-    const job = await waitForJob(pendingJob.job_id);
+    const job = await waitForJob(pendingJob.job_id, undefined, activeConversationId());
     thinkingMessage.stop();
     if (job.state === 'failed') {
       renderMessageNode(thinkingMessage.node, 'system', job.error || '응답 작업이 실패했습니다.', { force: true });
@@ -1291,16 +1634,27 @@ async function handleSubmit(event) {
       const response = await sendMessage(outgoingMessage, attachments, metadata);
       if (response.job_id) {
         activeJobId = response.job_id;
-        savePendingJob({ job_id: response.job_id, startedAt: Date.now() });
-        setStatus('서버에서 응답을 처리 중입니다. 앱을 닫아도 작업은 계속됩니다.');
-        const job = await waitForJob(response.job_id, () => refreshHistoryIfChanged());
+        const conversationId = response.conversation_id || conversation.id;
+        savePendingJob({ job_id: response.job_id, startedAt: Date.now() }, conversationId);
+        setSending(false);
+        if (isActiveConversation(conversationId)) {
+          setStatus('서버에서 응답을 처리 중입니다. 앱을 닫아도 작업은 계속됩니다.');
+        }
+        const job = await waitForJob(response.job_id, () => {
+          if (isActiveConversation(conversationId)) {
+            refreshHistoryIfChanged();
+          }
+        }, conversationId);
         thinkingMessage.stop();
         if (job.state === 'failed') {
           renderMessageNode(thinkingMessage.node, 'system', job.error || '응답 작업이 실패했습니다.', { force: true });
           notifyReplyReady('OpenClaw 응답 실패', job.error || '응답 작업이 실패했습니다.');
         } else {
           thinkingMessage.node.remove();
-          await refreshHistoryIfChanged();
+          if (isActiveConversation(conversationId)) {
+            await refreshHistoryIfChanged();
+          }
+          await refreshConversations().catch(() => {});
           if (job.state === 'completed') {
             notifyReplyReady();
           }
@@ -1311,8 +1665,9 @@ async function handleSubmit(event) {
       }
       setStatus('');
       window.setTimeout(refreshHistoryIfChanged, 800);
+      window.setTimeout(() => refreshConversations().catch(() => {}), 900);
     } catch (error) {
-      if (activeJobId && await isJobResolvedInHistory(activeJobId)) {
+      if (activeJobId && await isJobResolvedInHistory(activeJobId, conversation.id)) {
         clearPendingJob();
         thinkingMessage.stop();
         thinkingMessage.node.remove();
@@ -1476,19 +1831,32 @@ function acceptSelectedSlashCommand() {
 }
 
 applySettingsToForm();
+renderConversationList();
 renderHistory({ scrollToLatest: true }).then(() => resumePendingJobIfNeeded()).catch(() => {});
 startHistoryPolling();
 
-elements.settingsButton.addEventListener('click', () => {
+function toggleSettingsPanel() {
   elements.settingsPanel.classList.toggle('hidden');
+}
+
+elements.settingsButton?.addEventListener('click', toggleSettingsPanel);
+elements.sidebarSettingsButton?.addEventListener('click', () => {
+  toggleSettingsPanel();
+  closeMobileDrawer();
 });
+elements.mobileMenuButton?.addEventListener('click', toggleMobileDrawer);
+elements.mobileDrawerBackdrop?.addEventListener('click', closeMobileDrawer);
 
 document.addEventListener('click', (event) => {
+  const target = event.target;
+  if (openConversationMenuId && !target?.closest?.('.conversation-menu-wrap')) {
+    openConversationMenuId = null;
+    renderConversationList();
+  }
   if (elements.settingsPanel.classList.contains('hidden')) {
     return;
   }
-  const target = event.target;
-  if (elements.settingsPanel.contains(target) || elements.settingsButton.contains(target)) {
+  if (elements.settingsPanel.contains(target) || elements.settingsButton?.contains(target) || elements.sidebarSettingsButton?.contains(target)) {
     return;
   }
   elements.settingsPanel.classList.add('hidden');
@@ -1506,6 +1874,10 @@ elements.saveSettingsButton.addEventListener('click', () => {
   saveSettings(settings);
   applySettingsToForm();
   if (previousApiKey !== settings.apiKey) {
+    activeConversation = null;
+    conversations = [];
+    settings.lastActiveConversationId = '';
+    saveSettings(settings);
     lastHistoryVersion = null;
     renderHistory();
   }
@@ -1523,17 +1895,21 @@ elements.fontSizeInput.addEventListener('input', () => {
   saveSettings(settings);
 });
 
+elements.newConversationButton?.addEventListener('click', async () => {
+  try {
+    await startNewConversation();
+  } catch (error) {
+    appendMessage('system', error instanceof Error ? error.message : String(error), { persist: false });
+  }
+});
+
 elements.clearHistoryButton.addEventListener('click', async () => {
-  if (!window.confirm('세션이 초기화되고, 대화내용이 모두 삭제되며 다시 복구할 수 없습니다')) {
+  if (!window.confirm('새 대화를 시작합니다. 기존 대화는 서버에 보존됩니다.')) {
     return;
   }
   try {
-    await startNewOpenClawConversation();
-    await clearServerHistory();
-    clearPendingJob();
-    lastHistoryVersion = null;
-    await renderHistory();
-    appendMessage('system', '새 대화를 시작하고 대화 기록을 삭제했습니다.', { persist: false });
+    await startNewConversation();
+    appendMessage('system', '새 대화를 시작했습니다. 기존 대화는 보존됩니다.', { persist: false });
   } catch (error) {
     appendMessage('system', error instanceof Error ? error.message : String(error), { persist: false });
   }
@@ -1554,6 +1930,10 @@ elements.mediaViewer.addEventListener('click', (event) => {
 document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape' && !elements.mediaViewer.classList.contains('hidden')) {
     closeMediaViewer();
+    return;
+  }
+  if (event.key === 'Escape' && document.body.classList.contains('drawer-open')) {
+    closeMobileDrawer();
   }
 });
 elements.attachButton.addEventListener('click', () => elements.attachmentInput.click());

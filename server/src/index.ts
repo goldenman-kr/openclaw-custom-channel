@@ -12,8 +12,10 @@ import {
 } from "./contracts/apiContractV1.js";
 import { handlePostMessage } from "./http/messageHandler.js";
 import { createOpenClawClient } from "./openclaw/createOpenClawClient.js";
+import { deleteOpenClawSession } from "./openclaw/SessionCleaner.js";
 import { FileHistoryStore, type HistoryAttachment } from "./session/HistoryStore.js";
 import { InMemorySessionStore } from "./session/SessionStore.js";
+import { SqliteChatStore, type ChatMessageRecord, type ConversationRecord } from "./session/SqliteChatStore.js";
 
 const host = process.env.HOST ?? "0.0.0.0";
 const port = Number(process.env.PORT ?? 29999);
@@ -26,17 +28,19 @@ const validApiKeys = new Set(
 
 const openClawClient = createOpenClawClient();
 const sessionStore = new InMemorySessionStore();
-const historyStore = new FileHistoryStore(
-  resolve(process.env.HISTORY_DIR ?? join(process.cwd(), "state", "history")),
-);
+const historyDir = resolve(process.env.HISTORY_DIR ?? join(process.cwd(), "state", "history"));
+const historyStore = new FileHistoryStore(historyDir);
 const publicDir = resolve(process.env.PUBLIC_DIR ?? join(process.cwd(), "public"));
 const stateDir = resolve(process.cwd(), "state");
 const historyMediaDir = resolve(process.env.HISTORY_MEDIA_DIR ?? join(stateDir, "history-media"));
+const chatStore = new SqliteChatStore(resolve(process.env.CHAT_DB_PATH ?? join(stateDir, "chat.sqlite")));
+const openClawAgentId = process.env.OPENCLAW_AGENT ?? "main";
 type JobState = "queued" | "running" | "completed" | "failed";
 
 interface MessageJob {
   id: string;
   sessionId: string;
+  conversationId?: string;
   state: JobState;
   createdAt: string;
   updatedAt: string;
@@ -44,6 +48,7 @@ interface MessageJob {
 }
 
 const jobs = new Map<string, MessageJob>();
+const jobQueueTails = new Map<string, Promise<void>>();
 
 const mediaRoots = [
   resolve(process.env.MEDIA_ROOT ?? "/home/orbsian/.openclaw/workspace"),
@@ -54,7 +59,7 @@ const mediaRoots = [
 
 const corsHeaders = {
   "access-control-allow-origin": "*",
-  "access-control-allow-methods": "GET,POST,DELETE,OPTIONS",
+  "access-control-allow-methods": "GET,POST,PATCH,DELETE,OPTIONS",
   "access-control-allow-headers": "authorization,content-type,x-device-id,x-user-id,x-openclaw-sync",
 };
 
@@ -170,6 +175,8 @@ function statusForErrorCode(code: ErrorResponseDto["error"]["code"]): number {
     case "AUTH_INVALID_TOKEN":
     case "AUTH_MISSING_TOKEN":
       return 401;
+    case "CONVERSATION_NOT_FOUND":
+      return 404;
     case "UPSTREAM_OPENCLAW_TIMEOUT":
       return 504;
     case "UPSTREAM_OPENCLAW_UNAVAILABLE":
@@ -326,15 +333,125 @@ async function serveMediaFile(request: IncomingMessage, response: ServerResponse
 function updateJob(job: MessageJob, patch: Partial<Pick<MessageJob, "state" | "error">>): void {
   Object.assign(job, patch, { updatedAt: new Date().toISOString() });
   jobs.set(job.id, job);
+  if (job.conversationId) {
+    chatStore.updateJob(job.id, {
+      ...(patch.state ? { state: patch.state } : {}),
+      ...(patch.error !== undefined ? { error: patch.error } : {}),
+      now: job.updatedAt,
+    });
+  }
+}
+
+function jobForRequest(jobId: string, request: IncomingMessage, url: URL): MessageJob | ReturnType<typeof chatStore.getJob> | null {
+  const job = jobs.get(jobId) ?? chatStore.getJob(jobId);
+  const conversationId = url.searchParams.get("conversation_id")?.trim();
+  if (job && "conversationId" in job && job.conversationId) {
+    return job.conversationId === conversationId ? job : null;
+  }
+  const sessionId = sessionIdFromHeaders(request);
+  if (job && "sessionId" in job && job.sessionId === sessionId) {
+    return job;
+  }
+  return null;
+}
+
+function writeSseEvent(response: ServerResponse, event: string, data: unknown): void {
+  response.write(`event: ${event}\n`);
+  response.write(`data: ${JSON.stringify(data)}\n\n`);
+}
+
+function serveJobEvents(request: IncomingMessage, response: ServerResponse, url: URL, jobId: string): void {
+  if (!isAuthorized(request)) {
+    sendJson(response, 401, makeErrorResponse("AUTH_INVALID_TOKEN", "API key is invalid."));
+    return;
+  }
+
+  const initialJob = jobForRequest(jobId, request, url);
+  if (!initialJob) {
+    sendJson(response, 404, makeErrorResponse("INTERNAL_SERVER_ERROR", "Job not found."));
+    return;
+  }
+
+  response.writeHead(200, {
+    "content-type": "text/event-stream; charset=utf-8",
+    "cache-control": "no-cache, no-transform",
+    connection: "keep-alive",
+    ...corsHeaders,
+  });
+
+  const sendCurrent = (): boolean => {
+    const job = jobForRequest(jobId, request, url);
+    if (!job) {
+      writeSseEvent(response, "expired", { id: jobId, state: "expired" });
+      return true;
+    }
+    writeSseEvent(response, "job", job);
+    return job.state === "completed" || job.state === "failed";
+  };
+
+  if (sendCurrent()) {
+    response.end();
+    return;
+  }
+
+  const interval = setInterval(() => {
+    if (sendCurrent()) {
+      clearInterval(interval);
+      response.end();
+    }
+  }, 2000);
+
+  request.on("close", () => clearInterval(interval));
+}
+
+function jobQueueKey(job: MessageJob): string {
+  return job.conversationId ? `conversation:${job.conversationId}` : `session:${job.sessionId}`;
+}
+
+function enqueueMessageJob(job: MessageJob, headers: IncomingMessage["headers"], payload: MessageRequestDto): void {
+  const key = jobQueueKey(job);
+  const previousTail = jobQueueTails.get(key) ?? Promise.resolve();
+  const nextTail = previousTail
+    .catch(() => {})
+    .then(() => runMessageJob(job, headers, payload))
+    .catch(async (error) => {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      if (shouldPersistMessage(payload.message)) {
+        const savedAt = new Date().toISOString();
+        if (job.conversationId) {
+          chatStore.updateMessage(job.id, { role: "system", text: `전송 실패: ${errorMessage}` });
+        } else {
+          await historyStore.replaceById(job.sessionId, job.id, {
+            role: "system",
+            text: `전송 실패: ${errorMessage}`,
+            savedAt,
+          }).catch(() => {});
+        }
+      }
+      updateJob(job, { state: "failed", error: errorMessage });
+    })
+    .finally(() => {
+      if (jobQueueTails.get(key) === nextTail) {
+        jobQueueTails.delete(key);
+      }
+    });
+  jobQueueTails.set(key, nextTail);
 }
 
 async function runMessageJob(job: MessageJob, headers: IncomingMessage["headers"], payload: MessageRequestDto): Promise<void> {
   updateJob(job, { state: "running" });
+  if (job.conversationId && shouldPersistMessage(payload.message)) {
+    chatStore.updateMessage(job.id, {
+      role: "assistant",
+      text: "응답을 처리 중입니다…",
+    });
+  }
   const result = await handlePostMessage(
     {
       openClawClient,
       sessionStore,
       validApiKeys,
+      conversationStore: chatStore,
     },
     headers,
     payload,
@@ -342,11 +459,20 @@ async function runMessageJob(job: MessageJob, headers: IncomingMessage["headers"
 
   if (result.statusCode >= 200 && result.statusCode < 300 && "reply" in result.body) {
     if (shouldPersistMessage(payload.message)) {
-      await historyStore.replaceById(job.sessionId, job.id, {
-        role: "assistant",
-        text: sanitizeAssistantReply(result.body.reply),
-        savedAt: new Date().toISOString(),
-      });
+      const text = sanitizeAssistantReply(result.body.reply);
+      const savedAt = new Date().toISOString();
+      if (job.conversationId) {
+        chatStore.updateMessage(job.id, {
+          role: "assistant",
+          text,
+        });
+      } else {
+        await historyStore.replaceById(job.sessionId, job.id, {
+          role: "assistant",
+          text,
+          savedAt,
+        });
+      }
     }
     updateJob(job, { state: "completed" });
     return;
@@ -354,11 +480,17 @@ async function runMessageJob(job: MessageJob, headers: IncomingMessage["headers"
 
   const errorMessage = "error" in result.body ? result.body.error.message : "OpenClaw request failed.";
   if (shouldPersistMessage(payload.message)) {
-    await historyStore.replaceById(job.sessionId, job.id, {
-      role: "system",
-      text: `전송 실패: ${errorMessage}`,
-      savedAt: new Date().toISOString(),
-    });
+    const text = `전송 실패: ${errorMessage}`;
+    const savedAt = new Date().toISOString();
+    if (job.conversationId) {
+      chatStore.updateMessage(job.id, { role: "system", text });
+    } else {
+      await historyStore.replaceById(job.sessionId, job.id, {
+        role: "system",
+        text,
+        savedAt,
+      });
+    }
   }
   updateJob(job, { state: "failed", error: errorMessage });
 }
@@ -460,6 +592,104 @@ function normalizeHistoryMessages(payload: unknown) {
     });
 }
 
+function conversationToDto(conversation: ConversationRecord) {
+  return {
+    id: conversation.id,
+    title: conversation.title,
+    created_at: conversation.createdAt,
+    updated_at: conversation.updatedAt,
+    ...(conversation.archivedAt ? { archived_at: conversation.archivedAt } : {}),
+    pinned: conversation.pinned,
+  };
+}
+
+function chatMessageToHistoryDto(message: ChatMessageRecord) {
+  return {
+    id: message.id,
+    role: message.role,
+    text: message.text,
+    savedAt: message.createdAt,
+    ...(message.attachments && message.attachments.length > 0 ? { attachments: message.attachments } : {}),
+  };
+}
+
+function conversationIdFromPath(pathname: string, suffix = ""): string | null {
+  const prefix = "/v1/conversations/";
+  if (!pathname.startsWith(prefix) || !pathname.endsWith(suffix)) {
+    return null;
+  }
+  const raw = pathname.slice(prefix.length, suffix ? -suffix.length : undefined);
+  if (!raw || raw.includes("/")) {
+    return null;
+  }
+  return decodeURIComponent(raw);
+}
+
+function titleFromPayload(payload: unknown): string | undefined {
+  if (typeof payload !== "object" || payload === null) {
+    return undefined;
+  }
+  const title = (payload as { title?: unknown }).title;
+  return typeof title === "string" && title.trim() ? title.trim().slice(0, 120) : undefined;
+}
+
+function pinnedFromPayload(payload: unknown): boolean | undefined {
+  if (typeof payload !== "object" || payload === null || !("pinned" in payload)) {
+    return undefined;
+  }
+  return Boolean((payload as { pinned?: unknown }).pinned);
+}
+
+function conversationIdFromPayload(payload: MessageRequestDto): string | null {
+  return typeof payload.conversation_id === "string" && payload.conversation_id.trim() ? payload.conversation_id.trim() : null;
+}
+
+function titleFromMessage(message: string): string {
+  const firstLine = message.replace(/\s+/g, " ").trim();
+  if (!firstLine) {
+    return "새 대화";
+  }
+  return firstLine.length > 40 ? `${firstLine.slice(0, 40)}…` : firstLine;
+}
+
+async function persistConversationUserMessage(conversation: ConversationRecord, payload: MessageRequestDto): Promise<void> {
+  if (!shouldPersistMessage(payload.message)) {
+    return;
+  }
+  const isFirstMessage = chatStore.listMessages(conversation.id, { limit: 1 }).length === 0;
+  const attachments = await saveHistoryAttachments(conversation.openclawSessionId, payload);
+  chatStore.addMessage({
+    conversationId: conversation.id,
+    role: "user",
+    text: formatUserHistoryText(payload),
+    attachments,
+  });
+  if (isFirstMessage && conversation.title === "새 대화") {
+    chatStore.updateConversation(conversation.id, { title: titleFromMessage(payload.message) });
+  }
+}
+
+function getConversationForMessage(payload: MessageRequestDto): ConversationRecord | null {
+  const conversationId = conversationIdFromPayload(payload);
+  return conversationId ? chatStore.getConversation(conversationId) : null;
+}
+
+function conversationHistoryResponse(conversation: ConversationRecord) {
+  const messages = chatStore.listMessages(conversation.id).map(chatMessageToHistoryDto);
+  return {
+    version: `${conversation.updatedAt}:${messages.length}`,
+    size: messages.length,
+    mtimeMs: Date.parse(conversation.updatedAt) || 0,
+    conversation: conversationToDto(conversation),
+    messages,
+  };
+}
+
+function conversationFromQuery(url: URL): ConversationRecord | null {
+  const conversationId = url.searchParams.get("conversation_id")?.trim();
+  return conversationId ? chatStore.getConversation(conversationId) : null;
+}
+
 const server = createServer(async (request, response) => {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);
 
@@ -482,19 +712,110 @@ const server = createServer(async (request, response) => {
     return;
   }
 
+  if (request.method === "GET" && url.pathname.startsWith("/v1/jobs/") && url.pathname.endsWith("/events")) {
+    const jobId = decodeURIComponent(url.pathname.slice("/v1/jobs/".length, -"/events".length));
+    serveJobEvents(request, response, url, jobId);
+    return;
+  }
+
   if (request.method === "GET" && url.pathname.startsWith("/v1/jobs/")) {
     if (!isAuthorized(request)) {
       sendJson(response, 401, makeErrorResponse("AUTH_INVALID_TOKEN", "API key is invalid."));
       return;
     }
     const jobId = decodeURIComponent(url.pathname.slice("/v1/jobs/".length));
-    const job = jobs.get(jobId);
-    const sessionId = sessionIdFromHeaders(request);
-    if (!job || job.sessionId !== sessionId) {
+    const job = jobForRequest(jobId, request, url);
+    if (!job) {
       sendJson(response, 404, makeErrorResponse("INTERNAL_SERVER_ERROR", "Job not found."));
       return;
     }
     sendJson(response, 200, job);
+    return;
+  }
+
+  if (url.pathname === "/v1/conversations" && ["GET", "POST"].includes(request.method ?? "")) {
+    if (!isAuthorized(request)) {
+      sendJson(response, 401, makeErrorResponse("AUTH_INVALID_TOKEN", "API key is invalid."));
+      return;
+    }
+
+    if (request.method === "GET") {
+      sendJson(response, 200, {
+        conversations: chatStore.listConversations({
+          includeArchived: url.searchParams.get("include_archived") === "1",
+        }).map(conversationToDto),
+      });
+      return;
+    }
+
+    const payload = await readJsonBody(request);
+    const conversation = chatStore.createConversation({ title: titleFromPayload(payload) });
+    sendJson(response, 201, { conversation: conversationToDto(conversation) });
+    return;
+  }
+
+  const conversationHistoryId = conversationIdFromPath(url.pathname, "/history");
+  if (request.method === "GET" && conversationHistoryId) {
+    if (!isAuthorized(request)) {
+      sendJson(response, 401, makeErrorResponse("AUTH_INVALID_TOKEN", "API key is invalid."));
+      return;
+    }
+    const conversation = chatStore.getConversation(conversationHistoryId);
+    if (!conversation) {
+      sendJson(response, 404, makeErrorResponse("CONVERSATION_NOT_FOUND", "Conversation not found.", { conversation_id: conversationHistoryId }));
+      return;
+    }
+    sendJson(response, 200, conversationHistoryResponse(conversation));
+    return;
+  }
+
+  const conversationId = conversationIdFromPath(url.pathname);
+  if (conversationId && ["GET", "PATCH", "DELETE"].includes(request.method ?? "")) {
+    if (!isAuthorized(request)) {
+      sendJson(response, 401, makeErrorResponse("AUTH_INVALID_TOKEN", "API key is invalid."));
+      return;
+    }
+    const conversation = chatStore.getConversation(conversationId);
+    if (!conversation) {
+      sendJson(response, 404, makeErrorResponse("CONVERSATION_NOT_FOUND", "Conversation not found.", { conversation_id: conversationId }));
+      return;
+    }
+
+    if (request.method === "GET") {
+      sendJson(response, 200, { conversation: conversationToDto(conversation) });
+      return;
+    }
+
+    if (request.method === "PATCH") {
+      const payload = await readJsonBody(request);
+      const updated = chatStore.updateConversation(conversation.id, {
+        title: titleFromPayload(payload),
+        pinned: pinnedFromPayload(payload),
+      });
+      sendJson(response, 200, { conversation: conversationToDto(updated ?? conversation) });
+      return;
+    }
+
+    const cleanup = await deleteOpenClawSession({
+      explicitSessionId: conversation.openclawSessionId,
+      agentId: openClawAgentId,
+    });
+    for (const [jobId, job] of jobs.entries()) {
+      if (job.conversationId === conversation.id) {
+        jobs.delete(jobId);
+      }
+    }
+    const deleted = chatStore.deleteConversation(conversation.id);
+    sendJson(response, 200, {
+      ok: deleted,
+      conversation_id: conversation.id,
+      session_cleanup: {
+        removed_session_index: cleanup.removedSessionIndex,
+        removed_files: cleanup.removedFiles.length,
+        skipped: cleanup.skipped,
+        ...(cleanup.error ? { error: cleanup.error } : {}),
+      },
+    });
     return;
   }
 
@@ -510,7 +831,24 @@ const server = createServer(async (request, response) => {
       return;
     }
 
+    const queryConversationId = url.searchParams.get("conversation_id")?.trim();
+    const queryConversation = conversationFromQuery(url);
+    if (queryConversationId && !queryConversation) {
+      sendJson(response, 404, makeErrorResponse("CONVERSATION_NOT_FOUND", "Conversation not found.", { conversation_id: queryConversationId }));
+      return;
+    }
+
     if (request.method === "GET") {
+      if (queryConversation) {
+        const body = conversationHistoryResponse(queryConversation);
+        if (url.searchParams.get("meta") === "1") {
+          sendJson(response, 200, { version: body.version, size: body.size, mtimeMs: body.mtimeMs, conversation: body.conversation });
+          return;
+        }
+        sendJson(response, 200, body);
+        return;
+      }
+
       const sessionId = sessionIdFromHeaders(request);
       if (url.searchParams.get("meta") === "1") {
         sendJson(response, 200, await historyStore.meta(sessionId));
@@ -527,13 +865,29 @@ const server = createServer(async (request, response) => {
       const payload = await readJsonBody(request);
       const messages = normalizeHistoryMessages(payload);
       if (messages.length > 0) {
-        await historyStore.append(sessionIdFromHeaders(request), messages);
+        if (queryConversation) {
+          for (const message of messages) {
+            chatStore.addMessage({
+              conversationId: queryConversation.id,
+              role: message.role,
+              text: message.text,
+              createdAt: message.savedAt,
+              attachments: message.attachments,
+            });
+          }
+        } else {
+          await historyStore.append(sessionIdFromHeaders(request), messages);
+        }
       }
       sendJson(response, 200, { ok: true, imported: messages.length });
       return;
     }
 
-    await historyStore.clear(sessionIdFromHeaders(request));
+    if (queryConversation) {
+      chatStore.clearMessages(queryConversation.id);
+    } else {
+      await historyStore.clear(sessionIdFromHeaders(request));
+    }
     sendJson(response, 200, { ok: true });
     return;
   }
@@ -565,6 +919,7 @@ const server = createServer(async (request, response) => {
           openClawClient,
           sessionStore,
           validApiKeys,
+          conversationStore: chatStore,
         },
         request.headers,
         payload,
@@ -579,44 +934,61 @@ const server = createServer(async (request, response) => {
       return;
     }
 
-    const sessionId = sessionIdFromHeaders(request);
-    await persistUserHistory(sessionId, payload);
+    const requestedConversationId = conversationIdFromPayload(payload);
+    const conversation = getConversationForMessage(payload);
+    if (requestedConversationId && !conversation) {
+      sendJson(response, 404, makeErrorResponse("CONVERSATION_NOT_FOUND", "Conversation not found.", { conversation_id: requestedConversationId }));
+      return;
+    }
+
+    const sessionId = conversation?.openclawSessionId ?? sessionIdFromHeaders(request);
+    if (conversation) {
+      await persistConversationUserMessage(conversation, payload);
+    } else {
+      await persistUserHistory(sessionId, payload);
+    }
 
     const now = new Date().toISOString();
     const job: MessageJob = {
       id: `job_${randomUUID()}`,
       sessionId,
+      ...(conversation ? { conversationId: conversation.id } : {}),
       state: "queued",
       createdAt: now,
       updatedAt: now,
     };
     jobs.set(job.id, job);
-    if (shouldPersistMessage(payload.message)) {
-      await historyStore.append(sessionId, [
-        {
-          id: job.id,
-          role: "assistant",
-          text: "응답을 처리 중입니다…",
-          savedAt: now,
-        },
-      ]);
+    if (conversation) {
+      chatStore.createJob({ id: job.id, conversationId: conversation.id, state: "queued", now });
     }
-    runMessageJob(job, request.headers, payload).catch(async (error) => {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      if (shouldPersistMessage(payload.message)) {
-        await historyStore.replaceById(sessionId, job.id, {
-          role: "system",
-          text: `전송 실패: ${errorMessage}`,
-          savedAt: new Date().toISOString(),
-        }).catch(() => {});
+    if (shouldPersistMessage(payload.message)) {
+      if (conversation) {
+        chatStore.addMessage({
+          id: job.id,
+          conversationId: conversation.id,
+          role: "assistant",
+          text: "응답 대기 중입니다…",
+          jobId: job.id,
+          createdAt: now,
+        });
+      } else {
+        await historyStore.append(sessionId, [
+          {
+            id: job.id,
+            role: "assistant",
+            text: "응답 대기 중입니다…",
+            savedAt: now,
+          },
+        ]);
       }
-      updateJob(job, { state: "failed", error: errorMessage });
-    });
+    }
+    enqueueMessageJob(job, request.headers, payload);
 
     sendJson(response, 202, {
       job_id: job.id,
       status: job.state,
       session_id: sessionId,
+      ...(conversation ? { conversation_id: conversation.id } : {}),
     });
   } catch (error) {
     if (error instanceof SyntaxError) {

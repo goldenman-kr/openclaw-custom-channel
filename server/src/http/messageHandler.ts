@@ -9,6 +9,7 @@ import {
   validateMessageRequestDto,
 } from "../contracts/apiContractV1.js";
 import type { OpenClawClient } from "../openclaw/OpenClawClient.js";
+import type { ConversationStore } from "../session/SqliteChatStore.js";
 import type { SessionStore } from "../session/SessionStore.js";
 
 export interface HttpResult {
@@ -20,6 +21,7 @@ export interface MessageHandlerDeps {
   openClawClient: OpenClawClient;
   sessionStore: SessionStore;
   validApiKeys: Set<string>;
+  conversationStore?: Pick<ConversationStore, "getConversation">;
 }
 
 const ERROR_STATUS: Record<ErrorCode, number> = {
@@ -27,12 +29,14 @@ const ERROR_STATUS: Record<ErrorCode, number> = {
   AUTH_MISSING_TOKEN: 401,
   VALIDATION_MESSAGE_REQUIRED: 400,
   VALIDATION_SLASH_WITH_ATTACHMENTS: 400,
+  VALIDATION_NEW_COMMAND_BLOCKED: 400,
   VALIDATION_ATTACHMENT_TYPE_NOT_ALLOWED: 400,
   VALIDATION_ATTACHMENT_TOO_LARGE: 400,
   VALIDATION_ATTACHMENT_TOTAL_TOO_LARGE: 400,
   VALIDATION_ATTACHMENT_COUNT_EXCEEDED: 400,
   UPSTREAM_OPENCLAW_UNAVAILABLE: 502,
   UPSTREAM_OPENCLAW_TIMEOUT: 504,
+  CONVERSATION_NOT_FOUND: 404,
   INTERNAL_SERVER_ERROR: 500,
 };
 
@@ -109,7 +113,17 @@ export async function handlePostMessage(
 
   const deviceId = getSingleHeader(headers, "x-device-id");
   const userId = getSingleHeader(headers, "x-user-id");
-  const sessionId = deps.sessionStore.getSessionId({ deviceId, userId });
+  const conversationId = payload.conversation_id?.trim();
+  const conversation = conversationId && deps.conversationStore ? deps.conversationStore.getConversation(conversationId) : null;
+  if (conversationId && deps.conversationStore && !conversation) {
+    return errorResponse({
+      requestId,
+      code: "CONVERSATION_NOT_FOUND",
+      message: "Conversation not found.",
+      details: { conversation_id: conversationId },
+    });
+  }
+  const sessionId = conversation?.openclawSessionId ?? deps.sessionStore.getSessionId({ deviceId, userId });
 
   try {
     const result = await deps.openClawClient.sendMessage({
@@ -126,6 +140,7 @@ export async function handlePostMessage(
         reply: result.reply,
         request_id: requestId,
         session_id: sessionId,
+        ...(conversation ? { conversation_id: conversation.id } : {}),
       },
     };
   } catch (error) {

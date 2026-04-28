@@ -4,8 +4,11 @@ import { handlePostMessage } from "./messageHandler.js";
 import type { OpenClawClient } from "../openclaw/OpenClawClient.js";
 import { InMemorySessionStore } from "../session/SessionStore.js";
 
+let fakeOpenClawCalls = 0;
+
 const fakeOpenClawClient: OpenClawClient = {
   async sendMessage(input) {
+    fakeOpenClawCalls += 1;
     return {
       reply: `reply:${input.message}`,
     };
@@ -62,6 +65,23 @@ test("rejects blank message", async () => {
   assert.equal("error" in result.body, true);
   if ("error" in result.body) {
     assert.equal(result.body.error.code, "VALIDATION_MESSAGE_REQUIRED");
+  }
+});
+
+test("blocks direct /new command before calling OpenClaw", async () => {
+  fakeOpenClawCalls = 0;
+  const result = await handlePostMessage(
+    deps(),
+    { authorization: "Bearer test-key" },
+    { message: "/new" },
+  );
+
+  assert.equal(result.statusCode, 400);
+  assert.equal(fakeOpenClawCalls, 0);
+  assert.equal("error" in result.body, true);
+  if ("error" in result.body) {
+    assert.equal(result.body.error.code, "VALIDATION_NEW_COMMAND_BLOCKED");
+    assert.equal(result.body.error.message, "이 웹챗에서는 /new 대신 “새 대화 시작” 버튼을 사용해주세요.");
   }
 });
 
