@@ -641,3 +641,32 @@ PLAN 대비 검증:
 - `node --check server/public/app.js` 통과
 - `npm --prefix server run build` 통과
 - `npm --prefix server test` 통과
+
+## 22. Web/PWA SSE job events UI 연결
+
+PLAN 7.4의 “SSE로 job 상태와 최종 응답 이벤트 제공” 단계를 Web/PWA UI에 연결했다. token-level streaming은 아직 구현하지 않았다.
+
+변경 파일:
+
+- `server/public/app.js`
+- `server/public/sw.js`
+
+적용 내용:
+
+- 기존 `waitForJob()`의 public 동작은 유지하되, 내부에서 먼저 `GET /v1/jobs/:id/events?conversation_id=...` SSE endpoint를 `fetch()` stream으로 연결한다.
+- native `EventSource`는 Authorization header를 보낼 수 없으므로 사용하지 않았다. 대신 `fetch()` + `ReadableStream`으로 `text/event-stream` 응답을 파싱한다.
+- `event: job`에서 `completed`/`failed`를 받으면 pending job을 정리하고 기존 완료 처리 흐름으로 반환한다.
+- `event: expired`를 받으면 pending job을 정리하고 `expired` 상태로 반환한다.
+- 브라우저/프록시/네트워크 문제로 SSE 연결이 실패하거나 중간에 끊기면 기존 `/v1/jobs/:id` polling 루틴으로 자동 fallback한다.
+- PWA cache version을 `openclaw-web-channel-v77`로 올렸다.
+
+검증:
+
+- `node --check server/public/app.js` 통과
+- `npm --prefix server run build` 통과
+- `npm --prefix server test` 통과
+- mock server smoke에서 conversation 생성 → message enqueue → `/v1/jobs/:id/events?conversation_id=...` 수신 → `event: job` 및 `state: completed` 확인
+
+주의:
+
+- 현재 단계는 상태/완료 이벤트 스트리밍이다. 토큰 단위 텍스트 streaming은 OpenClaw runtime/transport가 생성 중 텍스트 조각을 제공할 수 있을 때 `token`/`done` 이벤트를 추가하는 별도 단계로 남긴다.
