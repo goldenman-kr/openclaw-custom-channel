@@ -1,6 +1,6 @@
 :root {
   color-scheme: light dark;
-  --shell-x: 14px;
+  --shell-x: clamp(14px, 2vw, 32px);
   --app-font-size: 16px;
   --app-font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   --bg: #0f172a;
@@ -35,9 +35,9 @@ body {
 button, input, textarea, select { font: inherit; }
 
 .app-shell {
-  width: min(860px, 100%);
+  width: 100%;
   height: 100dvh;
-  margin: 0 auto;
+  margin: 0;
   display: flex;
   flex-direction: column;
   padding: max(8px, env(safe-area-inset-top)) var(--shell-x) max(14px, env(safe-area-inset-bottom));
@@ -69,10 +69,9 @@ button:disabled { opacity: 0.55; cursor: not-allowed; }
 html[data-theme="light"] .danger-button,
 html[data-theme="system"] .danger-button { color: #991b1b; }
 
-.floating-settings-button {
+.floating-settings-button,
+.floating-refresh-button {
   position: fixed;
-  top: max(10px, env(safe-area-inset-top));
-  right: max(10px, env(safe-area-inset-right));
   z-index: 40;
   width: 44px;
   height: 44px;
@@ -83,6 +82,17 @@ html[data-theme="system"] .danger-button { color: #991b1b; }
   background: rgba(15, 23, 42, 0.72);
   box-shadow: 0 10px 28px rgba(2, 6, 23, 0.32);
   backdrop-filter: blur(16px);
+}
+
+.floating-settings-button {
+  top: max(10px, env(safe-area-inset-top));
+  right: max(10px, env(safe-area-inset-right));
+}
+
+.floating-refresh-button {
+  right: max(14px, env(safe-area-inset-right));
+  bottom: calc(max(14px, env(safe-area-inset-bottom)) + 92px);
+  font-size: 1.2rem;
 }
 
 .settings-panel {

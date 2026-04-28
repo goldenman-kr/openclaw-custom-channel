@@ -14,6 +14,7 @@ const ALLOWED_ATTACHMENT_TYPES = new Set([
 
 const elements = {
   settingsButton: document.querySelector('#settingsButton'),
+  floatingRefreshButton: document.querySelector('#floatingRefreshButton'),
   settingsPanel: document.querySelector('#settingsPanel'),
   apiUrlInput: document.querySelector('#apiUrlInput'),
   apiKeyInput: document.querySelector('#apiKeyInput'),
@@ -71,6 +72,7 @@ function loadSettings() {
     themeMode: 'dark',
     fontSize: 16,
     notificationsEnabled: false,
+    sessionNonce: '',
   };
 
   try {
@@ -346,7 +348,8 @@ async function hashText(text) {
 }
 
 async function sharedUserId() {
-  return `web-api-key-${await hashText(settings.apiKey || 'anonymous')}`;
+  const baseId = `web-api-key-${await hashText(settings.apiKey || 'anonymous')}`;
+  return settings.sessionNonce ? `${baseId}-${settings.sessionNonce}` : baseId;
 }
 
 function persistMessage() {
@@ -398,6 +401,24 @@ async function clearServerHistory() {
   });
   if (!response.ok) {
     throw new Error(`대화 기록을 삭제하지 못했습니다: HTTP ${response.status}`);
+  }
+}
+
+async function startNewOpenClawConversation() {
+  const response = await fetch(`${settings.apiUrl}/v1/message`, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      authorization: `Bearer ${settings.apiKey}`,
+      'x-user-id': await sharedUserId(),
+      'x-openclaw-sync': '1',
+    },
+    body: JSON.stringify({ message: '/new' }),
+  });
+  const body = await response.json().catch(() => null);
+  if (!response.ok) {
+    const detail = body?.error?.message || `HTTP ${response.status}`;
+    throw new Error(`새 대화를 시작하지 못했습니다: ${detail}`);
   }
 }
 
@@ -656,7 +677,11 @@ function historySignature(history) {
 }
 
 function isPendingHistoryMessage(item) {
-  return typeof item?.id === 'string' && item.id.startsWith('job_') && item.role === 'assistant' && item.text.includes('처리 중');
+  if (typeof item?.id !== 'string' || !item.id.startsWith('job_') || item.role !== 'assistant') {
+    return false;
+  }
+  const text = typeof item.text === 'string' ? item.text.trim() : '';
+  return text === '응답을 처리 중입니다…' || /^응답을 처리 중입니다\s*\(\d+초\)$/.test(text);
 }
 
 async function refreshHistoryIfChanged() {
@@ -1458,6 +1483,17 @@ elements.settingsButton.addEventListener('click', () => {
   elements.settingsPanel.classList.toggle('hidden');
 });
 
+document.addEventListener('click', (event) => {
+  if (elements.settingsPanel.classList.contains('hidden')) {
+    return;
+  }
+  const target = event.target;
+  if (elements.settingsPanel.contains(target) || elements.settingsButton.contains(target)) {
+    return;
+  }
+  elements.settingsPanel.classList.add('hidden');
+});
+
 elements.saveSettingsButton.addEventListener('click', () => {
   const previousApiKey = settings.apiKey;
   settings = readSettingsFromForm();
@@ -1488,13 +1524,16 @@ elements.fontSizeInput.addEventListener('input', () => {
 });
 
 elements.clearHistoryButton.addEventListener('click', async () => {
-  if (!window.confirm('이 API Key 세션에 저장된 대화 기록을 삭제할까요?')) {
+  if (!window.confirm('세션이 초기화되고, 대화내용이 모두 삭제되며 다시 복구할 수 없습니다')) {
     return;
   }
   try {
+    await startNewOpenClawConversation();
     await clearServerHistory();
+    clearPendingJob();
+    lastHistoryVersion = null;
     await renderHistory();
-    appendMessage('system', '대화 기록을 삭제했습니다.', { persist: false });
+    appendMessage('system', '새 대화를 시작하고 대화 기록을 삭제했습니다.', { persist: false });
   } catch (error) {
     appendMessage('system', error instanceof Error ? error.message : String(error), { persist: false });
   }
@@ -1502,6 +1541,7 @@ elements.clearHistoryButton.addEventListener('click', async () => {
 
 elements.healthCheckButton.addEventListener('click', healthCheck);
 elements.refreshAppButton.addEventListener('click', () => window.location.reload());
+elements.floatingRefreshButton.addEventListener('click', () => window.location.reload());
 elements.clearCacheButton.addEventListener('click', clearAppCacheAndReload);
 elements.notificationButton.addEventListener('click', enableNotifications);
 elements.mediaViewerDownload.addEventListener('click', downloadCurrentMedia);

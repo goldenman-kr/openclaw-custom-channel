@@ -344,7 +344,7 @@ async function runMessageJob(job: MessageJob, headers: IncomingMessage["headers"
     if (shouldPersistMessage(payload.message)) {
       await historyStore.replaceById(job.sessionId, job.id, {
         role: "assistant",
-        text: result.body.reply,
+        text: sanitizeAssistantReply(result.body.reply),
         savedAt: new Date().toISOString(),
       });
     }
@@ -361,6 +361,50 @@ async function runMessageJob(job: MessageJob, headers: IncomingMessage["headers"
     });
   }
   updateJob(job, { state: "failed", error: errorMessage });
+}
+
+function sanitizeAssistantReply(reply: string): string {
+  const extracted = extractEmbeddedPayloadText(reply);
+  if (extracted) {
+    return extracted;
+  }
+
+  const looksLikeRawAgentOutput =
+    reply.includes('"payloads"') ||
+    reply.includes('"systemPromptReport"') ||
+    reply.includes('Gateway agent failed; falling back to embedded') ||
+    reply.includes('Gateway target: ws://') ||
+    reply.includes('Config: /home/');
+
+  if (looksLikeRawAgentOutput) {
+    return "응답은 완료됐지만 내부 출력 형식이 섞여 표시되지 않도록 차단했습니다.";
+  }
+
+  return reply;
+}
+
+function extractEmbeddedPayloadText(text: string): string | null {
+  const firstBrace = text.indexOf("{");
+  const lastBrace = text.lastIndexOf("}");
+  if (firstBrace < 0 || lastBrace <= firstBrace) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(text.slice(firstBrace, lastBrace + 1)) as { payloads?: Array<{ text?: unknown }>; result?: { payloads?: Array<{ text?: unknown }> } };
+    const directText = parsed.payloads?.[0]?.text;
+    if (typeof directText === "string" && directText.trim()) {
+      return directText.trim();
+    }
+    const resultText = parsed.result?.payloads?.[0]?.text;
+    if (typeof resultText === "string" && resultText.trim()) {
+      return resultText.trim();
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
 }
 
 function normalizeHistoryAttachment(value: unknown): HistoryAttachment | null {
