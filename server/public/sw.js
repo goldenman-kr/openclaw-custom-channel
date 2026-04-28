@@ -1,4 +1,4 @@
-const CACHE_NAME = 'openclaw-web-channel-v62';
+const CACHE_NAME = 'openclaw-web-channel-v73';
 const ASSETS = ['/', '/index.html', '/styles.css', '/app.js', '/manifest.webmanifest', '/icon.svg'];
 
 self.addEventListener('install', (event) => {

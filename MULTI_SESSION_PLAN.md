@@ -251,10 +251,12 @@ server/state/history/mobile-web-api-key-<hash>.json
 
 ### 5.6 `/new`와 `/reset` 정책
 
-- UI의 새 채팅 생성은 `/new` 전송이 아니라 새 conversation 생성으로 처리
-- 사용자가 직접 `/new`를 입력하면 OpenClaw 명령으로 그대로 전달할지, 현재 conversation에서 새 OpenClaw 세션으로 교체할지 정책 결정 필요
-- 사용자가 직접 `/reset`을 입력하면 현재 conversation의 OpenClaw 세션에만 적용
-- 추천: `/new` 직접 입력은 기존 OpenClaw 동작에 맡기되, UI 새 대화는 conversation 생성 방식 사용
+- UI의 새 채팅 생성은 `/new` 전송이 아니라 새 conversation 생성으로 처리한다.
+- 사용자가 직접 `/new`를 입력하면 OpenClaw로 전달하지 않고 차단한다.
+- `/new` 차단 시 안내 문구 예: `이 웹챗에서는 /new 대신 “새 대화 시작” 버튼을 사용해주세요.`
+- 새 conversation 생성은 버튼/메뉴 액션으로만 처리한다.
+- 사용자가 직접 `/reset`을 입력하면 현재 conversation의 OpenClaw 세션에만 적용한다.
+- `/reset`은 다른 conversation의 history나 `openclawSessionId`에 영향을 주면 안 된다.
 
 ### 5.7 Job/Polling 구조 수정
 
@@ -476,3 +478,43 @@ GET /v1/jobs/:id/events
 - 실제 코드 변경, 리뷰, 적용, 검증은 GPT-5.5가 주도한다.
 - 큰 변경은 작은 커밋 단위로 나눈다.
 - 각 단계마다 build/test를 통과한 뒤 다음 단계로 진행한다.
+## 12. 채널/Transport 인터페이스 모듈화 원칙
+
+장기적으로 Telegram, Web/PWA, Discord/Slack류, OpenClaw Gateway 직접 연동 등 다양한 채널을 효율적으로 지원할 수 있도록 서버 내부 인터페이스 레이어를 명확히 분리한다.
+
+### 12.1 분리할 책임
+
+- `AuthProvider`: API Key, future user auth, channel auth를 검증한다.
+- `ConversationStore`: conversation 목록, title, archive, `openclawSessionId`를 관리한다.
+- `MessageStore`: 메시지, 첨부, job 상태를 저장한다.
+- `ChatRuntime` 또는 `AgentRuntime`: OpenClaw에 메시지를 전달하고 응답/job/stream event를 반환한다.
+- `ChannelAdapter`: Web/PWA, Telegram, Discord 등 채널별 입출력 포맷과 UX 차이를 흡수한다.
+- `EventPublisher`: polling, SSE, WebSocket 등 클라이언트 전달 방식을 추상화한다.
+
+### 12.2 권장 방향
+
+초기 구현은 Web/PWA만 대상으로 하되, 코드 구조는 아래 의존 방향을 유지한다.
+
+```text
+HTTP/Web/PWA route
+  -> ChannelAdapter
+  -> ConversationService
+  -> MessageStore / ConversationStore
+  -> AgentRuntime(OpenClaw)
+  -> EventPublisher
+```
+
+주의사항:
+
+- Web/PWA 전용 상태를 `AgentRuntime`이나 store에 섞지 않는다.
+- OpenClaw CLI 세부 인자는 `AgentRuntime` 내부에 가둔다.
+- SSE/WebSocket/polling 차이는 `EventPublisher`에서 흡수한다.
+- 추후 Telegram/Discord 채널을 붙이더라도 conversation/message 저장 모델은 재사용 가능해야 한다.
+- API Key는 현재 Web/PWA 관리자 인증용이지만, 나중에 channel별 auth로 확장 가능하게 둔다.
+
+### 12.3 구현 순서 반영
+
+SQLite/Conversation API를 만들 때부터 store와 runtime 인터페이스를 분리한다.
+단, 과도한 추상화는 피하고 실제 두 번째 채널이 필요해질 때 adapter를 확장한다.
+현재 단계의 목표는 “Web/PWA 구현을 방해하지 않는 얇은 인터페이스 경계”를 만드는 것이다.
+
