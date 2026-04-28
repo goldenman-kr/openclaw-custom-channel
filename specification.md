@@ -1,5 +1,14 @@
 # Context-Aware Mobile Client + OpenClaw Bridge Spec
 
+
+## Current Branch Note — multi-session
+
+`multi-session` 브랜치부터 예전 Flutter `client/` 디렉토리는 제거한다.
+현재 클라이언트 구현 대상은 `server/public` Web/PWA이며, Android/iOS 앱은 해당 Web/PWA를 감싸는 WebView 구조를 기준으로 한다.
+따라서 아래 과거 MVP 문서에 남아 있는 Flutter 전용 항목은 historical reference로만 본다.
+
+---
+
 ## Key Revision
 
 Location must NOT be sent automatically.
