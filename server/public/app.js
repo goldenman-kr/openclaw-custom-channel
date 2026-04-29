@@ -108,6 +108,7 @@ let settings = loadSettings();
 let historyPollTimer = null;
 let isSendingMessage = false;
 let selectedAttachments = [];
+let composerDragDepth = 0;
 let lastHistoryVersion = null;
 let activeConversation = null;
 let openConversationMenuId = null;
@@ -279,6 +280,99 @@ function addAttachmentFiles(files) {
   }
   selectedAttachments = nextFiles;
   renderAttachmentTray();
+}
+
+function addAttachmentFilesSafely(files, sourceLabel = '첨부') {
+  const fileList = Array.from(files || []).filter(Boolean);
+  if (fileList.length === 0) {
+    return false;
+  }
+  if (isSendingMessage) {
+    appendMessage('system', '응답 전송 중에는 첨부 파일을 추가할 수 없습니다.', { persist: false });
+    return true;
+  }
+  try {
+    addAttachmentFiles(fileList);
+    setStatus(`${sourceLabel}: ${fileList.length}개 파일을 첨부했습니다.`);
+  } catch (error) {
+    appendMessage('system', error instanceof Error ? error.message : String(error), { persist: false });
+  }
+  return true;
+}
+
+function filesFromDataTransfer(dataTransfer) {
+  if (!dataTransfer) {
+    return [];
+  }
+  const itemFiles = Array.from(dataTransfer.items || [])
+    .filter((item) => item.kind === 'file')
+    .map((item) => item.getAsFile())
+    .filter(Boolean);
+  if (itemFiles.length > 0) {
+    return itemFiles;
+  }
+  return Array.from(dataTransfer.files || []);
+}
+
+function handleMessagePaste(event) {
+  const files = filesFromDataTransfer(event.clipboardData);
+  if (files.length === 0) {
+    return;
+  }
+  event.preventDefault();
+  addAttachmentFilesSafely(files, '붙여넣기');
+}
+
+function setComposerDragOver(active) {
+  elements.messageForm.classList.toggle('drag-over', active);
+}
+
+function resetComposerDragState() {
+  composerDragDepth = 0;
+  setComposerDragOver(false);
+}
+
+function hasDraggedFiles(event) {
+  return Array.from(event.dataTransfer?.types || []).includes('Files');
+}
+
+function handleComposerDragEnter(event) {
+  if (!hasDraggedFiles(event)) {
+    return;
+  }
+  event.preventDefault();
+  composerDragDepth += 1;
+  setComposerDragOver(true);
+}
+
+function handleComposerDragOver(event) {
+  if (!hasDraggedFiles(event)) {
+    return;
+  }
+  event.preventDefault();
+  if (event.dataTransfer) {
+    event.dataTransfer.dropEffect = 'copy';
+  }
+  setComposerDragOver(true);
+}
+
+function handleComposerDragLeave(event) {
+  if (!hasDraggedFiles(event)) {
+    return;
+  }
+  composerDragDepth = Math.max(0, composerDragDepth - 1);
+  if (composerDragDepth === 0) {
+    setComposerDragOver(false);
+  }
+}
+
+function handleComposerDrop(event) {
+  if (!hasDraggedFiles(event)) {
+    return;
+  }
+  event.preventDefault();
+  resetComposerDragState();
+  addAttachmentFilesSafely(filesFromDataTransfer(event.dataTransfer), '드래그 앤 드롭');
 }
 
 function fileToBase64(file) {
@@ -2275,13 +2369,16 @@ document.addEventListener('keydown', (event) => {
 elements.attachButton.addEventListener('click', () => elements.attachmentInput.click());
 elements.attachmentInput.addEventListener('change', () => {
   try {
-    addAttachmentFiles(elements.attachmentInput.files || []);
-  } catch (error) {
-    appendMessage('system', error instanceof Error ? error.message : String(error), { persist: false });
+    addAttachmentFilesSafely(elements.attachmentInput.files || [], '파일 선택');
   } finally {
     elements.attachmentInput.value = '';
   }
 });
+elements.messageInput.addEventListener('paste', handleMessagePaste);
+elements.messageForm.addEventListener('dragenter', handleComposerDragEnter);
+elements.messageForm.addEventListener('dragover', handleComposerDragOver);
+elements.messageForm.addEventListener('dragleave', handleComposerDragLeave);
+elements.messageForm.addEventListener('drop', handleComposerDrop);
 elements.messageForm.addEventListener('submit', handleSubmit);
 elements.messageInput.addEventListener('input', () => {
   autoResizeTextarea();
