@@ -64,6 +64,11 @@ test("publishes job updates to connected SSE subscribers immediately", () => {
   assert.match(response.body(), /"state":"running"/);
   assert.equal(response.ended, false);
 
+  publisher.publishToken({ id: "job_test", token: "partial" });
+  assert.match(response.body(), /event: token/);
+  assert.match(response.body(), /"token":"partial"/);
+  assert.equal(response.ended, false);
+
   currentJob = { id: "job_test", state: "completed" };
   publisher.publishJob(currentJob);
   assert.match(response.body(), /"state":"completed"/);

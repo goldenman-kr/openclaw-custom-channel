@@ -826,7 +826,7 @@ async function renderHistory(options = {}) {
 
     for (const item of history) {
       if (typeof item?.role === 'string' && typeof item?.text === 'string') {
-        appendMessage(item.role, item.text, { persist: false, autoScroll: false, suppressScrollButton: true, mediaRefs: mediaRefsFromHistoryAttachments(item.attachments), pending: isPendingHistoryMessage(item) });
+        appendMessage(item.role, item.text, { id: item.id, persist: false, autoScroll: false, suppressScrollButton: true, mediaRefs: mediaRefsFromHistoryAttachments(item.attachments), pending: isPendingHistoryMessage(item) });
       }
     }
     if (scrollToLatest) {
@@ -1363,6 +1363,9 @@ function appendAttachmentPreview(parent, files) {
 
 function appendMessage(role, text, options = {}) {
   const node = document.createElement('article');
+  if (options.id) {
+    node.dataset.messageId = options.id;
+  }
   node._mediaRefs = options.mediaRefs || [];
   renderMessageNode(node, role, text, options);
   appendAttachmentPreview(node, options.files || []);
@@ -1570,7 +1573,21 @@ function parseSseBlock(block) {
   }
 }
 
-async function waitForJobViaSse(jobId, onTick = () => {}, conversationId = activeConversationId()) {
+function applyStreamingToken(jobId, token, conversationId = activeConversationId()) {
+  if (!token || !isActiveConversation(conversationId)) {
+    return;
+  }
+
+  let node = elements.messages.querySelector(`[data-message-id="${jobId}"]`);
+  if (!node) {
+    node = appendMessage('assistant', '', { id: jobId, persist: false, pending: true });
+  }
+
+  node._streamingText = `${node._streamingText || ''}${token}`;
+  renderMessageNode(node, 'assistant', node._streamingText, { pending: true });
+}
+
+async function waitForJobViaSse(jobId, onTick = () => {}, conversationId = activeConversationId(), onToken = () => {}) {
   if (!window.ReadableStream || !window.TextDecoder || !window.AbortController) {
     throw new Error('이 브라우저는 SSE fetch stream을 지원하지 않습니다.');
   }
@@ -1606,6 +1623,10 @@ async function waitForJobViaSse(jobId, onTick = () => {}, conversationId = activ
           clearPendingJob(conversationId);
           return { id: jobId, state: 'expired' };
         }
+        if (message.event === 'token' && message.data?.token) {
+          onToken(String(message.data.token));
+          continue;
+        }
         if (message.event === 'job' && message.data) {
           const job = message.data;
           onTick(job);
@@ -1636,9 +1657,9 @@ async function isJobResolvedInHistory(jobId, conversationId = activeConversation
   }
 }
 
-async function waitForJob(jobId, onTick = () => {}, conversationId = activeConversationId()) {
+async function waitForJob(jobId, onTick = () => {}, conversationId = activeConversationId(), onToken = () => {}) {
   try {
-    return await waitForJobViaSse(jobId, onTick, conversationId);
+    return await waitForJobViaSse(jobId, onTick, conversationId, onToken);
   } catch (error) {
     console.warn('SSE job events unavailable; falling back to polling.', error);
   }
@@ -1749,11 +1770,18 @@ async function handleSubmit(event) {
           setStatus('서버에서 응답을 처리 중입니다. 앱을 닫아도 작업은 계속됩니다.');
         }
         await refreshHistoryIfChanged();
-        const job = await waitForJob(response.job_id, () => {
-          if (isActiveConversation(conversationId)) {
+        let receivedStreamingToken = false;
+        const job = await waitForJob(response.job_id, (jobUpdate) => {
+          if (!isActiveConversation(conversationId)) {
+            return;
+          }
+          if (!receivedStreamingToken || jobUpdate.state === 'completed' || jobUpdate.state === 'failed') {
             refreshHistoryIfChanged();
           }
-        }, conversationId);
+        }, conversationId, (token) => {
+          receivedStreamingToken = true;
+          applyStreamingToken(response.job_id, token, conversationId);
+        });
         if (isActiveConversation(conversationId)) {
           await refreshHistoryIfChanged();
         }

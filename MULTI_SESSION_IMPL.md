@@ -972,3 +972,187 @@ route/runtime 분리 후 compiled server 기준 최종 smoke를 수행했다.
 결과:
 
 - 최종 smoke 통과
+
+## 34. SSE token event publisher 골격 추가
+
+실제 token-level streaming transport가 붙기 전에 SSE publisher가 token 이벤트를 보낼 수 있는 최소 골격을 추가했다.
+
+변경 파일:
+
+- `server/src/events/SseJobEventPublisher.ts`
+- `server/src/events/SseJobEventPublisher.test.ts`
+- `MULTI_SESSION_IMPL.md`
+
+적용 내용:
+
+- `JobTokenEventRecord` 타입을 추가했다.
+- `SseJobEventPublisher.publishToken({ id, token })`를 추가했다.
+- 내부 publish 공통 경로를 만들어 `job` 이벤트와 `token` 이벤트가 같은 subscriber map을 사용하게 했다.
+- 기존 terminal `job` 이벤트는 그대로 SSE 연결을 닫고 interval/subscriber를 정리한다.
+- 테스트에 `event: token` 수신 검증을 추가했다.
+
+의미:
+
+- 현재 OpenClaw `agent --json` transport는 결과를 완료 후 반환하므로 실제 token 이벤트는 아직 발생하지 않는다.
+- 하지만 추후 streaming-capable runtime이 생기면 `MessageJobRunner`에서 token chunk를 받을 때 `publishToken()`만 호출하면 SSE 경로는 준비되어 있다.
+
+## 35. ChatRuntime token callback 연결
+
+SSE token event publisher 골격에 이어 runtime/job runner가 token callback을 전달할 수 있도록 타입 경계를 추가했다.
+
+변경 파일:
+
+- `server/src/runtime/ChatRuntime.ts`
+- `server/src/http/messageHandler.ts`
+- `server/src/runtime/MessageJobRunner.ts`
+- `server/src/index.ts`
+- `server/src/http/messageHandler.test.ts`
+- `MULTI_SESSION_IMPL.md`
+
+적용 내용:
+
+- `ChatRuntimeCallbacks`와 `ChatRuntimeInput.callbacks.onToken(token)` 타입을 추가했다.
+- `handlePostMessage()`가 optional `runtimeCallbacks`를 받아 `chatRuntime.sendMessage()` 입력으로 전달한다.
+- `MessageJobRunner`가 job 실행 시 `onToken` callback을 만들고, token을 받으면 injected `publishToken(job, token)`을 호출한다.
+- `index.ts`는 `publishToken()` 구현으로 `jobEventPublisher.publishToken({ id: job.id, token })`을 연결한다.
+- `messageHandler.test.ts`에 runtime token callback 전달 테스트를 추가했다.
+
+의미:
+
+- 현재 기본 `AgentOpenClawClient`는 token을 발생시키지 않으므로 운영 동작은 변하지 않는다.
+- 추후 streaming-capable runtime이 `callbacks.onToken()`을 호출하면 MessageJobRunner → SseJobEventPublisher → Web/PWA SSE 경로로 token이 흐를 수 있다.
+
+## 36. Web/PWA token event 수신 준비
+
+SSE `event: token`을 Web/PWA UI가 받을 수 있도록 클라이언트 경로를 연결했다.
+
+변경 파일:
+
+- `server/public/app.js`
+- `server/public/sw.js`
+- `MULTI_SESSION_IMPL.md`
+
+적용 내용:
+
+- history render 시 message DOM에 `data-message-id`를 붙여 job placeholder를 찾을 수 있게 했다.
+- `waitForJobViaSse()`가 `event: token`을 파싱하면 `onToken(token)` callback을 호출한다.
+- message submit flow에서 token callback을 넘겨 active conversation의 assistant placeholder에 streaming text를 누적 렌더링한다.
+- placeholder가 아직 history refresh로 그려지기 전 token이 오면 임시 assistant pending node를 만든다.
+- 최종 `completed` 이후에는 기존처럼 history refresh가 canonical 저장 결과로 UI를 다시 맞춘다.
+- PWA cache를 `openclaw-web-channel-v78`로 올렸다.
+
+의미:
+
+- 현재 기본 OpenClaw agent transport는 token을 보내지 않으므로 운영 체감 변화는 없다.
+- 나중에 runtime이 `callbacks.onToken()`을 호출하면 Web/PWA가 별도 구조 변경 없이 부분 응답을 표시할 수 있다.
+
+## 37. Mock transport token emission 추가
+
+서버 SSE token 경로를 end-to-end로 검증할 수 있도록 mock OpenClaw transport에 개발용 token emission을 추가했다.
+
+변경 파일:
+
+- `server/src/openclaw/OpenClawClient.ts`
+- `server/src/openclaw/MockOpenClawClient.ts`
+- `MULTI_SESSION_IMPL.md`
+
+적용 내용:
+
+- `OpenClawClientInput`/`OpenClawClientResult` 타입을 명시적으로 분리했다.
+- `OpenClawClientInput.callbacks`에 `ChatRuntimeCallbacks`를 포함시켜 runtime callback 경계가 OpenClaw client 구현까지 이어지게 했다.
+- `MOCK_OPENCLAW_STREAM_TOKENS=1`일 때 `MockOpenClawClient`가 최종 reply를 whitespace-preserving chunk로 나눠 `callbacks.onToken()`을 호출한다.
+- 기본 mock 동작과 운영 `agent` transport 동작은 변하지 않는다.
+
+의미:
+
+- 실제 OpenClaw agent transport가 token stream을 제공하지 않아도, mock 환경에서 서버 SSE `event: token` 경로를 smoke test할 수 있다.
+
+추가 검증 보조:
+
+- `MOCK_OPENCLAW_TOKEN_DELAY_MS`를 추가해 mock token 사이에 지연을 줄 수 있게 했다.
+- 이 값은 SSE client가 job 생성 직후 subscriber로 붙을 시간을 확보하기 위한 smoke test 전용 옵션이다.
+
+검증:
+
+- `npm --prefix server test` 통과
+- `npm --prefix server run build` 통과
+- compiled mock server smoke에서 `MOCK_OPENCLAW_STREAM_TOKENS=1`, `MOCK_OPENCLAW_TOKEN_DELAY_MS=80`으로 `/v1/jobs/:id/events`가 `event: token`, `event: job`, `state: completed`를 모두 내보내는 것을 확인했다.
+
+## 38. Mock streaming token 회귀 테스트 추가
+
+mock token emission 동작을 단위 테스트로 고정했다.
+
+변경 파일:
+
+- `server/src/openclaw/MockOpenClawClient.test.ts`
+- `MULTI_SESSION_IMPL.md`
+
+적용 내용:
+
+- 기본 상태에서는 `MockOpenClawClient`가 token callback을 호출하지 않는지 검증한다.
+- `MOCK_OPENCLAW_STREAM_TOKENS=1`일 때 whitespace-preserving token chunk를 순서대로 emit하고, token join 결과가 최종 reply와 동일한지 검증한다.
+
+의미:
+
+- 운영 agent transport에는 영향 없이 mock/dev streaming 경로만 회귀 테스트로 고정했다.
+
+## 39. Streaming token UI refresh 충돌 방지
+
+Web/PWA가 token stream을 표시하는 동안 주기적 job 상태 refresh가 partial text를 placeholder history로 덮어쓰지 않도록 보강했다.
+
+변경 파일:
+
+- `server/public/app.js`
+- `MULTI_SESSION_IMPL.md`
+
+적용 내용:
+
+- message submit flow에서 `receivedStreamingToken` flag를 추가했다.
+- token을 하나라도 받은 뒤에는 non-terminal job 상태 tick(`queued`/`running`)에서 `refreshHistoryIfChanged()`를 건너뛴다.
+- `completed`/`failed` terminal job tick에서는 기존처럼 history refresh를 수행해 최종 저장 결과를 canonical UI로 맞춘다.
+
+의미:
+
+- 긴 token stream이 들어오는 future runtime에서 partial assistant text가 2초 polling fallback tick 또는 job 상태 tick에 의해 사라지는 현상을 예방한다.
+- token이 없는 현재 agent transport에서는 기존 refresh 동작과 동일하다.
+
+## 40. MessageJobRunner token publish 회귀 테스트 추가
+
+runtime callback에서 발생한 token이 `MessageJobRunner`의 injected `publishToken(job, token)`까지 전달되는지 단위 테스트로 고정했다.
+
+변경 파일:
+
+- `server/src/runtime/MessageJobRunner.test.ts`
+- `MULTI_SESSION_IMPL.md`
+
+적용 내용:
+
+- fake `ChatRuntime`이 `callbacks.onToken("hello")`, `callbacks.onToken(" world")`를 호출하도록 구성했다.
+- `MessageJobRunner.enqueue()`를 통해 async job을 실행하고 `publishToken()`이 동일한 job id와 token 순서를 받는지 검증했다.
+- job state가 `running → completed`로 변하고 legacy history placeholder가 최종 assistant reply로 교체되는지도 함께 검증했다.
+
+의미:
+
+- runtime → message handler → job runner → token publisher injection 연결부가 회귀 테스트로 고정됐다.
+
+## 41. Token SSE smoke npm script 추가
+
+mock token streaming SSE 경로를 반복 검증할 수 있도록 npm smoke script를 추가했다.
+
+변경 파일:
+
+- `server/scripts/smoke-token-sse.mjs`
+- `server/package.json`
+- `MULTI_SESSION_IMPL.md`
+
+적용 내용:
+
+- `npm run smoke:token-sse` script를 추가했다.
+- script는 임시 state directory와 random local port로 compiled server(`dist/index.js`)를 실행한다.
+- `OPENCLAW_TRANSPORT=mock`, `MOCK_OPENCLAW_STREAM_TOKENS=1`, `MOCK_OPENCLAW_TOKEN_DELAY_MS=80` 환경으로 conversation 생성 → message enqueue → `/v1/jobs/:id/events` 수신을 수행한다.
+- SSE 응답에 `event: token`, `event: job`, `state: completed`가 모두 있는지 assert한다.
+- 종료 시 child server와 임시 파일을 정리한다.
+
+의미:
+
+- streaming-ready 변경을 커밋하거나 배포하기 전 수동 curl 스크립트를 다시 작성하지 않고 동일 smoke를 반복 실행할 수 있다.

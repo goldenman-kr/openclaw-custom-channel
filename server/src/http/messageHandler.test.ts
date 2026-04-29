@@ -108,3 +108,32 @@ test("rejects slash commands with attachments", async () => {
     assert.equal(result.body.error.code, "VALIDATION_SLASH_WITH_ATTACHMENTS");
   }
 });
+
+test("passes runtime token callbacks to ChatRuntime", async () => {
+  const tokens: string[] = [];
+  const runtime: ChatRuntime = {
+    async sendMessage(input) {
+      await input.callbacks?.onToken?.("hello");
+      await input.callbacks?.onToken?.(" world");
+      return { reply: "done" };
+    },
+  };
+
+  const result = await handlePostMessage(
+    {
+      chatRuntime: runtime,
+      sessionStore: new InMemorySessionStore(),
+      validApiKeys: new Set(["test-key"]),
+      runtimeCallbacks: {
+        onToken(token) {
+          tokens.push(token);
+        },
+      },
+    },
+    { authorization: "Bearer test-key" },
+    { message: "hello" },
+  );
+
+  assert.equal(result.statusCode, 200);
+  assert.deepEqual(tokens, ["hello", " world"]);
+});

@@ -204,6 +204,9 @@ const messageJobRunner = new MessageJobRunner({
   historyStore,
   shouldPersistMessage,
   updateJob,
+  publishToken(job, token) {
+    jobEventPublisher.publishToken({ id: job.id, token });
+  },
 });
 
 function titleFromMessage(message: string): string {

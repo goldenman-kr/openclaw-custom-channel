@@ -15,6 +15,7 @@ export interface MessageJobRunnerDeps {
   historyStore: HistoryStore;
   shouldPersistMessage(message: string): boolean;
   updateJob(job: MessageJob, patch: Partial<Pick<MessageJob, "state" | "error">>): void;
+  publishToken?(job: MessageJob, token: string): void;
 }
 
 export class MessageJobRunner {
@@ -60,6 +61,9 @@ export class MessageJobRunner {
         sessionStore: this.deps.sessionStore,
         validApiKeys: this.deps.validApiKeys,
         conversationStore: this.deps.conversationStore,
+        runtimeCallbacks: {
+          onToken: (token) => this.deps.publishToken?.(job, token),
+        },
       },
       headers,
       payload,

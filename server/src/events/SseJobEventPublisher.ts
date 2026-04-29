@@ -5,6 +5,11 @@ export interface JobEventRecord {
   state: string;
 }
 
+export interface JobTokenEventRecord {
+  id: string;
+  token: string;
+}
+
 export interface SseJobEventPublisherDeps {
   corsHeaders: Record<string, string>;
   isAuthorized(request: IncomingMessage): boolean;
@@ -27,22 +32,21 @@ export class SseJobEventPublisher {
   }
 
   publishJob(job: JobEventRecord): void {
-    const subscribers = this.subscribers.get(job.id);
+    const subscribers = this.publish(job.id, "job", job);
     if (!subscribers?.size) {
       return;
     }
 
-    for (const subscriber of [...subscribers]) {
-      this.writeEvent(subscriber.response, "job", job);
-      if (this.isTerminal(job)) {
+    if (this.isTerminal(job)) {
+      for (const subscriber of [...subscribers]) {
         this.removeSubscriber(job.id, subscriber);
         subscriber.response.end();
       }
     }
+  }
 
-    if (subscribers.size === 0) {
-      this.subscribers.delete(job.id);
-    }
+  publishToken(event: JobTokenEventRecord): void {
+    this.publish(event.id, "token", event);
   }
 
   serveJobEvents(request: IncomingMessage, response: ServerResponse, url: URL, jobId: string): void {
@@ -91,6 +95,19 @@ export class SseJobEventPublisher {
     request.on("close", () => {
       this.removeSubscriber(jobId, subscriber);
     });
+  }
+
+  private publish(jobId: string, event: string, data: unknown): Set<JobEventSubscriber> | null {
+    const subscribers = this.subscribers.get(jobId);
+    if (!subscribers?.size) {
+      return null;
+    }
+
+    for (const subscriber of [...subscribers]) {
+      this.writeEvent(subscriber.response, event, data);
+    }
+
+    return subscribers;
   }
 
   private addSubscriber(jobId: string, subscriber: JobEventSubscriber): void {
