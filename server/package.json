@@ -9,7 +9,9 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "tsx --test \"src/**/*.test.ts\"",
-    "smoke:token-sse": "node scripts/smoke-token-sse.mjs"
+    "smoke:token-sse": "node scripts/smoke-token-sse.mjs",
+    "smoke:gateway-openai": "node scripts/smoke-gateway-openai.mjs",
+    "smoke:bridge-gateway-openai": "node scripts/smoke-bridge-gateway-openai.mjs"
   },
   "keywords": [],
   "author": "",

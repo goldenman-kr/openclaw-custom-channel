@@ -1156,3 +1156,79 @@ mock token streaming SSE 경로를 반복 검증할 수 있도록 npm smoke scri
 의미:
 
 - streaming-ready 변경을 커밋하거나 배포하기 전 수동 curl 스크립트를 다시 작성하지 않고 동일 smoke를 반복 실행할 수 있다.
+
+## 42. Gateway OpenAI-compatible streaming transport 후보 추가
+
+운영 `agent` transport는 `openclaw agent --json` 완료 출력만 받기 때문에 token-level streaming을 만들 수 없다. OpenClaw Gateway dist에는 `/v1/chat/completions` OpenAI-compatible streaming handler가 존재하지만, 현재 gateway config에서는 `gateway.http.endpoints.chatCompletions.enabled`가 켜져 있지 않아 404가 반환된다.
+
+변경 파일:
+
+- `server/src/openclaw/GatewayOpenAiOpenClawClient.ts`
+- `server/src/openclaw/GatewayOpenAiOpenClawClient.test.ts`
+- `server/src/openclaw/createOpenClawClient.ts`
+- `MULTI_SESSION_IMPL.md`
+
+적용 내용:
+
+- `OPENCLAW_TRANSPORT=gateway-openai` transport 후보를 추가했다.
+- 기본 endpoint는 `OPENCLAW_GATEWAY_URL` 또는 `http://127.0.0.1:18789`의 `/v1/chat/completions`이다.
+- `stream: true` 요청을 보내고 OpenAI-compatible SSE chunk의 `choices[].delta.content`를 `callbacks.onToken()`으로 전달한다.
+- `x-openclaw-session-key`에 WebChat session id를 넣어 Gateway session continuity를 유지하도록 했다.
+- `OPENCLAW_GATEWAY_TOKEN`, `OPENCLAW_GATEWAY_MODEL`, `OPENCLAW_GATEWAY_TIMEOUT_MS` 환경 변수를 지원한다.
+- unit test는 fake SSE server로 token chunk가 callback과 final reply로 누적되는지 검증한다.
+
+현재 상태:
+
+- 이 transport는 아직 운영 서비스에 적용하지 않았다.
+- 실제 운영 token streaming은 Gateway OpenAI-compatible endpoint를 config에서 enable하고 gateway/service restart 후 smoke해야 한다.
+- endpoint를 enable해도 실제 토큰 chunk가 발생할지는 OpenClaw 내부 `onAgentEvent(stream=assistant)` 발생 여부에 달려 있으며, chunk가 없으면 Gateway handler는 완료 시점에 최종 텍스트를 한 번 emit하는 fallback을 사용한다.
+
+## 43. Gateway OpenAI transport 문서와 live smoke script 추가
+
+`gateway-openai` transport 후보를 실제 Gateway endpoint enable 이후 바로 검증할 수 있도록 문서와 live smoke script를 추가했다.
+
+변경 파일:
+
+- `server/scripts/smoke-gateway-openai.mjs`
+- `server/package.json`
+- `server/README.md`
+- `MULTI_SESSION_IMPL.md`
+
+적용 내용:
+
+- `npm run smoke:gateway-openai` script를 추가했다.
+- script는 `OPENCLAW_GATEWAY_URL`, `OPENCLAW_GATEWAY_TOKEN`, `OPENCLAW_GATEWAY_MODEL`, `OPENCLAW_GATEWAY_TIMEOUT_MS`를 사용해 `/v1/chat/completions`에 `stream: true` 요청을 보낸다.
+- SSE `choices[].delta.content` chunk 개수와 preview를 출력하고, chunk가 2개 이상이면 `likelyTokenStreaming: true`로 표시한다.
+- endpoint가 꺼져 있으면 `GATEWAY_OPENAI_SMOKE_ENDPOINT_DISABLED`와 함께 exit code 2를 반환한다.
+- README에 현재 production `agent` transport는 token-level streaming이 아니라는 점, `gateway-openai` transport 사용법, mock/live smoke 실행법을 정리했다.
+
+운영 적용 전 주의:
+
+- 현재 Gateway config에서는 `/v1/chat/completions`가 404였으므로 실제 live smoke는 config enable과 Gateway restart 이후 실행해야 한다.
+- Gateway restart는 사용자 확인이 필요하다.
+
+## 44. 실제 Gateway streaming smoke 결과와 bridge E2E smoke 추가
+
+사용자 승인 후 Gateway config에서 `gateway.http.endpoints.chatCompletions.enabled=true`를 추가하고 Gateway를 재시작했다. Gateway는 `127.0.0.1:18789`에서 정상 기동했고 connectivity probe도 OK였다.
+
+검증 결과:
+
+- `npm run smoke:gateway-openai`가 실제 `/v1/chat/completions` streaming endpoint에 성공했다.
+- 결과에서 `contentChunkCount: 3`, `likelyTokenStreaming: true`가 확인됐다.
+- 즉 OpenClaw Gateway OpenAI-compatible endpoint는 현재 환경에서 실제 assistant chunk를 emit한다.
+- 이어서 브릿지 서버를 임시 포트/임시 DB로 띄우고 `OPENCLAW_TRANSPORT=gateway-openai`로 `/v1/message` → `/v1/jobs/:id/events`를 E2E 확인했다.
+- one-off smoke에서 `event: token` 34개와 completed job event가 확인됐다.
+
+추가 변경:
+
+- `server/scripts/smoke-bridge-gateway-openai.mjs`
+- `server/package.json`
+- `server/README.md`
+
+`npm run smoke:bridge-gateway-openai`는 compiled bridge server를 임시 포트로 띄운 뒤 실제 Gateway streaming transport를 통해 conversation 생성, message enqueue, token SSE 수신, completed event 수신까지 검증한다.
+
+운영 적용 상태:
+
+- Gateway endpoint는 켜졌다.
+- WebChat production service는 아직 `OPENCLAW_TRANSPORT=agent` 상태이므로 production WebChat은 아직 token streaming transport를 사용하지 않는다.
+- 다음 운영 적용은 `openclaw-custom-channel.service` 환경을 `OPENCLAW_TRANSPORT=gateway-openai`로 바꾸고 해당 서비스만 재시작한 뒤 smoke/브라우저 확인하는 단계다.
