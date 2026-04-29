@@ -99,8 +99,19 @@ function isWithinRoot(filePath: string, root: string): boolean {
   return filePath === root || filePath.startsWith(`${root}/`);
 }
 
+function normalizeMediaPath(rawPath: string): string {
+  if (rawPath.startsWith("file://")) {
+    try {
+      return decodeURIComponent(new URL(rawPath).pathname);
+    } catch {
+      return rawPath;
+    }
+  }
+  return rawPath;
+}
+
 function resolveAllowedMediaPath(rawPath: string, mediaRoots: string[]): string | null {
-  const filePath = resolve(rawPath);
+  const filePath = resolve(normalizeMediaPath(rawPath));
   return mediaRoots.some((root) => isWithinRoot(filePath, root)) ? filePath : null;
 }
 

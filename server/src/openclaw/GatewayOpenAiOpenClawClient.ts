@@ -47,7 +47,7 @@ export class GatewayOpenAiOpenClawClient implements OpenClawClient {
       });
 
       return {
-        reply: finalText || streamed.join("") || "응답은 완료됐지만 출력 형식을 해석하지 못했습니다.",
+        reply: finalText || streamed.join("") || "응답 출력에 문제가 있습니다. 다시 답변을 요청해보세요. 이 오류가 반복되면 새 대화를 열어 세션을 다시 시작해주세요.",
         raw: {
           transport: "gateway-openai",
           endpoint: url.toString(),

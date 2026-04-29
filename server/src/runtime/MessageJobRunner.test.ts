@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtemp, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import test from "node:test";
 import type { ChatRuntime } from "./ChatRuntime.js";
@@ -84,6 +87,111 @@ async function waitUntil(predicate: () => boolean, timeoutMs = 1_000): Promise<v
     await delay(10);
   }
 }
+
+test("preserves all payload text and media refs from embedded agent JSON", async () => {
+  const runtime: ChatRuntime = {
+    async sendMessage() {
+      return {
+        reply: JSON.stringify({
+          payloads: [
+            { text: "첫 번째 답변", MediaPaths: ["/home/orbsian/.openclaw/media/report.pdf"] },
+            { text: "두 번째 답변", mediaUrl: "/home/orbsian/.openclaw/media/chart.png" },
+          ],
+        }),
+      };
+    },
+  };
+  const historyStore = memoryHistoryStore();
+  const job: MessageJob = {
+    id: "job_runner_payload_media_test",
+    sessionId: "session-runner-payload-media-test",
+    state: "queued",
+    createdAt: "2026-04-29T00:00:00.000Z",
+    updatedAt: "2026-04-29T00:00:00.000Z",
+  };
+
+  await historyStore.append(job.sessionId, [
+    {
+      id: job.id,
+      role: "assistant",
+      text: "응답 대기 중입니다…",
+      savedAt: job.createdAt,
+    },
+  ]);
+
+  const runner = new MessageJobRunner({
+    chatRuntime: runtime,
+    sessionStore: new InMemorySessionStore(),
+    validApiKeys: new Set(["test-key"]),
+    conversationStore: unusedConversationStore(),
+    historyStore,
+    shouldPersistMessage: () => true,
+    updateJob(jobToUpdate, patch) {
+      Object.assign(jobToUpdate, patch);
+    },
+  });
+
+  runner.enqueue(job, { authorization: "Bearer test-key" }, { message: "파일을 만들어줘" });
+
+  await waitUntil(() => job.state === "completed");
+  assert.equal(
+    (await historyStore.list(job.sessionId))[0]?.text,
+    [
+      "첫 번째 답변",
+      "MEDIA:/home/orbsian/.openclaw/media/report.pdf",
+      "두 번째 답변",
+      "MEDIA:/home/orbsian/.openclaw/media/chart.png",
+    ].join("\n\n"),
+  );
+});
+
+test("appends recent generated media files when streaming omits media payload", async () => {
+  const mediaDir = await mkdtemp(join(tmpdir(), "openclaw-generated-media-"));
+  const runtime: ChatRuntime = {
+    async sendMessage() {
+      await writeFile(join(mediaDir, "chart.png"), "png");
+      return { reply: "차트를 만들었습니다." };
+    },
+  };
+  const historyStore = memoryHistoryStore();
+  const job: MessageJob = {
+    id: "job_runner_generated_media_test",
+    sessionId: "session-runner-generated-media-test",
+    state: "queued",
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+
+  await historyStore.append(job.sessionId, [
+    {
+      id: job.id,
+      role: "assistant",
+      text: "응답 대기 중입니다…",
+      savedAt: job.createdAt,
+    },
+  ]);
+
+  const runner = new MessageJobRunner({
+    chatRuntime: runtime,
+    sessionStore: new InMemorySessionStore(),
+    validApiKeys: new Set(["test-key"]),
+    conversationStore: unusedConversationStore(),
+    historyStore,
+    shouldPersistMessage: () => true,
+    updateJob(jobToUpdate, patch) {
+      Object.assign(jobToUpdate, patch);
+    },
+    generatedMediaDirs: [mediaDir],
+  });
+
+  runner.enqueue(job, { authorization: "Bearer test-key" }, { message: "차트 이미지 만들어줘" });
+
+  await waitUntil(() => job.state === "completed");
+  assert.equal(
+    (await historyStore.list(job.sessionId))[0]?.text,
+    `차트를 만들었습니다.\n\nMEDIA:${join(mediaDir, "chart.png")}`,
+  );
+});
 
 test("publishes runtime tokens for queued message jobs", async () => {
   const tokens: string[] = [];

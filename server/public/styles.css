@@ -83,7 +83,6 @@ html[data-theme="light"] .danger-button,
 html[data-theme="system"] .danger-button { color: #991b1b; }
 
 .floating-settings-button,
-.floating-refresh-button,
 .mobile-menu-button {
   position: fixed;
   z-index: 40;
@@ -108,10 +107,91 @@ html[data-theme="system"] .danger-button { color: #991b1b; }
   left: max(10px, env(safe-area-inset-left));
 }
 
-.floating-refresh-button {
+.floating-action-menu {
+  position: fixed;
   right: max(14px, env(safe-area-inset-right));
   bottom: calc(max(14px, env(safe-area-inset-bottom)) + 92px);
-  font-size: 1.2rem;
+  z-index: 40;
+}
+
+.floating-action-toggle {
+  position: relative;
+  right: auto;
+  bottom: auto;
+  z-index: 40;
+  width: 44px;
+  height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--text);
+  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 2.05rem;
+  font-weight: 800;
+  line-height: 1;
+  text-shadow: 0 2px 8px rgba(2, 6, 23, 0.45);
+  backdrop-filter: none;
+}
+
+.floating-action-toggle:hover,
+.floating-action-toggle:focus-visible {
+  background: transparent;
+  transform: translateY(-1px);
+}
+
+.floating-action-panel {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 10px);
+  width: min(330px, calc(100vw - 28px));
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.floating-action-panel.hidden { display: none; }
+
+.floating-action-item {
+  width: 100%;
+  min-height: 58px;
+  justify-content: flex-start;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 18px;
+  background: rgba(15, 23, 42, 0.86);
+  box-shadow: 0 14px 34px rgba(2, 6, 23, 0.34);
+  backdrop-filter: blur(18px);
+  text-align: left;
+}
+
+.floating-action-icon {
+  width: 30px;
+  flex: 0 0 30px;
+  font-size: 1.25rem;
+  text-align: center;
+}
+
+.floating-action-text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  line-height: 1.25;
+}
+
+.floating-action-text small {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+html[data-theme="light"] .floating-action-item,
+html[data-theme="system"] .floating-action-item {
+  background: rgba(255, 255, 255, 0.94);
 }
 
 .drawer-backdrop {
@@ -303,21 +383,41 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); }
 
 .message-attachments {
   display: grid;
+  align-items: start;
   gap: 8px;
   margin-top: 10px;
 }
 
 .message-attachment {
   display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  max-width: min(100%, 420px);
+  padding: 4px 2px;
+}
+
+.message-attachment.image-attachment {
+  display: inline-grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-auto-rows: auto;
+  align-items: start;
+  align-content: start;
+  justify-self: start;
   gap: 5px;
-  max-width: min(280px, 72vw);
+  width: auto;
+  max-width: min(360px, 72vw);
+  height: auto;
+  padding: 0;
 }
 
 .message-attachment img {
   display: block;
   width: 100%;
+  height: auto;
   max-height: 260px;
-  object-fit: cover;
+  object-fit: contain;
   border-radius: 12px;
   border: 1px solid rgba(255, 255, 255, 0.28);
   background: rgba(15, 23, 42, 0.32);
@@ -325,16 +425,60 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); }
 }
 
 .attachment-file-icon {
-  font-size: 22px;
+  font-size: 18px;
+  line-height: 1;
 }
 
 .attachment-caption {
+  min-width: 0;
   color: inherit;
-  opacity: 0.82;
+  opacity: 0.88;
   font-size: 11px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.attachment-download-button {
+  justify-self: end;
+  padding: 3px 8px;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  border-radius: 999px;
+  color: inherit;
+  background: rgba(148, 163, 184, 0.14);
+  font-size: 10px;
+  font-weight: 700;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.attachment-download-button:hover,
+.attachment-download-button:focus-visible {
+  background: rgba(148, 163, 184, 0.22);
+}
+
+.attachment-download-button[aria-disabled="true"] {
+  pointer-events: none;
+  opacity: 0.45;
+}
+
+.image-attachment .attachment-caption {
+  max-width: 100%;
+  white-space: nowrap;
+  word-break: normal;
+}
+
+@media (max-width: 520px) {
+  .message-attachment:not(.image-attachment) {
+    grid-template-columns: auto minmax(0, 1fr);
+    max-width: 100%;
+  }
+
+  .message-attachment:not(.image-attachment) .attachment-download-button {
+    grid-column: 2;
+    justify-self: start;
+    margin-top: 2px;
+  }
 }
 
 .media-viewer {

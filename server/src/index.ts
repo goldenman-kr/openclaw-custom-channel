@@ -39,6 +39,11 @@ const historyStore = new FileHistoryStore(historyDir);
 const publicDir = resolve(process.env.PUBLIC_DIR ?? join(process.cwd(), "public"));
 const stateDir = resolve(process.cwd(), "state");
 const historyMediaDir = resolve(process.env.HISTORY_MEDIA_DIR ?? join(stateDir, "history-media"));
+const assistantGeneratedMediaDirs = (process.env.ASSISTANT_MEDIA_SCAN_DIRS ?? "/home/orbsian/.openclaw/media/outbound")
+  .split(":")
+  .map((dir) => dir.trim())
+  .filter(Boolean)
+  .map((dir) => resolve(dir));
 const chatStore = new SqliteChatStore(resolve(process.env.CHAT_DB_PATH ?? join(stateDir, "chat.sqlite")));
 const openClawAgentId = process.env.OPENCLAW_AGENT ?? "main";
 const jobs = new Map<string, MessageJob>();
@@ -207,6 +212,7 @@ const messageJobRunner = new MessageJobRunner({
   publishToken(job, token) {
     jobEventPublisher.publishToken({ id: job.id, token });
   },
+  generatedMediaDirs: assistantGeneratedMediaDirs,
 });
 
 function titleFromMessage(message: string): string {
