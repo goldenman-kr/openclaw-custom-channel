@@ -1,5 +1,6 @@
 const STORAGE_KEY = 'openclaw-web-channel-settings-v1';
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
+const COMPOSER_DRAFT_KEY_PREFIX = 'openclaw-web-channel-composer-draft-v1';
 const MAX_ATTACHMENTS = 3;
 const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
 const ALLOWED_ATTACHMENT_TYPES = new Set([
@@ -536,6 +537,38 @@ function activeConversationId() {
   return activeConversation?.id || settings.lastActiveConversationId || '';
 }
 
+function composerDraftStorageKey(conversationId = activeConversationId()) {
+  return conversationId ? `${COMPOSER_DRAFT_KEY_PREFIX}:${conversationId}` : '';
+}
+
+function saveComposerDraft(conversationId = activeConversationId()) {
+  const key = composerDraftStorageKey(conversationId);
+  if (!key) {
+    return;
+  }
+  const value = elements.messageInput.value;
+  if (value) {
+    localStorage.setItem(key, value);
+  } else {
+    localStorage.removeItem(key);
+  }
+}
+
+function clearComposerDraft(conversationId = activeConversationId()) {
+  const key = composerDraftStorageKey(conversationId);
+  if (key) {
+    localStorage.removeItem(key);
+  }
+}
+
+function restoreComposerDraft(conversationId = activeConversationId()) {
+  const key = composerDraftStorageKey(conversationId);
+  elements.messageInput.value = key ? localStorage.getItem(key) || '' : '';
+  autoResizeTextarea();
+  selectedSlashCommandIndex = 0;
+  renderSlashCommandPalette();
+}
+
 function conversationTitle(conversation) {
   const title = typeof conversation?.title === 'string' ? conversation.title.trim() : '';
   return title || '새 대화';
@@ -646,6 +679,7 @@ async function selectConversation(conversationId) {
   if (!conversationId || conversationId === activeConversationId()) {
     return;
   }
+  saveComposerDraft();
   const conversation = conversations.find((item) => item.id === conversationId) || null;
   if (!conversation) {
     return;
@@ -656,6 +690,7 @@ async function selectConversation(conversationId) {
   lastHistoryVersion = null;
   clearPendingJob();
   renderConversationList();
+  restoreComposerDraft(conversation.id);
   closeMobileDrawer();
   await renderHistory({ scrollToLatest: true });
   await resumePendingJobIfNeeded();
@@ -826,6 +861,7 @@ async function deleteConversation(conversationId) {
   }
   try {
     await destroyConversation(conversation.id);
+    clearComposerDraft(conversation.id);
     conversations = conversations.filter((item) => item.id !== conversation.id);
     if (activeConversation?.id === conversation.id) {
       activeConversation = conversations[0] || null;
@@ -835,12 +871,14 @@ async function deleteConversation(conversationId) {
       clearPendingJob();
       clearRenderedMessages();
       if (activeConversation) {
+        restoreComposerDraft(activeConversation.id);
         await renderHistory({ scrollToLatest: true });
       } else if (canUseApi()) {
         activeConversation = await createConversation('새 대화');
         conversations = [activeConversation];
         settings.lastActiveConversationId = activeConversation.id;
         saveSettings(settings);
+        restoreComposerDraft(activeConversation.id);
         await renderHistory({ scrollToLatest: true });
       }
     }
@@ -867,10 +905,12 @@ async function ensureActiveConversation() {
   }
   saveSettings(settings);
   renderConversationList();
+  restoreComposerDraft(activeConversation.id);
   return activeConversation;
 }
 
 async function startNewConversation() {
+  saveComposerDraft();
   activeConversation = await createConversation('새 대화');
   settings.lastActiveConversationId = activeConversation.id;
   conversations = [activeConversation, ...conversations.filter((conversation) => conversation.id !== activeConversation.id)];
@@ -879,6 +919,7 @@ async function startNewConversation() {
   clearPendingJob();
   clearRenderedMessages();
   renderConversationList();
+  restoreComposerDraft(activeConversation.id);
   await renderHistory({ scrollToLatest: true });
   closeMobileDrawer();
   return activeConversation;
@@ -941,6 +982,7 @@ async function continueInNewSession() {
   }
 
   const sourceConversation = await ensureActiveConversation();
+  saveComposerDraft(sourceConversation.id);
   setSending(true);
   setStatus('새 세션 인수인계를 준비하는 중입니다...');
 
@@ -957,6 +999,7 @@ async function continueInNewSession() {
     clearPendingJob();
     clearRenderedMessages();
     renderConversationList();
+    restoreComposerDraft(nextConversation.id);
     closeMobileDrawer();
 
     appendMessage('system', '새 OpenClaw 세션을 만들고 최근 대화 맥락을 전달합니다.', { persist: false });
@@ -1583,6 +1626,7 @@ function appendRetryAction(node, role, text) {
   button.textContent = '다시 시도';
   button.addEventListener('click', () => {
     elements.messageInput.value = retryText;
+    saveComposerDraft();
     autoResizeTextarea();
     elements.messageInput.focus();
   });
@@ -2025,6 +2069,7 @@ async function handleSubmit(event) {
   setStatus('메시지를 준비하는 중입니다...');
 
   try {
+    const conversation = await ensureActiveConversation();
     const outgoingMessage = rawMessage || '첨부 파일을 확인하고 사용자의 의도에 맞게 분석해주세요.';
     const isSlashCommand = rawMessage.startsWith('/');
     const shouldIncludeLocation = elements.includeLocationInput.checked || slashCommandUsesCurrentLocation(rawMessage) || (!isSlashCommand && rawMessage.includes('여기'));
@@ -2040,6 +2085,7 @@ async function handleSubmit(event) {
     const displayedUserText = `${outgoingMessage}${attachmentSummary(attachedFiles)}`;
     appendMessage('user', displayedUserText, { files: attachedFiles });
     elements.messageInput.value = '';
+    clearComposerDraft(conversation.id);
     selectedAttachments = [];
     renderAttachmentTray();
     elements.attachmentInput.value = '';
@@ -2098,6 +2144,9 @@ async function handleSubmit(event) {
         window.setTimeout(refreshHistoryIfChanged, 800);
         return;
       }
+      elements.messageInput.value = rawMessage;
+      saveComposerDraft(conversation.id);
+      autoResizeTextarea();
       appendMessage('system', errorMessage, { persist: false });
       setStatus('');
     }
@@ -2196,6 +2245,7 @@ function matchingSlashCommands() {
 
 function applySlashCommand(command) {
   elements.messageInput.value = command;
+  saveComposerDraft();
   hideSlashCommandPalette();
   autoResizeTextarea();
   elements.messageInput.focus();
@@ -2381,6 +2431,7 @@ elements.messageForm.addEventListener('dragleave', handleComposerDragLeave);
 elements.messageForm.addEventListener('drop', handleComposerDrop);
 elements.messageForm.addEventListener('submit', handleSubmit);
 elements.messageInput.addEventListener('input', () => {
+  saveComposerDraft();
   autoResizeTextarea();
   selectedSlashCommandIndex = 0;
   renderSlashCommandPalette();
