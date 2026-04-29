@@ -1,3 +1,5 @@
+import { readdir, stat } from "node:fs/promises";
+import { join } from "node:path";
 import type { IncomingMessage } from "node:http";
 import type { MessageRequestDto } from "../contracts/apiContractV1.js";
 import { handlePostMessage } from "../http/messageHandler.js";
@@ -16,6 +18,7 @@ export interface MessageJobRunnerDeps {
   shouldPersistMessage(message: string): boolean;
   updateJob(job: MessageJob, patch: Partial<Pick<MessageJob, "state" | "error">>): void;
   publishToken?(job: MessageJob, token: string): void;
+  generatedMediaDirs?: string[];
 }
 
 export class MessageJobRunner {
@@ -71,7 +74,7 @@ export class MessageJobRunner {
 
     if (result.statusCode >= 200 && result.statusCode < 300 && "reply" in result.body) {
       if (this.deps.shouldPersistMessage(payload.message)) {
-        const text = sanitizeAssistantReply(result.body.reply);
+        const text = await appendRecentGeneratedMediaRefs(sanitizeAssistantReply(result.body.reply), job.createdAt, this.deps.generatedMediaDirs);
         const savedAt = new Date().toISOString();
         if (job.conversationId) {
           this.deps.conversationStore.updateMessage(job.id, {
@@ -112,6 +115,44 @@ export class MessageJobRunner {
   }
 }
 
+async function appendRecentGeneratedMediaRefs(text: string, jobCreatedAt: string, generatedMediaDirs?: string[]): Promise<string> {
+  const dirs = generatedMediaDirs ?? [];
+  if (dirs.length === 0) {
+    return text;
+  }
+
+  const jobStartMs = Date.parse(jobCreatedAt);
+  const sinceMs = Number.isFinite(jobStartMs) ? jobStartMs - 5_000 : Date.now() - 10 * 60_000;
+  const refs = (await Promise.all(dirs.map((dir) => recentFilesInDir(dir, sinceMs))))
+    .flat()
+    .filter((filePath) => !text.includes(filePath))
+    .sort();
+  if (refs.length === 0) {
+    return text;
+  }
+  return `${text.trim()}\n\n${refs.map((filePath) => `MEDIA:${filePath}`).join("\n")}`.trim();
+}
+
+async function recentFilesInDir(dir: string, sinceMs: number): Promise<string[]> {
+  try {
+    const entries = await readdir(dir, { withFileTypes: true });
+    const files: string[] = [];
+    for (const entry of entries) {
+      if (!entry.isFile()) {
+        continue;
+      }
+      const filePath = join(dir, entry.name);
+      const fileStat = await stat(filePath);
+      if (fileStat.mtimeMs >= sinceMs && fileStat.size > 0) {
+        files.push(filePath);
+      }
+    }
+    return files;
+  } catch {
+    return [];
+  }
+}
+
 function sanitizeAssistantReply(reply: string): string {
   const extracted = extractEmbeddedPayloadText(reply);
   if (extracted) {
@@ -140,18 +181,55 @@ function extractEmbeddedPayloadText(text: string): string | null {
   }
 
   try {
-    const parsed = JSON.parse(text.slice(firstBrace, lastBrace + 1)) as { payloads?: Array<{ text?: unknown }>; result?: { payloads?: Array<{ text?: unknown }> } };
-    const directText = parsed.payloads?.[0]?.text;
-    if (typeof directText === "string" && directText.trim()) {
-      return directText.trim();
-    }
-    const resultText = parsed.result?.payloads?.[0]?.text;
-    if (typeof resultText === "string" && resultText.trim()) {
-      return resultText.trim();
-    }
+    const parsed = JSON.parse(text.slice(firstBrace, lastBrace + 1)) as Record<string, unknown>;
+    return pickPayloadVisibleText(parsed) ?? pickPayloadVisibleText(asRecord(parsed.result));
   } catch {
     return null;
   }
+}
 
-  return null;
+function pickPayloadVisibleText(parsed: Record<string, unknown> | null): string | null {
+  const payloads = asArray(parsed?.payloads);
+  const parts = payloads?.flatMap(payloadToVisibleParts).filter(Boolean) ?? [];
+  return parts.length > 0 ? parts.join("\n\n") : null;
+}
+
+function payloadToVisibleParts(payload: unknown): string[] {
+  const record = asRecord(payload);
+  if (!record) {
+    return [];
+  }
+
+  const parts: string[] = [];
+  const text = asNonEmptyString(record.text);
+  if (text) {
+    parts.push(text);
+  }
+  for (const mediaUrl of payloadMediaUrls(record)) {
+    parts.push(`MEDIA:${mediaUrl}`);
+  }
+  return parts;
+}
+
+function payloadMediaUrls(record: Record<string, unknown>): string[] {
+  const urls = [record.mediaUrls, record.MediaUrls, record.MediaPaths]
+    .flatMap((value) => asArray(value) ?? [])
+    .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+    .map((value) => value.trim());
+  const singles = [record.mediaUrl, record.MediaUrl, record.MediaPath]
+    .map(asNonEmptyString)
+    .filter((value): value is string => Boolean(value));
+  return [...urls, ...singles];
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : null;
+}
+
+function asArray(value: unknown): unknown[] | null {
+  return Array.isArray(value) ? value : null;
+}
+
+function asNonEmptyString(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
 }

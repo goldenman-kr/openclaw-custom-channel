@@ -13,7 +13,11 @@ const ALLOWED_ATTACHMENT_TYPES = new Set([
 
 const elements = {
   settingsButton: document.querySelector('#settingsButton'),
+  floatingActionMenu: document.querySelector('#floatingActionMenu'),
+  floatingActionPanel: document.querySelector('#floatingActionPanel'),
+  floatingActionToggle: document.querySelector('#floatingActionToggle'),
   floatingRefreshButton: document.querySelector('#floatingRefreshButton'),
+  continueNewSessionButton: document.querySelector('#continueNewSessionButton'),
   scrollToLatestButton: document.querySelector('#scrollToLatestButton'),
   sidebarSettingsButton: document.querySelector('#sidebarSettingsButton'),
   mobileMenuButton: document.querySelector('#mobileMenuButton'),
@@ -107,6 +111,7 @@ let selectedAttachments = [];
 let lastHistoryVersion = null;
 let activeConversation = null;
 let openConversationMenuId = null;
+let floatingActionsExpanded = false;
 let conversations = [];
 let mediaViewerCurrentUrl = '';
 let mediaViewerCurrentName = 'openclaw-image.png';
@@ -785,6 +790,126 @@ async function startNewConversation() {
   return activeConversation;
 }
 
+function setFloatingActionsExpanded(expanded) {
+  floatingActionsExpanded = expanded;
+  elements.floatingActionPanel?.classList.toggle('hidden', !expanded);
+  if (elements.floatingActionToggle) {
+    elements.floatingActionToggle.textContent = expanded ? '⌄' : '⌃';
+    elements.floatingActionToggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+    elements.floatingActionToggle.setAttribute('aria-label', expanded ? '빠른 작업 닫기' : '빠른 작업 열기');
+    elements.floatingActionToggle.title = expanded ? '빠른 작업 닫기' : '빠른 작업';
+  }
+}
+
+function toggleFloatingActions() {
+  setFloatingActionsExpanded(!floatingActionsExpanded);
+}
+
+function compactHistoryText(text, maxLength = 700) {
+  const normalized = String(text || '').replace(/\s+/g, ' ').trim();
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+  return `${normalized.slice(0, maxLength - 1)}…`;
+}
+
+function buildNewSessionHandoffMessage(sourceConversation, history) {
+  const meaningful = history
+    .filter((item) => ['user', 'assistant'].includes(item.role) && typeof item.text === 'string' && item.text.trim())
+    .slice(-12);
+  const lines = meaningful.map((item) => {
+    const speaker = item.role === 'user' ? '사용자' : 'assistant';
+    return `- ${speaker}: ${compactHistoryText(item.text)}`;
+  });
+  const historyText = lines.length > 0 ? lines.join('\n') : '- 이전 대화 기록이 비어 있습니다.';
+  return [
+    '새 OpenClaw 세션으로 이어가기 위한 인수인계입니다.',
+    '',
+    `이전 대화 제목: ${conversationTitle(sourceConversation)}`,
+    '',
+    '아래는 이전 대화의 최근 핵심 맥락입니다. 이 맥락을 참고해서 이후 질문에 이어서 답해주세요. 불확실한 내용은 추정하지 말고 확인 질문을 해주세요.',
+    '',
+    historyText,
+    '',
+    '이 인수인계를 이해했다면 아주 짧게 확인만 해주세요.',
+  ].join('\n');
+}
+
+async function continueInNewSession() {
+  setFloatingActionsExpanded(false);
+  if (isSendingMessage) {
+    return;
+  }
+  if (!canUseApi()) {
+    appendMessage('system', '설정에서 API URL과 API Key를 먼저 저장해주세요.', { persist: false });
+    elements.settingsPanel.classList.remove('hidden');
+    return;
+  }
+
+  const sourceConversation = await ensureActiveConversation();
+  setSending(true);
+  setStatus('새 세션 인수인계를 준비하는 중입니다...');
+
+  try {
+    const sourceHistory = await fetchConversationHistory(sourceConversation.id);
+    const handoffMessage = buildNewSessionHandoffMessage(sourceConversation, sourceHistory);
+    const nextTitleBase = conversationTitle(sourceConversation).replace(/^이어가기 -\s*/, '');
+    const nextConversation = await createConversation(`이어가기 - ${nextTitleBase}`.slice(0, 120));
+    activeConversation = nextConversation;
+    settings.lastActiveConversationId = nextConversation.id;
+    conversations = [nextConversation, ...conversations.filter((conversation) => conversation.id !== nextConversation.id)];
+    saveSettings(settings);
+    lastHistoryVersion = null;
+    clearPendingJob();
+    clearRenderedMessages();
+    renderConversationList();
+    closeMobileDrawer();
+
+    appendMessage('system', '새 OpenClaw 세션을 만들고 최근 대화 맥락을 전달합니다.', { persist: false });
+    setStatus('새 세션에 인수인계 메시지를 보내는 중입니다...');
+    const response = await sendMessage(handoffMessage);
+    const conversationId = response.conversation_id || nextConversation.id;
+    if (response.job_id) {
+      savePendingJob({ job_id: response.job_id, startedAt: Date.now() }, conversationId);
+      setSending(false);
+      setStatus('새 세션을 초기화하는 중입니다...');
+      await refreshHistoryIfChanged();
+      let receivedStreamingToken = false;
+      const job = await waitForJob(response.job_id, (jobUpdate) => {
+        if (!isActiveConversation(conversationId)) {
+          return;
+        }
+        if (!receivedStreamingToken || jobUpdate.state === 'completed' || jobUpdate.state === 'failed') {
+          refreshHistoryIfChanged();
+        }
+      }, conversationId, (token) => {
+        receivedStreamingToken = true;
+        applyStreamingToken(response.job_id, token, conversationId);
+      });
+      if (isActiveConversation(conversationId)) {
+        await refreshHistoryIfChanged();
+      }
+      if (job.state === 'failed') {
+        setStatus(job.error || '새 세션 초기화 응답이 실패했습니다.');
+      } else {
+        setStatus('새 세션으로 이어갈 준비가 됐습니다.');
+      }
+    } else {
+      await refreshHistoryIfChanged();
+      setStatus('새 세션으로 이어갈 준비가 됐습니다.');
+    }
+    await refreshConversations().catch(() => {});
+  } catch (error) {
+    appendMessage('system', error instanceof Error ? error.message : String(error), { persist: false });
+    setStatus('');
+  } finally {
+    setSending(false);
+    if (!isMobileLikeInput()) {
+      elements.messageInput.focus();
+    }
+  }
+}
+
 async function fetchHistory() {
   const conversation = await ensureActiveConversation();
   const response = await fetch(apiUrl('/v1/history', { conversation_id: conversation.id }), {
@@ -1075,9 +1200,9 @@ function extractMediaRefs(text) {
   const visibleLines = [];
 
   for (const line of text.split('\n')) {
-    const mediaMatch = line.match(/^\s*MEDIA:\s*(.+?)\s*$/);
+    const mediaMatch = line.match(/^\s*`{0,3}\s*MEDIA:\s*(.+?)\s*`{0,3}\s*$/);
     if (mediaMatch) {
-      refs.push(mediaMatch[1]);
+      refs.push(mediaMatch[1].replace(/`+$/g, '').trim());
       continue;
     }
     visibleLines.push(line);
@@ -1089,6 +1214,22 @@ function extractMediaRefs(text) {
 
 function isImageRef(ref) {
   return /\.(png|jpe?g|webp|gif|svg)(\?.*)?$/i.test(ref);
+}
+
+function isPlaceholderMediaRef(ref) {
+  return !ref || ref === '/파일경로' || ref === '파일경로' || ref.includes('/파일경로');
+}
+
+function shortenFileName(name, maxLength = 34) {
+  if (!name || name.length <= maxLength) {
+    return name;
+  }
+  const dotIndex = name.lastIndexOf('.');
+  const extension = dotIndex > 0 && name.length - dotIndex <= 10 ? name.slice(dotIndex) : '';
+  const base = extension ? name.slice(0, dotIndex) : name;
+  const headLength = Math.max(8, Math.floor((maxLength - extension.length - 1) * 0.55));
+  const tailLength = Math.max(6, maxLength - extension.length - headLength - 1);
+  return `${base.slice(0, headLength)}…${base.slice(-tailLength)}${extension}`;
 }
 
 function openMediaViewer(url, fileName = 'openclaw-image.png') {
@@ -1117,29 +1258,39 @@ function blobToBase64(blob) {
   });
 }
 
-async function downloadCurrentMedia(event) {
-  if (!mediaViewerCurrentUrl) {
-    return;
+async function downloadUrlThroughClient(url, fileName, trigger, event) {
+  if (!url || !window.OpenClawAndroid?.downloadBlob) {
+    return false;
   }
-  if (!window.OpenClawAndroid?.downloadBlob) {
-    return;
+  event?.preventDefault();
+  const originalText = trigger?.textContent;
+  if (trigger) {
+    trigger.textContent = '저장 중…';
   }
-  event.preventDefault();
-  const originalText = elements.mediaViewerDownload.textContent;
-  elements.mediaViewerDownload.textContent = '저장 중…';
   try {
-    const response = await fetch(mediaViewerCurrentUrl);
+    const response = await fetch(url);
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`);
     }
     const blob = await response.blob();
     const base64 = await blobToBase64(blob);
-    window.OpenClawAndroid.downloadBlob(mediaViewerCurrentName, blob.type || 'application/octet-stream', base64);
+    window.OpenClawAndroid.downloadBlob(fileName, blob.type || 'application/octet-stream', base64);
+    return true;
   } catch (error) {
     appendMessage('system', `다운로드 실패: ${error instanceof Error ? error.message : String(error)}`, { persist: false });
+    return false;
   } finally {
-    elements.mediaViewerDownload.textContent = originalText;
+    if (trigger && originalText) {
+      trigger.textContent = originalText;
+    }
   }
+}
+
+async function downloadCurrentMedia(event) {
+  if (!mediaViewerCurrentUrl) {
+    return;
+  }
+  await downloadUrlThroughClient(mediaViewerCurrentUrl, mediaViewerCurrentName, elements.mediaViewerDownload, event);
 }
 
 function mediaRefsFromHistoryAttachments(attachments) {
@@ -1174,10 +1325,24 @@ async function getAuthorizedMediaUrl(ref) {
   return url;
 }
 
+function normalizeMediaRefPath(ref) {
+  if (typeof ref !== 'string') {
+    return '';
+  }
+  if (ref.startsWith('file://')) {
+    try {
+      return decodeURIComponent(new URL(ref).pathname);
+    } catch {
+      return ref;
+    }
+  }
+  return ref;
+}
+
 function appendMediaRef(parent, rawRef) {
   const refInfo = typeof rawRef === 'string' ? { path: rawRef } : rawRef;
-  const ref = refInfo?.path;
-  if (!ref) {
+  const ref = normalizeMediaRefPath(refInfo?.path);
+  if (!ref || isPlaceholderMediaRef(ref)) {
     return;
   }
 
@@ -1191,7 +1356,8 @@ function appendMediaRef(parent, rawRef) {
   item.className = 'message-attachment';
   const isRemote = /^https?:\/\//i.test(ref);
   const fileName = refInfo.name || ref.split('/').pop() || ref;
-  const captionText = refInfo.size ? `${fileName} · ${formatBytes(refInfo.size)}` : fileName;
+  const displayName = shortenFileName(fileName);
+  const captionText = refInfo.size ? `${displayName} · ${formatBytes(refInfo.size)}` : displayName;
   let image = null;
 
   if (isImageRef(ref) || refInfo.type?.startsWith('image/')) {
@@ -1214,6 +1380,17 @@ function appendMediaRef(parent, rawRef) {
   caption.rel = 'noopener noreferrer';
   caption.download = fileName;
   item.append(caption);
+
+  const downloadLink = image ? null : document.createElement('a');
+  if (downloadLink) {
+    downloadLink.className = 'attachment-download-button';
+    downloadLink.textContent = '다운로드';
+    downloadLink.download = fileName;
+    downloadLink.target = '_blank';
+    downloadLink.rel = 'noopener noreferrer';
+    downloadLink.setAttribute('aria-disabled', 'true');
+    item.append(downloadLink);
+  }
   preview.append(item);
 
   const wireImageViewer = (url) => {
@@ -1228,8 +1405,20 @@ function appendMediaRef(parent, rawRef) {
     caption.addEventListener('click', open);
   };
 
+  const wireDownload = (url) => {
+    if (!downloadLink) {
+      return;
+    }
+    downloadLink.href = url;
+    downloadLink.removeAttribute('aria-disabled');
+    downloadLink.addEventListener('click', (event) => {
+      downloadUrlThroughClient(url, fileName, downloadLink, event);
+    }, { once: false });
+  };
+
   if (isRemote) {
     caption.href = ref;
+    wireDownload(ref);
     if (image) {
       image.src = ref;
       wireImageViewer(ref);
@@ -1241,6 +1430,7 @@ function appendMediaRef(parent, rawRef) {
     const cachedUrl = mediaUrlCache.get(ref);
     caption.href = cachedUrl;
     caption.textContent = captionText;
+    wireDownload(cachedUrl);
     if (image) {
       image.src = cachedUrl;
       wireImageViewer(cachedUrl);
@@ -1254,6 +1444,7 @@ function appendMediaRef(parent, rawRef) {
     .then((url) => {
       caption.href = url;
       caption.textContent = captionText;
+      wireDownload(url);
       if (image) {
         image.src = url;
         wireImageViewer(url);
@@ -1410,6 +1601,9 @@ function setSending(isSending) {
   elements.messageInput.disabled = isSending;
   elements.includeLocationInput.disabled = isSending;
   elements.attachButton.disabled = isSending;
+  if (elements.continueNewSessionButton) {
+    elements.continueNewSessionButton.disabled = isSending;
+  }
   elements.sendButton.textContent = isSending ? '전송 중' : '전송';
 }
 
@@ -1980,6 +2174,9 @@ document.addEventListener('click', (event) => {
     openConversationMenuId = null;
     renderConversationList();
   }
+  if (floatingActionsExpanded && !target?.closest?.('#floatingActionMenu')) {
+    setFloatingActionsExpanded(false);
+  }
   if (elements.settingsPanel.classList.contains('hidden')) {
     return;
   }
@@ -2044,7 +2241,9 @@ elements.clearHistoryButton.addEventListener('click', async () => {
 
 elements.healthCheckButton.addEventListener('click', healthCheck);
 elements.refreshAppButton.addEventListener('click', () => window.location.reload());
-elements.floatingRefreshButton.addEventListener('click', () => window.location.reload());
+elements.floatingActionToggle?.addEventListener('click', toggleFloatingActions);
+elements.floatingRefreshButton?.addEventListener('click', () => window.location.reload());
+elements.continueNewSessionButton?.addEventListener('click', continueInNewSession);
 elements.scrollToLatestButton?.addEventListener('click', () => scrollToBottom({ force: true }));
 elements.messages.addEventListener('scroll', () => {
   if (isNearBottom(80)) {
@@ -2063,6 +2262,10 @@ elements.mediaViewer.addEventListener('click', (event) => {
 document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape' && !elements.mediaViewer.classList.contains('hidden')) {
     closeMediaViewer();
+    return;
+  }
+  if (event.key === 'Escape' && floatingActionsExpanded) {
+    setFloatingActionsExpanded(false);
     return;
   }
   if (event.key === 'Escape' && document.body.classList.contains('drawer-open')) {

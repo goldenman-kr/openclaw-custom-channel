@@ -25,7 +25,25 @@
       </aside>
 
       <section class="chat-panel" aria-label="채팅">
-        <button id="floatingRefreshButton" class="ghost-button floating-refresh-button" type="button" aria-label="새로고침" title="새로고침">↻</button>
+        <div id="floatingActionMenu" class="floating-action-menu">
+          <div id="floatingActionPanel" class="floating-action-panel hidden" role="menu" aria-label="빠른 작업">
+            <button id="floatingRefreshButton" class="ghost-button floating-action-item" type="button" role="menuitem">
+              <span class="floating-action-icon" aria-hidden="true">↻</span>
+              <span class="floating-action-text">
+                <strong>새로고침</strong>
+                <small>앱 화면과 대화 기록을 다시 불러옵니다.</small>
+              </span>
+            </button>
+            <button id="continueNewSessionButton" class="ghost-button floating-action-item" type="button" role="menuitem">
+              <span class="floating-action-icon" aria-hidden="true">🆕</span>
+              <span class="floating-action-text">
+                <strong>새 세션으로 이어가기</strong>
+                <small>최근 대화 맥락을 새 OpenClaw 세션에 전달하고 이어갑니다.</small>
+              </span>
+            </button>
+          </div>
+          <button id="floatingActionToggle" class="ghost-button floating-action-toggle" type="button" aria-label="빠른 작업 열기" aria-expanded="false" aria-controls="floatingActionPanel" title="빠른 작업">⌃</button>
+        </div>
         <button id="scrollToLatestButton" class="ghost-button scroll-latest-button hidden" type="button" aria-label="최신 응답으로 이동" title="최신 응답으로 이동">↓</button>
 
         <section id="settingsPanel" class="settings-panel hidden" aria-label="설정">

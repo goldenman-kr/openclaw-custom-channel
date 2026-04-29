@@ -45,7 +45,7 @@ export class AgentOpenClawClient implements OpenClawClient {
     });
 
     return {
-      reply: extractReply(result.stdout) || extractReply(result.stderr) || "응답은 완료됐지만 출력 형식을 해석하지 못했습니다.",
+      reply: extractReply(result.stdout) || extractReply(result.stderr) || "응답 출력에 문제가 있습니다. 다시 답변을 요청해보세요. 이 오류가 반복되면 새 대화를 열어 세션을 다시 시작해주세요.",
       raw: {
         stdout: result.stdout,
         stderr: result.stderr,
@@ -182,8 +182,37 @@ function pickNestedText(parsed: Record<string, unknown>): string | null {
 
 function pickPayloadText(parsed: Record<string, unknown>): string | null {
   const payloads = asArray(parsed.payloads);
-  const firstPayload = asRecord(payloads?.[0]);
-  return asString(firstPayload?.text);
+  const parts = payloads?.flatMap(payloadToVisibleParts).filter(Boolean) ?? [];
+  return parts.length > 0 ? parts.join("\n\n") : null;
+}
+
+function payloadToVisibleParts(payload: unknown): string[] {
+  const record = asRecord(payload);
+  if (!record) {
+    return [];
+  }
+
+  const parts: string[] = [];
+  const text = asString(record.text);
+  if (text) {
+    parts.push(text);
+  }
+
+  for (const mediaUrl of payloadMediaUrls(record)) {
+    parts.push(`MEDIA:${mediaUrl}`);
+  }
+  return parts;
+}
+
+function payloadMediaUrls(record: Record<string, unknown>): string[] {
+  const urls = [record.mediaUrls, record.MediaUrls, record.MediaPaths]
+    .flatMap((value) => asArray(value) ?? [])
+    .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+    .map((value) => value.trim());
+  const singles = [record.mediaUrl, record.MediaUrl, record.MediaPath]
+    .map(asString)
+    .filter((value): value is string => Boolean(value));
+  return [...urls, ...singles];
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
