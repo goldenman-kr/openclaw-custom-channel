@@ -13,11 +13,36 @@ export interface SseJobEventPublisherDeps {
   pollIntervalMs?: number;
 }
 
+interface JobEventSubscriber {
+  response: ServerResponse;
+  interval?: NodeJS.Timeout;
+}
+
 export class SseJobEventPublisher {
   private readonly pollIntervalMs: number;
+  private readonly subscribers = new Map<string, Set<JobEventSubscriber>>();
 
   constructor(private readonly deps: SseJobEventPublisherDeps) {
     this.pollIntervalMs = deps.pollIntervalMs ?? 2_000;
+  }
+
+  publishJob(job: JobEventRecord): void {
+    const subscribers = this.subscribers.get(job.id);
+    if (!subscribers?.size) {
+      return;
+    }
+
+    for (const subscriber of [...subscribers]) {
+      this.writeEvent(subscriber.response, "job", job);
+      if (this.isTerminal(job)) {
+        this.removeSubscriber(job.id, subscriber);
+        subscriber.response.end();
+      }
+    }
+
+    if (subscribers.size === 0) {
+      this.subscribers.delete(job.id);
+    }
   }
 
   serveJobEvents(request: IncomingMessage, response: ServerResponse, url: URL, jobId: string): void {
@@ -46,7 +71,7 @@ export class SseJobEventPublisher {
         return true;
       }
       this.writeEvent(response, "job", job);
-      return job.state === "completed" || job.state === "failed";
+      return this.isTerminal(job);
     };
 
     if (sendCurrent()) {
@@ -54,14 +79,44 @@ export class SseJobEventPublisher {
       return;
     }
 
-    const interval = setInterval(() => {
+    const subscriber: JobEventSubscriber = { response };
+    this.addSubscriber(jobId, subscriber);
+    subscriber.interval = setInterval(() => {
       if (sendCurrent()) {
-        clearInterval(interval);
+        this.removeSubscriber(jobId, subscriber);
         response.end();
       }
     }, this.pollIntervalMs);
 
-    request.on("close", () => clearInterval(interval));
+    request.on("close", () => {
+      this.removeSubscriber(jobId, subscriber);
+    });
+  }
+
+  private addSubscriber(jobId: string, subscriber: JobEventSubscriber): void {
+    const subscribers = this.subscribers.get(jobId) ?? new Set<JobEventSubscriber>();
+    subscribers.add(subscriber);
+    this.subscribers.set(jobId, subscribers);
+  }
+
+  private removeSubscriber(jobId: string, subscriber: JobEventSubscriber): void {
+    if (subscriber.interval) {
+      clearInterval(subscriber.interval);
+      subscriber.interval = undefined;
+    }
+
+    const subscribers = this.subscribers.get(jobId);
+    if (!subscribers) {
+      return;
+    }
+    subscribers.delete(subscriber);
+    if (subscribers.size === 0) {
+      this.subscribers.delete(jobId);
+    }
+  }
+
+  private isTerminal(job: JobEventRecord): boolean {
+    return job.state === "completed" || job.state === "failed";
   }
 
   private writeEvent(response: ServerResponse, event: string, data: unknown): void {
