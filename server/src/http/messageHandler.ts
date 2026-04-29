@@ -8,7 +8,7 @@ import {
   type MessageResponseDto,
   validateMessageRequestDto,
 } from "../contracts/apiContractV1.js";
-import type { ChatRuntime } from "../runtime/ChatRuntime.js";
+import type { ChatRuntime, ChatRuntimeCallbacks } from "../runtime/ChatRuntime.js";
 import type { ConversationStore } from "../session/SqliteChatStore.js";
 import type { SessionStore } from "../session/SessionStore.js";
 
@@ -22,6 +22,7 @@ export interface MessageHandlerDeps {
   sessionStore: SessionStore;
   validApiKeys: Set<string>;
   conversationStore?: Pick<ConversationStore, "getConversation">;
+  runtimeCallbacks?: ChatRuntimeCallbacks;
 }
 
 const ERROR_STATUS: Record<ErrorCode, number> = {
@@ -132,6 +133,7 @@ export async function handlePostMessage(
       userId,
       attachments: payload.attachments,
       metadata: payload.metadata,
+      callbacks: deps.runtimeCallbacks,
     });
 
     return {
