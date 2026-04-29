@@ -17,6 +17,7 @@ const elements = {
   floatingActionMenu: document.querySelector('#floatingActionMenu'),
   floatingActionPanel: document.querySelector('#floatingActionPanel'),
   floatingActionToggle: document.querySelector('#floatingActionToggle'),
+  floatingSettingsButton: document.querySelector('#floatingSettingsButton'),
   floatingRefreshButton: document.querySelector('#floatingRefreshButton'),
   continueNewSessionButton: document.querySelector('#continueNewSessionButton'),
   scrollToLatestButton: document.querySelector('#scrollToLatestButton'),
@@ -47,6 +48,7 @@ const elements = {
   notificationButton: document.querySelector('#notificationButton'),
   clearHistoryButton: document.querySelector('#clearHistoryButton'),
   messages: document.querySelector('#messages'),
+  messagesScrollIndicator: document.querySelector('#messagesScrollIndicator'),
   messageForm: document.querySelector('#messageForm'),
   messageInput: document.querySelector('#messageInput'),
   includeLocationInput: document.querySelector('#includeLocationInput'),
@@ -117,6 +119,11 @@ let floatingActionsExpanded = false;
 let conversations = [];
 let mediaViewerCurrentUrl = '';
 let mediaViewerCurrentName = 'openclaw-image.png';
+let mediaViewerTransform = { scale: 1, x: 0, y: 0 };
+const mediaViewerPointers = new Map();
+let mediaViewerGestureStart = null;
+let mediaViewerHistoryActive = false;
+let messagesScrollIndicatorTimer = null;
 const mediaUrlCache = new Map();
 const slashCommands = [
   { command: '/status', title: '상태 확인', description: '현재 세션/모델/토큰/설정 상태를 확인합니다.' },
@@ -444,6 +451,35 @@ function hideScrollToLatestButton() {
   elements.scrollToLatestButton?.classList.add('hidden');
 }
 
+function updateMessagesScrollIndicator() {
+  const indicator = elements.messagesScrollIndicator;
+  if (!indicator) {
+    return;
+  }
+  const { scrollHeight, clientHeight, scrollTop } = elements.messages;
+  if (scrollHeight <= clientHeight + 1) {
+    indicator.classList.remove('visible');
+    return;
+  }
+  const trackHeight = clientHeight;
+  const thumbHeight = clamp((clientHeight / scrollHeight) * trackHeight, 36, Math.max(36, trackHeight));
+  const maxThumbTop = Math.max(0, trackHeight - thumbHeight);
+  const maxScrollTop = Math.max(1, scrollHeight - clientHeight);
+  const thumbTop = (scrollTop / maxScrollTop) * maxThumbTop;
+  indicator.style.top = `${elements.messages.offsetTop}px`;
+  indicator.style.height = `${thumbHeight}px`;
+  indicator.style.transform = `translateY(${thumbTop}px)`;
+  indicator.classList.add('visible');
+}
+
+function hideMessagesScrollIndicatorSoon() {
+  window.clearTimeout(messagesScrollIndicatorTimer);
+  messagesScrollIndicatorTimer = window.setTimeout(() => {
+    elements.messages.classList.remove('is-scrolling');
+    elements.messagesScrollIndicator?.classList.remove('visible');
+  }, 800);
+}
+
 function scrollToBottom(options = {}) {
   const { force = false, autoScroll = true } = options;
   if (!autoScroll) {
@@ -457,6 +493,16 @@ function scrollToBottom(options = {}) {
     elements.messages.scrollTop = elements.messages.scrollHeight;
     hideScrollToLatestButton();
   });
+}
+
+function preserveScrollAfterRender(previousBottomOffset) {
+  const restore = () => {
+    elements.messages.scrollTop = Math.max(0, elements.messages.scrollHeight - previousBottomOffset);
+  };
+  restore();
+  requestAnimationFrame(restore);
+  window.setTimeout(restore, 80);
+  window.setTimeout(restore, 250);
 }
 
 function openMobileDrawer() {
@@ -1073,6 +1119,9 @@ async function fetchHistoryMeta() {
 
 async function renderHistory(options = {}) {
   const { scrollToLatest = false } = options;
+  const hadRenderedMessages = elements.messages.children.length > 0;
+  const shouldFollow = isNearBottom();
+  const previousBottomOffset = elements.messages.scrollHeight - elements.messages.scrollTop;
   clearRenderedMessages();
   if (!canUseApi()) {
     appendMessage('system', '설정에서 API Key를 입력하면 대화를 시작할 수 있습니다.', { persist: false });
@@ -1091,9 +1140,16 @@ async function renderHistory(options = {}) {
         appendMessage(item.role, item.text, { id: item.id, persist: false, autoScroll: false, suppressScrollButton: true, mediaRefs: mediaRefsFromHistoryAttachments(item.attachments), pending: isPendingHistoryMessage(item) });
       }
     }
-    if (scrollToLatest) {
+    if (scrollToLatest || shouldFollow) {
       scrollToBottom({ force: true });
-      window.setTimeout(() => scrollToBottom({ force: true }), 250);
+      if (scrollToLatest) {
+        window.setTimeout(() => scrollToBottom({ force: true }), 250);
+      }
+    } else if (hadRenderedMessages) {
+      preserveScrollAfterRender(previousBottomOffset);
+      if (history.some((item) => typeof item?.role === 'string' && item.role !== 'user' && !isPendingHistoryMessage(item))) {
+        showScrollToLatestButton();
+      }
     }
   } catch (error) {
     appendMessage('system', error instanceof Error ? error.message : String(error), { persist: false });
@@ -1298,7 +1354,7 @@ async function refreshHistoryIfChanged() {
     lastHistoryVersion = meta.version || lastHistoryVersion;
     if (history.length > 0 && historySignature(history) !== currentRenderedHistorySignature()) {
       const shouldFollow = isNearBottom();
-      const previousScrollTop = elements.messages.scrollTop;
+      const previousBottomOffset = elements.messages.scrollHeight - elements.messages.scrollTop;
       clearRenderedMessages();
       for (const item of history) {
         if (typeof item?.role === 'string' && typeof item?.text === 'string') {
@@ -1314,7 +1370,7 @@ async function refreshHistoryIfChanged() {
       if (shouldFollow) {
         scrollToBottom({ force: true });
       } else {
-        elements.messages.scrollTop = previousScrollTop;
+        preserveScrollAfterRender(previousBottomOffset);
         if (history.some((item) => typeof item?.role === 'string' && item.role !== 'user' && !isPendingHistoryMessage(item))) {
           showScrollToLatestButton();
         }
@@ -1369,21 +1425,154 @@ function shortenFileName(name, maxLength = 34) {
   return `${base.slice(0, headLength)}…${base.slice(-tailLength)}${extension}`;
 }
 
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function applyMediaViewerTransform() {
+  const { scale, x, y } = mediaViewerTransform;
+  elements.mediaViewerImage.style.transform = `translate3d(${x}px, ${y}px, 0) scale(${scale})`;
+  elements.mediaViewerImage.classList.toggle('zoomed', scale > 1.01);
+}
+
+function resetMediaViewerZoom() {
+  mediaViewerTransform = { scale: 1, x: 0, y: 0 };
+  mediaViewerPointers.clear();
+  mediaViewerGestureStart = null;
+  applyMediaViewerTransform();
+}
+
+function pointerDistance(first, second) {
+  return Math.hypot(first.clientX - second.clientX, first.clientY - second.clientY);
+}
+
+function pointerMidpoint(first, second) {
+  return {
+    x: (first.clientX + second.clientX) / 2,
+    y: (first.clientY + second.clientY) / 2,
+  };
+}
+
+function beginMediaViewerGesture() {
+  const pointers = [...mediaViewerPointers.values()];
+  if (pointers.length >= 2) {
+    const [first, second] = pointers;
+    mediaViewerGestureStart = {
+      mode: 'pinch',
+      distance: Math.max(1, pointerDistance(first, second)),
+      midpoint: pointerMidpoint(first, second),
+      scale: mediaViewerTransform.scale,
+      x: mediaViewerTransform.x,
+      y: mediaViewerTransform.y,
+    };
+    return;
+  }
+  if (pointers.length === 1) {
+    const [pointer] = pointers;
+    mediaViewerGestureStart = {
+      mode: 'pan',
+      clientX: pointer.clientX,
+      clientY: pointer.clientY,
+      x: mediaViewerTransform.x,
+      y: mediaViewerTransform.y,
+    };
+  }
+}
+
+function updateMediaViewerGesture() {
+  const pointers = [...mediaViewerPointers.values()];
+  if (pointers.length >= 2 && mediaViewerGestureStart?.mode === 'pinch') {
+    const [first, second] = pointers;
+    const midpoint = pointerMidpoint(first, second);
+    const scale = clamp(mediaViewerGestureStart.scale * (pointerDistance(first, second) / mediaViewerGestureStart.distance), 1, 5);
+    mediaViewerTransform = {
+      scale,
+      x: scale <= 1.01 ? 0 : mediaViewerGestureStart.x + midpoint.x - mediaViewerGestureStart.midpoint.x,
+      y: scale <= 1.01 ? 0 : mediaViewerGestureStart.y + midpoint.y - mediaViewerGestureStart.midpoint.y,
+    };
+    applyMediaViewerTransform();
+    return;
+  }
+  if (pointers.length === 1 && mediaViewerGestureStart?.mode === 'pan' && mediaViewerTransform.scale > 1.01) {
+    const [pointer] = pointers;
+    mediaViewerTransform = {
+      ...mediaViewerTransform,
+      x: mediaViewerGestureStart.x + pointer.clientX - mediaViewerGestureStart.clientX,
+      y: mediaViewerGestureStart.y + pointer.clientY - mediaViewerGestureStart.clientY,
+    };
+    applyMediaViewerTransform();
+  }
+}
+
+function handleMediaViewerPointerDown(event) {
+  if (elements.mediaViewer.classList.contains('hidden')) {
+    return;
+  }
+  event.preventDefault();
+  elements.mediaViewerImage.setPointerCapture?.(event.pointerId);
+  mediaViewerPointers.set(event.pointerId, event);
+  beginMediaViewerGesture();
+}
+
+function handleMediaViewerPointerMove(event) {
+  if (!mediaViewerPointers.has(event.pointerId)) {
+    return;
+  }
+  event.preventDefault();
+  mediaViewerPointers.set(event.pointerId, event);
+  updateMediaViewerGesture();
+}
+
+function handleMediaViewerPointerEnd(event) {
+  if (!mediaViewerPointers.has(event.pointerId)) {
+    return;
+  }
+  mediaViewerPointers.delete(event.pointerId);
+  elements.mediaViewerImage.releasePointerCapture?.(event.pointerId);
+  beginMediaViewerGesture();
+}
+
+function handleMediaViewerWheel(event) {
+  if (!event.ctrlKey && !event.metaKey) {
+    return;
+  }
+  event.preventDefault();
+  const nextScale = clamp(mediaViewerTransform.scale + (event.deltaY < 0 ? 0.2 : -0.2), 1, 5);
+  mediaViewerTransform = {
+    scale: nextScale,
+    x: nextScale <= 1.01 ? 0 : mediaViewerTransform.x,
+    y: nextScale <= 1.01 ? 0 : mediaViewerTransform.y,
+  };
+  applyMediaViewerTransform();
+}
+
 function openMediaViewer(url, fileName = 'openclaw-image.png') {
   mediaViewerCurrentUrl = url;
   mediaViewerCurrentName = fileName || 'openclaw-image.png';
+  resetMediaViewerZoom();
   elements.mediaViewerImage.src = url;
   elements.mediaViewerImage.alt = mediaViewerCurrentName;
   elements.mediaViewerDownload.href = url;
   elements.mediaViewerDownload.download = mediaViewerCurrentName;
   elements.mediaViewer.classList.remove('hidden');
+  if (!mediaViewerHistoryActive) {
+    window.history.pushState({ openclawMediaViewer: true }, '');
+    mediaViewerHistoryActive = true;
+  }
 }
 
-function closeMediaViewer() {
+function closeMediaViewer(options = {}) {
+  const { syncHistory = true } = options;
+  if (syncHistory && mediaViewerHistoryActive) {
+    window.history.back();
+    return;
+  }
   elements.mediaViewer.classList.add('hidden');
   elements.mediaViewerImage.removeAttribute('src');
   elements.mediaViewerDownload.removeAttribute('href');
   mediaViewerCurrentUrl = '';
+  mediaViewerHistoryActive = false;
+  resetMediaViewerZoom();
 }
 
 function blobToBase64(blob) {
@@ -2086,6 +2275,7 @@ async function handleSubmit(event) {
     appendMessage('user', displayedUserText, { files: attachedFiles });
     elements.messageInput.value = '';
     clearComposerDraft(conversation.id);
+    autoResizeTextarea();
     selectedAttachments = [];
     renderAttachmentTray();
     elements.attachmentInput.value = '';
@@ -2324,7 +2514,12 @@ document.addEventListener('click', (event) => {
   if (elements.settingsPanel.classList.contains('hidden')) {
     return;
   }
-  if (elements.settingsPanel.contains(target) || elements.settingsButton?.contains(target) || elements.sidebarSettingsButton?.contains(target)) {
+  if (
+    elements.settingsPanel.contains(target)
+    || elements.settingsButton?.contains(target)
+    || elements.sidebarSettingsButton?.contains(target)
+    || elements.floatingSettingsButton?.contains(target)
+  ) {
     return;
   }
   elements.settingsPanel.classList.add('hidden');
@@ -2386,10 +2581,18 @@ elements.clearHistoryButton.addEventListener('click', async () => {
 elements.healthCheckButton.addEventListener('click', healthCheck);
 elements.refreshAppButton.addEventListener('click', () => window.location.reload());
 elements.floatingActionToggle?.addEventListener('click', toggleFloatingActions);
+elements.floatingSettingsButton?.addEventListener('click', (event) => {
+  event.stopPropagation();
+  setFloatingActionsExpanded(false);
+  elements.settingsPanel.classList.remove('hidden');
+});
 elements.floatingRefreshButton?.addEventListener('click', () => window.location.reload());
 elements.continueNewSessionButton?.addEventListener('click', continueInNewSession);
 elements.scrollToLatestButton?.addEventListener('click', () => scrollToBottom({ force: true }));
 elements.messages.addEventListener('scroll', () => {
+  elements.messages.classList.add('is-scrolling');
+  updateMessagesScrollIndicator();
+  hideMessagesScrollIndicatorSoon();
   if (isNearBottom(80)) {
     hideScrollToLatestButton();
   }
@@ -2398,11 +2601,23 @@ elements.clearCacheButton.addEventListener('click', clearAppCacheAndReload);
 elements.notificationButton.addEventListener('click', enableNotifications);
 elements.mediaViewerDownload.addEventListener('click', downloadCurrentMedia);
 elements.mediaViewerClose.addEventListener('click', closeMediaViewer);
+elements.mediaViewerImage.addEventListener('pointerdown', handleMediaViewerPointerDown);
+elements.mediaViewerImage.addEventListener('pointermove', handleMediaViewerPointerMove);
+elements.mediaViewerImage.addEventListener('pointerup', handleMediaViewerPointerEnd);
+elements.mediaViewerImage.addEventListener('pointercancel', handleMediaViewerPointerEnd);
+elements.mediaViewerImage.addEventListener('wheel', handleMediaViewerWheel, { passive: false });
+elements.mediaViewerImage.addEventListener('dblclick', resetMediaViewerZoom);
 elements.mediaViewer.addEventListener('click', (event) => {
   if (event.target?.hasAttribute?.('data-media-viewer-close')) {
     closeMediaViewer();
   }
 });
+window.addEventListener('popstate', () => {
+  if (mediaViewerHistoryActive && !elements.mediaViewer.classList.contains('hidden')) {
+    closeMediaViewer({ syncHistory: false });
+  }
+});
+
 document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape' && !elements.mediaViewer.classList.contains('hidden')) {
     closeMediaViewer();

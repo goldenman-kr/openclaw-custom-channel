@@ -27,17 +27,30 @@
       <section class="chat-panel" aria-label="채팅">
         <div id="floatingActionMenu" class="floating-action-menu">
           <div id="floatingActionPanel" class="floating-action-panel hidden" role="menu" aria-label="빠른 작업">
-            <button id="floatingRefreshButton" class="ghost-button floating-action-item" type="button" role="menuitem">
-              <span class="floating-action-icon" aria-hidden="true">↻</span>
+            <button id="floatingSettingsButton" class="ghost-button floating-action-item" type="button" role="menuitem">
               <span class="floating-action-text">
-                <strong>새로고침</strong>
+                <span class="floating-action-title">
+                  <span class="floating-action-icon" aria-hidden="true">⚙️</span>
+                  <strong>설정</strong>
+                </span>
+                <small>API, 테마, 알림 등 앱 설정을 엽니다.</small>
+              </span>
+            </button>
+            <button id="floatingRefreshButton" class="ghost-button floating-action-item" type="button" role="menuitem">
+              <span class="floating-action-text">
+                <span class="floating-action-title">
+                  <span class="floating-action-icon" aria-hidden="true">↻</span>
+                  <strong>새로고침</strong>
+                </span>
                 <small>앱 화면과 대화 기록을 다시 불러옵니다.</small>
               </span>
             </button>
             <button id="continueNewSessionButton" class="ghost-button floating-action-item" type="button" role="menuitem">
-              <span class="floating-action-icon" aria-hidden="true">🆕</span>
               <span class="floating-action-text">
-                <strong>새 세션으로 이어가기</strong>
+                <span class="floating-action-title">
+                  <span class="floating-action-icon" aria-hidden="true">🆕</span>
+                  <strong>새 세션으로 이어가기</strong>
+                </span>
                 <small>최근 대화 맥락을 새 OpenClaw 세션에 전달하고 이어갑니다.</small>
               </span>
             </button>
@@ -85,6 +98,7 @@
         </section>
 
         <section id="messages" class="messages" aria-live="polite"></section>
+        <div id="messagesScrollIndicator" class="messages-scroll-indicator" aria-hidden="true"></div>
 
         <div id="mediaViewer" class="media-viewer hidden" role="dialog" aria-modal="true" aria-label="이미지 보기">
           <div class="media-viewer-backdrop" data-media-viewer-close></div>
