@@ -488,6 +488,7 @@ const server = createServer(async (request, response) => {
     sessionIdFromRequest: sessionIdFromHeaders,
     persistConversationUserMessage,
     persistUserHistory,
+    workspaceScopeForAuth,
     enqueueMessageJob(job, headers, payload) {
       messageJobRunner.enqueue(job, headers, payload);
     },

@@ -93,6 +93,7 @@ export class MessageJobRunner {
         sessionStore: this.deps.sessionStore,
         validApiKeys: this.deps.validApiKeys,
         conversationStore: this.deps.conversationStore,
+        runtimeWorkspace: job.runtimeWorkspace,
         runtimeCallbacks: {
           onToken: (token) => this.deps.publishToken?.(job, token),
         },

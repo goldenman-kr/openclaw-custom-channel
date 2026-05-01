@@ -6,10 +6,12 @@ import { InMemorySessionStore } from "../session/SessionStore.js";
 import type { ConversationStore } from "../session/SqliteChatStore.js";
 
 let capturedSessionId = "";
+let capturedRuntimeWorkspaceUserDir = "";
 
 const fakeChatRuntime: ChatRuntime = {
   async sendMessage(input) {
     capturedSessionId = input.sessionId;
+    capturedRuntimeWorkspaceUserDir = input.runtimeWorkspace?.userDir ?? "";
     return { reply: `reply:${input.message}` };
   },
 };
@@ -61,6 +63,27 @@ test("uses conversation openclawSessionId when conversation_id is provided", asy
     assert.equal(result.body.session_id, "openclaw-session-test");
     assert.equal(result.body.conversation_id, "conv_test");
   }
+});
+
+test("passes runtime workspace to chat runtime", async () => {
+  capturedRuntimeWorkspaceUserDir = "";
+  const result = await handlePostMessage(
+    {
+      ...deps(),
+      runtimeWorkspace: {
+        userId: "usr_alice",
+        workspaceRoot: "/tmp/workspaces",
+        userDir: "/tmp/workspaces/alice",
+        commonDir: "/tmp/workspaces/common",
+        commonWritable: false,
+      },
+    },
+    { authorization: "Bearer test-key" },
+    { message: "hello" },
+  );
+
+  assert.equal(result.statusCode, 200);
+  assert.equal(capturedRuntimeWorkspaceUserDir, "/tmp/workspaces/alice");
 });
 
 test("returns 404 for unknown conversation_id", async () => {

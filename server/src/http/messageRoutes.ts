@@ -8,6 +8,7 @@ import {
   type MessageRequestDto,
 } from "../contracts/apiContractV1.js";
 import { handlePostMessage } from "./messageHandler.js";
+import type { RuntimeWorkspaceScope } from "../openclaw/OpenClawClient.js";
 import type { ChatRuntime } from "../runtime/ChatRuntime.js";
 import type { MessageJob } from "../runtime/MessageJob.js";
 import type { HistoryStore } from "../session/HistoryStore.js";
@@ -31,6 +32,7 @@ export interface MessageRouteDeps {
   enqueueMessageJob(job: MessageJob, headers: IncomingMessage["headers"], payload: MessageRequestDto): void;
   registerJob(job: MessageJob): void;
   shouldPersistMessage(message: string): boolean;
+  workspaceScopeForAuth?(auth: AuthContext): Promise<RuntimeWorkspaceScope>;
 }
 
 function getSingleHeader(headers: IncomingMessage["headers"], name: string): string | undefined {
@@ -137,6 +139,7 @@ export async function handleMessageRoute(
     }
 
     const sessionId = conversation?.openclawSessionId ?? deps.sessionIdFromRequest(request);
+    const runtimeWorkspace = auth && auth.user.role !== "admin" && deps.workspaceScopeForAuth ? await deps.workspaceScopeForAuth(auth) : undefined;
     if (conversation) {
       await deps.persistConversationUserMessage(conversation, payload);
     } else {
@@ -148,6 +151,7 @@ export async function handleMessageRoute(
       id: `job_${randomUUID()}`,
       sessionId,
       ...(conversation ? { conversationId: conversation.id } : {}),
+      ...(runtimeWorkspace ? { runtimeWorkspace } : {}),
       state: "queued",
       createdAt: now,
       updatedAt: now,

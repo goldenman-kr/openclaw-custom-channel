@@ -1273,3 +1273,25 @@ mock token streaming SSE 경로를 반복 검증할 수 있도록 npm smoke scri
 - 기본 workspace scope는 `USER_WORKSPACE_ROOT`(기본 `server/state/workspaces`) 아래 사용자명 디렉터리와 `common` 디렉터리로 lazy 생성/저장된다.
 - 일반 사용자는 자기 workspace 디렉터리와 common 디렉터리 파일만 읽을 수 있고, 다른 사용자 workspace 파일은 403 처리된다.
 - scope 저장용 `user_workspace_scopes` 테이블과 `AuthStore` getter/upsert, `resolveAllowedWorkspacePath()` 유틸 및 테스트를 추가했다.
+
+## 2026-05-02 runtime workspace scope draft
+
+PLAN 13.13의 10번(OpenClaw runtime cwd/workspace 제한 가능성 검증 및 적용)을 확인했다.
+
+구현 내용:
+- `RuntimeWorkspaceScope`를 `OpenClawClientInput`/`ChatRuntimeInput`에 추가했다.
+- cookie 로그인 일반 사용자(non-admin)의 queued message job에는 `workspaceScopeForAuth()` 결과를 붙인다.
+- `MessageJobRunner` → `handlePostMessage` → `ChatRuntime` → `OpenClawClient`로 runtime workspace metadata를 전달한다.
+- `AgentOpenClawClient`는 runtime workspace가 있으면 `execFile`의 `cwd`를 `userDir`로 지정하고, `OPENCLAW_RUNTIME_*` 환경변수를 함께 전달한다.
+- `GatewayOpenAiOpenClawClient`는 runtime workspace metadata를 request header와 user content metadata로 전달한다.
+
+중요한 한계:
+- 현재 운영 transport인 `gateway-openai`의 OpenClaw Gateway `/v1/chat/completions` 구현은 `x-openclaw-session-key`/message channel/session routing은 처리하지만, per-request workspace/cwd를 강제하는 공식 입력은 확인되지 않았다.
+- 따라서 `gateway-openai` 경로에서는 bridge가 metadata를 전달할 수는 있지만, OpenClaw runtime의 실제 tool cwd/root 격리를 강제했다고 보기는 어렵다.
+- 강한 격리는 `agent` transport에서 `cwd=userDir` 실행 경로를 사용하거나, OpenClaw Gateway에 per-request workspace/cwd 지원이 추가되어야 완성된다.
+
+검증:
+- `git diff --check` 통과
+- `node --check server/public/app.js` 통과
+- `npm --prefix server run typecheck` 통과
+- `npm --prefix server test` 통과: 28/28

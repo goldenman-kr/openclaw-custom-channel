@@ -1,5 +1,5 @@
 import type { MessageAttachment, MessageRequestMetadata } from "../contracts/apiContractV1.js";
-import type { OpenClawClient, OpenClawClientInput, OpenClawClientResult } from "./OpenClawClient.js";
+import type { OpenClawClient, OpenClawClientInput, OpenClawClientResult, RuntimeWorkspaceScope } from "./OpenClawClient.js";
 
 export class GatewayOpenAiOpenClawClient implements OpenClawClient {
   constructor(
@@ -24,14 +24,14 @@ export class GatewayOpenAiOpenClawClient implements OpenClawClient {
     try {
       const response = await fetch(url, {
         method: "POST",
-        headers: this.headers(input.sessionId),
+        headers: this.headers(input),
         body: JSON.stringify({
           model: this.model,
           stream: true,
           messages: [
             {
               role: "user",
-              content: this.buildContent(input.message, input.attachments ?? [], input.metadata),
+              content: this.buildContent(input.message, input.attachments ?? [], input.metadata, input.runtimeWorkspace),
             },
           ],
         }),
@@ -68,21 +68,27 @@ export class GatewayOpenAiOpenClawClient implements OpenClawClient {
     }
   }
 
-  private headers(sessionId: string): HeadersInit {
+  private headers(input: OpenClawClientInput): HeadersInit {
     const headers: Record<string, string> = {
       "content-type": "application/json",
       accept: "text/event-stream",
-      "x-openclaw-session-key": sessionId,
+      "x-openclaw-session-key": input.sessionId,
       "x-openclaw-message-channel": "webchat",
     };
+    if (input.runtimeWorkspace) {
+      headers["x-openclaw-runtime-workspace-root"] = input.runtimeWorkspace.workspaceRoot;
+      headers["x-openclaw-runtime-user-dir"] = input.runtimeWorkspace.userDir;
+      headers["x-openclaw-runtime-common-dir"] = input.runtimeWorkspace.commonDir;
+      headers["x-openclaw-runtime-common-writable"] = input.runtimeWorkspace.commonWritable ? "1" : "0";
+    }
     if (this.token) {
       headers.authorization = `Bearer ${this.token}`;
     }
     return headers;
   }
 
-  private buildContent(message: string, attachments: MessageAttachment[], metadata?: MessageRequestMetadata): string | Array<Record<string, unknown>> {
-    const text = this.buildText(message, attachments, metadata);
+  private buildContent(message: string, attachments: MessageAttachment[], metadata?: MessageRequestMetadata, runtimeWorkspace?: RuntimeWorkspaceScope): string | Array<Record<string, unknown>> {
+    const text = this.buildText(message, attachments, metadata, runtimeWorkspace);
     const imageParts = attachments
       .filter((attachment) => attachment.type === "image" && attachment.content_base64)
       .map((attachment) => ({
@@ -102,8 +108,11 @@ export class GatewayOpenAiOpenClawClient implements OpenClawClient {
     ];
   }
 
-  private buildText(message: string, attachments: MessageAttachment[], metadata?: MessageRequestMetadata): string {
+  private buildText(message: string, attachments: MessageAttachment[], metadata?: MessageRequestMetadata, runtimeWorkspace?: RuntimeWorkspaceScope): string {
     const sections = [message];
+    if (runtimeWorkspace) {
+      sections.push(this.runtimeWorkspaceText(runtimeWorkspace));
+    }
     const location = metadata?.location;
     if (location) {
       const accuracyText = Number.isFinite(location.accuracy) ? `, accuracy_m=${Math.round(location.accuracy ?? 0)}` : "";
@@ -132,6 +141,16 @@ export class GatewayOpenAiOpenClawClient implements OpenClawClient {
     }
 
     return sections.join("\n\n");
+  }
+
+  private runtimeWorkspaceText(scope: RuntimeWorkspaceScope): string {
+    return [
+      "비공개 runtime workspace metadata: 이 요청은 사용자별 workspace 범위 안에서 처리되어야 합니다.",
+      `- user_dir=${scope.userDir}`,
+      `- common_dir=${scope.commonDir}`,
+      `- common_writable=${scope.commonWritable ? "true" : "false"}`,
+      "파일 작업이 필요하면 user_dir 안에서 작업하고, common_dir는 명시적으로 필요한 읽기 참고자료로만 사용하세요.",
+    ].join("\n");
   }
 
   private extractTextAttachment(attachment: MessageAttachment): string | null {

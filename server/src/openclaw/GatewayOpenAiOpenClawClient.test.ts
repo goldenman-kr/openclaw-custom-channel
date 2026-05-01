@@ -65,3 +65,34 @@ test("streams OpenAI-compatible Gateway chunks as runtime tokens", async () => {
     await server.close();
   }
 });
+
+test("passes runtime workspace metadata to Gateway requests", async () => {
+  const requests: Array<{ headers: IncomingMessage["headers"]; body: Record<string, unknown> }> = [];
+  const server = await withServer(async (req, res) => {
+    requests.push({ headers: req.headers, body: await readJson(req) });
+    res.writeHead(200, { "content-type": "text/event-stream; charset=utf-8" });
+    res.end('data: {"choices":[{"delta":{"content":"ok"}}]}\n\ndata: [DONE]\n\n');
+  });
+
+  try {
+    const client = new GatewayOpenAiOpenClawClient(server.baseUrl, undefined, "openclaw-test", 5_000);
+    await client.sendMessage({
+      sessionId: "session-workspace-test",
+      message: "hello",
+      runtimeWorkspace: {
+        userId: "usr_alice",
+        workspaceRoot: "/tmp/workspaces",
+        userDir: "/tmp/workspaces/alice",
+        commonDir: "/tmp/workspaces/common",
+        commonWritable: false,
+      },
+    });
+
+    assert.equal(requests[0]?.headers["x-openclaw-runtime-user-dir"], "/tmp/workspaces/alice");
+    const messages = requests[0]?.body.messages as Array<{ content: string }>;
+    assert.match(messages[0]?.content, /user_dir=\/tmp\/workspaces\/alice/);
+    assert.match(messages[0]?.content, /common_writable=false/);
+  } finally {
+    await server.close();
+  }
+});
