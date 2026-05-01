@@ -31,6 +31,14 @@ export interface AuthSessionRecord {
   revokedAt?: string;
 }
 
+export interface WorkspaceScopeRecord {
+  userId: string;
+  workspaceRoot: string;
+  userDir: string;
+  commonDir: string;
+  commonWritable: boolean;
+}
+
 
 interface UserRow {
   id: string;
@@ -49,6 +57,14 @@ interface AuthSessionRow {
   created_at: string;
   expires_at: string;
   revoked_at: string | null;
+}
+
+interface WorkspaceScopeRow {
+  user_id: string;
+  workspace_root: string;
+  user_dir: string;
+  common_dir: string;
+  common_writable: number;
 }
 
 
@@ -192,6 +208,23 @@ export class AuthStore {
     return result.changes > 0;
   }
 
+  upsertWorkspaceScope(scope: WorkspaceScopeRecord): void {
+    this.db.prepare(
+      `INSERT INTO user_workspace_scopes (user_id, workspace_root, user_dir, common_dir, common_writable)
+       VALUES (@userId, @workspaceRoot, @userDir, @commonDir, @commonWritable)
+       ON CONFLICT(user_id) DO UPDATE SET
+         workspace_root = excluded.workspace_root,
+         user_dir = excluded.user_dir,
+         common_dir = excluded.common_dir,
+         common_writable = excluded.common_writable`,
+    ).run({ ...scope, commonWritable: scope.commonWritable ? 1 : 0 });
+  }
+
+  getWorkspaceScope(userId: string): WorkspaceScopeRecord | null {
+    const row = this.db.prepare("SELECT * FROM user_workspace_scopes WHERE user_id = ?").get(userId) as WorkspaceScopeRow | undefined;
+    return row ? mapWorkspaceScope(row) : null;
+  }
+
 
   private migrate(): void {
     this.db.exec(`
@@ -212,6 +245,15 @@ export class AuthStore {
         created_at TEXT NOT NULL,
         expires_at TEXT NOT NULL,
         revoked_at TEXT,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+      );
+
+      CREATE TABLE IF NOT EXISTS user_workspace_scopes (
+        user_id TEXT PRIMARY KEY,
+        workspace_root TEXT NOT NULL,
+        user_dir TEXT NOT NULL,
+        common_dir TEXT NOT NULL,
+        common_writable INTEGER NOT NULL DEFAULT 0,
         FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
       );
 
@@ -283,6 +325,16 @@ function mapSession(row: AuthSessionRow): AuthSessionRecord {
     createdAt: row.created_at,
     expiresAt: row.expires_at,
     ...(row.revoked_at ? { revokedAt: row.revoked_at } : {}),
+  };
+}
+
+function mapWorkspaceScope(row: WorkspaceScopeRow): WorkspaceScopeRecord {
+  return {
+    userId: row.user_id,
+    workspaceRoot: row.workspace_root,
+    userDir: row.user_dir,
+    commonDir: row.common_dir,
+    commonWritable: row.common_writable === 1,
   };
 }
 

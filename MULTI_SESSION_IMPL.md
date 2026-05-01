@@ -1259,3 +1259,17 @@ mock token streaming SSE 경로를 반복 검증할 수 있도록 npm smoke scri
 - 로그인 세션의 user id로 새 conversation owner를 저장하고, 일반 사용자는 자기 conversation만 list/read/update/delete/history/message/job 접근 가능하도록 route guard를 추가했다.
 - API key fallback은 admin auth context로 유지해 기존 단일 관리자/레거시 흐름을 깨지 않게 했다.
 - `SqliteChatStore` owner 필터 단위 테스트를 추가했다.
+
+## 2026-05-02 multi-user 3단계 media attachment guard 초안
+
+- `/v1/media`에서 cookie/API key auth context를 확인하고, 일반 사용자는 자신의 conversation attachment로 저장된 파일만 열 수 있게 했다.
+- admin/API key fallback은 기존 allowed media root 접근을 유지한다.
+- media path 검증은 `realpath` 기반으로 바꿔 symlink/상대경로 우회를 줄였다.
+- `SqliteChatStore.isAttachmentPathVisibleToOwner()`와 단위 테스트를 추가했다.
+
+## 2026-05-02 multi-user 4단계 workspace read guard 초안
+
+- 일반 사용자의 `/v1/media` 접근에 workspace scope read guard를 추가했다.
+- 기본 workspace scope는 `USER_WORKSPACE_ROOT`(기본 `server/state/workspaces`) 아래 사용자명 디렉터리와 `common` 디렉터리로 lazy 생성/저장된다.
+- 일반 사용자는 자기 workspace 디렉터리와 common 디렉터리 파일만 읽을 수 있고, 다른 사용자 workspace 파일은 403 처리된다.
+- scope 저장용 `user_workspace_scopes` 테이블과 `AuthStore` getter/upsert, `resolveAllowedWorkspacePath()` 유틸 및 테스트를 추가했다.

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, realpath, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { join, resolve } from "node:path";
 import {
@@ -19,8 +19,9 @@ import { deleteOpenClawSession } from "./openclaw/SessionCleaner.js";
 import type { MessageJob } from "./runtime/MessageJob.js";
 import { MessageJobRunner } from "./runtime/MessageJobRunner.js";
 import { OpenClawChatRuntime } from "./runtime/OpenClawChatRuntime.js";
+import { resolveAllowedWorkspacePath } from "./security/workspaceScope.js";
 import { FileHistoryStore, type HistoryAttachment } from "./session/HistoryStore.js";
-import { AuthStore, publicUser } from "./session/AuthStore.js";
+import { AuthStore, publicUser, type WorkspaceScopeRecord } from "./session/AuthStore.js";
 import { InMemorySessionStore } from "./session/SessionStore.js";
 import { SqliteChatStore, type ConversationRecord } from "./session/SqliteChatStore.js";
 
@@ -54,6 +55,9 @@ const openClawAgentId = process.env.OPENCLAW_AGENT ?? "main";
 const jobs = new Map<string, MessageJob>();
 const sessionTtlMs = Number(process.env.AUTH_SESSION_TTL_MS ?? 30 * 24 * 60 * 60 * 1000);
 const cookieSecure = process.env.AUTH_COOKIE_SECURE ? process.env.AUTH_COOKIE_SECURE === "1" : process.env.NODE_ENV === "production";
+const workspaceRoot = resolve(process.env.USER_WORKSPACE_ROOT ?? join(stateDir, "workspaces"));
+const workspaceCommonDir = resolve(process.env.USER_WORKSPACE_COMMON_DIR ?? join(workspaceRoot, "common"));
+const workspaceCommonWritable = process.env.USER_WORKSPACE_COMMON_WRITABLE === "1";
 
 const mediaRoots = [
   resolve(process.env.MEDIA_ROOT ?? "/home/orbsian/.openclaw/workspace"),
@@ -212,6 +216,55 @@ function isConversationVisibleToAuth(conversation: ConversationRecord, auth: Aut
   return conversation.ownerId === auth.user.id || auth.user.role === "admin";
 }
 
+function normalizeMediaPath(rawPath: string): string {
+  if (rawPath.startsWith("file://")) {
+    try {
+      return decodeURIComponent(new URL(rawPath).pathname);
+    } catch {
+      return rawPath;
+    }
+  }
+  return rawPath;
+}
+
+async function workspaceScopeForAuth(auth: AuthContext): Promise<WorkspaceScopeRecord> {
+  const existing = authStore.getWorkspaceScope(auth.user.id);
+  if (existing) {
+    return existing;
+  }
+  const userDir = resolve(workspaceRoot, safeFileName(auth.user.username, auth.user.id));
+  await mkdir(userDir, { recursive: true });
+  await mkdir(workspaceCommonDir, { recursive: true });
+  const scope = {
+    userId: auth.user.id,
+    workspaceRoot,
+    userDir,
+    commonDir: workspaceCommonDir,
+    commonWritable: workspaceCommonWritable,
+  };
+  authStore.upsertWorkspaceScope(scope);
+  return scope;
+}
+
+async function resolveAuthorizedMediaPath(rawPath: string, auth: AuthContext): Promise<string | null> {
+  const candidate = await realpath(resolve(normalizeMediaPath(rawPath))).catch(() => null);
+  if (!candidate) {
+    return null;
+  }
+  if (chatStore.isAttachmentPathVisibleToOwner(candidate, auth.user.id)) {
+    return candidate;
+  }
+  if (auth.user.role !== "admin") {
+    const scope = await workspaceScopeForAuth(auth);
+    return resolveAllowedWorkspacePath(candidate, scope, "read").catch(() => null);
+  }
+  const realRoots = await Promise.all(mediaRoots.map(async (root) => realpath(root).catch(() => resolve(root))));
+  if (realRoots.some((root) => candidate === root || candidate.startsWith(`${root}/`))) {
+    return candidate;
+  }
+  return null;
+}
+
 function updateJob(job: MessageJob, patch: { state?: MessageJob["state"]; error?: string | null }): void {
   if (patch.state) {
     job.state = patch.state;
@@ -361,6 +414,8 @@ const server = createServer(async (request, response) => {
     corsHeaders,
     mediaRoots,
     isAuthorized,
+    getAuthContext,
+    resolveAuthorizedMediaPath,
     sendJson,
   })) {
     return;

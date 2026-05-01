@@ -83,6 +83,35 @@ test("filters conversations by owner", () => {
 });
 
 
+test("checks attachment visibility by conversation owner", () => {
+  const dir = tempDir();
+  const store = new SqliteChatStore(join(dir, "chat.sqlite"));
+  try {
+    const first = store.createConversation({ ownerId: "usr_first" });
+    const second = store.createConversation({ ownerId: "usr_second" });
+    store.addMessage({
+      conversationId: first.id,
+      role: "assistant",
+      text: "file",
+      attachments: [{ name: "first.txt", mime_type: "text/plain", type: "file", path: "/tmp/first.txt", size: 5 }],
+    });
+    store.addMessage({
+      conversationId: second.id,
+      role: "assistant",
+      text: "file",
+      attachments: [{ name: "second.txt", mime_type: "text/plain", type: "file", path: "/tmp/second.txt", size: 6 }],
+    });
+
+    assert.equal(store.isAttachmentPathVisibleToOwner("/tmp/first.txt", "usr_first"), true);
+    assert.equal(store.isAttachmentPathVisibleToOwner("/tmp/first.txt", "usr_second"), false);
+    assert.equal(store.isAttachmentPathVisibleToOwner("/tmp/second.txt", "usr_second"), true);
+  } finally {
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+
 test("orders user messages before assistant placeholders with identical timestamps", () => {
   const dir = tempDir();
   const store = new SqliteChatStore(join(dir, "chat.sqlite"));

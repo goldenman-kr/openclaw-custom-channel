@@ -1,8 +1,9 @@
 import { createReadStream } from "node:fs";
-import { stat } from "node:fs/promises";
+import { realpath, stat } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { extname, normalize, resolve } from "node:path";
 import type { ErrorResponseDto } from "../contracts/apiContractV1.js";
+import type { AuthContext } from "./authRoutes.js";
 
 export interface StaticRouteDeps {
   publicDir: string;
@@ -12,6 +13,8 @@ export interface MediaRouteDeps {
   corsHeaders: Record<string, string>;
   mediaRoots: string[];
   isAuthorized(request: IncomingMessage): boolean;
+  getAuthContext(request: IncomingMessage): AuthContext | null;
+  resolveAuthorizedMediaPath(rawPath: string, auth: AuthContext): Promise<string | null>;
   sendJson(response: ServerResponse, statusCode: number, body: unknown): void;
 }
 
@@ -123,9 +126,10 @@ function normalizeMediaPath(rawPath: string): string {
   return rawPath;
 }
 
-function resolveAllowedMediaPath(rawPath: string, mediaRoots: string[]): string | null {
-  const filePath = resolve(normalizeMediaPath(rawPath));
-  return mediaRoots.some((root) => isWithinRoot(filePath, root)) ? filePath : null;
+async function resolveAllowedMediaPath(rawPath: string, mediaRoots: string[]): Promise<string | null> {
+  const filePath = await realpath(resolve(normalizeMediaPath(rawPath)));
+  const realRoots = await Promise.all(mediaRoots.map(async (root) => realpath(root).catch(() => resolve(root))));
+  return realRoots.some((root) => isWithinRoot(filePath, root)) ? filePath : null;
 }
 
 async function serveMediaFile(request: IncomingMessage, response: ServerResponse, rawPath: string, deps: MediaRouteDeps): Promise<void> {
@@ -140,7 +144,10 @@ async function serveMediaFile(request: IncomingMessage, response: ServerResponse
     return;
   }
 
-  const filePath = resolveAllowedMediaPath(rawPath, deps.mediaRoots);
+  const auth = deps.getAuthContext(request);
+  const filePath = auth
+    ? await deps.resolveAuthorizedMediaPath(rawPath, auth)
+    : await resolveAllowedMediaPath(rawPath, deps.mediaRoots).catch(() => null);
   if (!filePath) {
     deps.sendJson(response, 403, {
       error: {
