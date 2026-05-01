@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { ErrorResponseDto } from "../contracts/apiContractV1.js";
+import type { AuthContext } from "./authRoutes.js";
 import { conversationHistoryResponse } from "./conversationRoutes.js";
 import type { HistoryAttachment, HistoryMessage, HistoryStore } from "../session/HistoryStore.js";
 import type { ConversationRecord, ConversationStore, MessageStore } from "../session/SqliteChatStore.js";
@@ -8,6 +9,8 @@ export interface HistoryRouteDeps {
   historyStore: HistoryStore;
   conversationStore: ConversationStore & MessageStore;
   isAuthorized(request: IncomingMessage): boolean;
+  getAuthContext(request: IncomingMessage): AuthContext | null;
+  isConversationVisibleToAuth(conversation: ConversationRecord, auth: AuthContext): boolean;
   sendJson(response: ServerResponse, statusCode: number, body: unknown): void;
   makeErrorResponse(code: ErrorResponseDto["error"]["code"], message: string, details?: Record<string, unknown>): ErrorResponseDto;
   readJsonBody(request: IncomingMessage): Promise<unknown>;
@@ -83,9 +86,10 @@ export async function handleHistoryRoute(
     return true;
   }
 
+  const auth = deps.getAuthContext(request);
   const queryConversationId = url.searchParams.get("conversation_id")?.trim();
   const queryConversation = conversationFromQuery(url, deps.conversationStore);
-  if (queryConversationId && !queryConversation) {
+  if (queryConversationId && (!auth || !queryConversation || !deps.isConversationVisibleToAuth(queryConversation, auth))) {
     deps.sendJson(response, 404, deps.makeErrorResponse("CONVERSATION_NOT_FOUND", "Conversation not found.", { conversation_id: queryConversationId }));
     return true;
   }

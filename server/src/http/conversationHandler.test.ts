@@ -21,6 +21,7 @@ const conversationStore: Pick<ConversationStore, "getConversation"> = {
     }
     return {
       id: "conv_test",
+      ownerId: "admin",
       title: "테스트 대화",
       openclawSessionId: "openclaw-session-test",
       createdAt: "2026-04-29T00:00:00.000Z",

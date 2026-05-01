@@ -9,6 +9,7 @@ export type JobState = "queued" | "running" | "completed" | "failed" | "cancelle
 
 export interface ConversationRecord {
   id: string;
+  ownerId: string;
   title: string;
   openclawSessionId: string;
   createdAt: string;
@@ -38,9 +39,9 @@ export interface JobRecord {
 }
 
 export interface ConversationStore {
-  createConversation(input?: { title?: string; openclawSessionId?: string; now?: string }): ConversationRecord;
+  createConversation(input?: { ownerId?: string; title?: string; openclawSessionId?: string; now?: string }): ConversationRecord;
   getConversation(id: string): ConversationRecord | null;
-  listConversations(input?: { includeArchived?: boolean; limit?: number }): ConversationRecord[];
+  listConversations(input?: { ownerId?: string; includeArchived?: boolean; limit?: number }): ConversationRecord[];
   updateConversation(id: string, patch: { title?: string; pinned?: boolean; archivedAt?: string | null; now?: string }): ConversationRecord | null;
   deleteConversation(id: string): boolean;
 }
@@ -69,6 +70,7 @@ export interface JobStore {
 
 interface ConversationRow {
   id: string;
+  owner_id: string;
   title: string;
   openclaw_session_id: string;
   created_at: string;
@@ -124,16 +126,17 @@ export class SqliteChatStore implements ConversationStore, MessageStore, JobStor
     this.db.close();
   }
 
-  createConversation(input: { title?: string; openclawSessionId?: string; now?: string } = {}): ConversationRecord {
+  createConversation(input: { ownerId?: string; title?: string; openclawSessionId?: string; now?: string } = {}): ConversationRecord {
     const now = input.now ?? new Date().toISOString();
     const id = `conv_${randomUUID()}`;
+    const ownerId = input.ownerId ?? "admin";
     const openclawSessionId = input.openclawSessionId ?? `web-${id}`;
     this.db
       .prepare(
-        `INSERT INTO conversations (id, title, openclaw_session_id, created_at, updated_at)
-         VALUES (@id, @title, @openclawSessionId, @now, @now)`,
+        `INSERT INTO conversations (id, owner_id, title, openclaw_session_id, created_at, updated_at)
+         VALUES (@id, @ownerId, @title, @openclawSessionId, @now, @now)`,
       )
-      .run({ id, title: input.title ?? "새 대화", openclawSessionId, now });
+      .run({ id, ownerId, title: input.title ?? "새 대화", openclawSessionId, now });
     const conversation = this.getConversation(id);
     if (!conversation) {
       throw new Error("Failed to create conversation.");
@@ -146,12 +149,21 @@ export class SqliteChatStore implements ConversationStore, MessageStore, JobStor
     return row ? mapConversation(row) : null;
   }
 
-  listConversations(input: { includeArchived?: boolean; limit?: number } = {}): ConversationRecord[] {
+  listConversations(input: { ownerId?: string; includeArchived?: boolean; limit?: number } = {}): ConversationRecord[] {
     const limit = Math.max(1, Math.min(input.limit ?? 100, 500));
-    const where = input.includeArchived ? "" : "WHERE archived_at IS NULL";
+    const conditions: string[] = [];
+    const params: unknown[] = [];
+    if (input.ownerId) {
+      conditions.push("owner_id = ?");
+      params.push(input.ownerId);
+    }
+    if (!input.includeArchived) {
+      conditions.push("archived_at IS NULL");
+    }
+    const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
     const rows = this.db
       .prepare(`SELECT * FROM conversations ${where} ORDER BY pinned DESC, updated_at DESC, created_at DESC LIMIT ?`)
-      .all(limit) as ConversationRow[];
+      .all(...params, limit) as ConversationRow[];
     return rows.map(mapConversation);
   }
 
@@ -327,6 +339,7 @@ export class SqliteChatStore implements ConversationStore, MessageStore, JobStor
           id TEXT PRIMARY KEY,
           title TEXT NOT NULL,
           openclaw_session_id TEXT NOT NULL UNIQUE,
+          owner_id TEXT NOT NULL DEFAULT 'admin',
           created_at TEXT NOT NULL,
           updated_at TEXT NOT NULL,
           archived_at TEXT,
@@ -383,6 +396,9 @@ export class SqliteChatStore implements ConversationStore, MessageStore, JobStor
       }
       if (!conversationColumns.has("pinned")) {
         this.db.exec("ALTER TABLE conversations ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0");
+      }
+      if (!conversationColumns.has("owner_id")) {
+        this.db.exec("ALTER TABLE conversations ADD COLUMN owner_id TEXT NOT NULL DEFAULT 'admin'");
       }
       const messageColumns = new Set(
         (this.db.prepare("PRAGMA table_info(messages)").all() as Array<{ name: string }>).map((column) => column.name),
@@ -473,6 +489,7 @@ export class SqliteChatStore implements ConversationStore, MessageStore, JobStor
 function mapConversation(row: ConversationRow): ConversationRecord {
   return {
     id: row.id,
+    ownerId: row.owner_id ?? "admin",
     title: row.title,
     openclawSessionId: row.openclaw_session_id,
     createdAt: row.created_at,

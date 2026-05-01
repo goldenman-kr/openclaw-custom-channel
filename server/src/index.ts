@@ -208,6 +208,10 @@ function isAuthorized(request: IncomingMessage): boolean {
   return Boolean(getAuthContext(request));
 }
 
+function isConversationVisibleToAuth(conversation: ConversationRecord, auth: AuthContext): boolean {
+  return conversation.ownerId === auth.user.id || auth.user.role === "admin";
+}
+
 function updateJob(job: MessageJob, patch: { state?: MessageJob["state"]; error?: string | null }): void {
   if (patch.state) {
     job.state = patch.state;
@@ -230,10 +234,18 @@ function updateJob(job: MessageJob, patch: { state?: MessageJob["state"]; error?
 }
 
 function jobForRequest(jobId: string, request: IncomingMessage, url: URL): JobEventRecord | null {
+  const auth = getAuthContext(request);
+  if (!auth) {
+    return null;
+  }
   const job = jobs.get(jobId) ?? chatStore.getJob(jobId);
   const conversationId = url.searchParams.get("conversation_id")?.trim();
   if (job && "conversationId" in job && job.conversationId) {
-    return job.conversationId === conversationId ? job : null;
+    if (conversationId && job.conversationId !== conversationId) {
+      return null;
+    }
+    const conversation = chatStore.getConversation(job.conversationId);
+    return conversation && isConversationVisibleToAuth(conversation, auth) ? job : null;
   }
   const sessionId = sessionIdFromHeaders(request);
   if (job && "sessionId" in job && job.sessionId === sessionId) {
@@ -368,6 +380,8 @@ const server = createServer(async (request, response) => {
   if (await handleConversationRoute(request, response, url, {
     conversationStore: chatStore,
     isAuthorized,
+    getAuthContext,
+    isConversationVisibleToAuth,
     sendJson,
     makeErrorResponse,
     readJsonBody,
@@ -392,6 +406,8 @@ const server = createServer(async (request, response) => {
     historyStore,
     conversationStore: chatStore,
     isAuthorized,
+    getAuthContext,
+    isConversationVisibleToAuth,
     sendJson,
     makeErrorResponse,
     readJsonBody,
@@ -409,6 +425,7 @@ const server = createServer(async (request, response) => {
     sessionStore,
     validApiKeys,
     getAuthContext,
+    isConversationVisibleToAuth,
     conversationStore: chatStore,
     historyStore,
     sendJson,

@@ -1252,3 +1252,10 @@ mock token streaming SSE 경로를 반복 검증할 수 있도록 npm smoke scri
 - `AuthStore` 단위 테스트를 추가해 user 생성, password verify, session 생성/폐기, `ensureUser` 갱신/재활성화를 검증한다.
 - 프론트 로그인 화면 변경이 서비스워커 캐시에 묶이지 않도록 `server/public/sw.js` cache version을 `v140`으로 올렸다.
 - 1단계 범위를 좁히기 위해 이전 초안에 섞였던 `owner_id` 기반 conversation 격리와 media/workspace guard 변경은 현재 작업 트리에서 분리해 제외했다. 다음 단계에서 별도 패치로 다시 다룬다.
+
+## 2026-05-01 multi-user 2단계 owner 격리 초안
+
+- conversation store에 `owner_id`를 추가하고 기존 DB에는 기본값 `admin`으로 migration되게 했다.
+- 로그인 세션의 user id로 새 conversation owner를 저장하고, 일반 사용자는 자기 conversation만 list/read/update/delete/history/message/job 접근 가능하도록 route guard를 추가했다.
+- API key fallback은 admin auth context로 유지해 기존 단일 관리자/레거시 흐름을 깨지 않게 했다.
+- `SqliteChatStore` owner 필터 단위 테스트를 추가했다.
