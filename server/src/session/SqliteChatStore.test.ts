@@ -20,6 +20,7 @@ test("creates conversations, messages, attachments, and jobs in SQLite", () => {
     });
 
     assert.equal(conversation.title, "테스트 대화");
+    assert.equal(conversation.ownerId, "admin");
     assert.equal(conversation.openclawSessionId, "web-conv-test");
     assert.equal(conversation.pinned, false);
 
@@ -57,6 +58,24 @@ test("creates conversations, messages, attachments, and jobs in SQLite", () => {
     assert.equal(store.getJob(job.id), null);
     assert.equal(store.deleteConversation(conversation.id), true);
     assert.equal(store.getConversation(conversation.id), null);
+  } finally {
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+
+test("filters conversations by owner", () => {
+  const dir = tempDir();
+  const store = new SqliteChatStore(join(dir, "chat.sqlite"));
+  try {
+    const first = store.createConversation({ ownerId: "usr_first", title: "첫 번째", now: "2026-04-29T00:00:00.000Z" });
+    const second = store.createConversation({ ownerId: "usr_second", title: "두 번째", now: "2026-04-29T00:01:00.000Z" });
+
+    assert.equal(first.ownerId, "usr_first");
+    assert.equal(second.ownerId, "usr_second");
+    assert.deepEqual(store.listConversations({ ownerId: "usr_first" }).map((conversation) => conversation.id), [first.id]);
+    assert.deepEqual(store.listConversations({ ownerId: "usr_second" }).map((conversation) => conversation.id), [second.id]);
   } finally {
     store.close();
     rmSync(dir, { recursive: true, force: true });

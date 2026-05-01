@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { ErrorResponseDto } from "../contracts/apiContractV1.js";
+import type { AuthContext } from "./authRoutes.js";
 import type { ChatMessageRecord, ConversationRecord, ConversationStore, MessageStore } from "../session/SqliteChatStore.js";
 
 export interface ConversationCleanupResult {
@@ -12,6 +13,8 @@ export interface ConversationCleanupResult {
 export interface ConversationRouteDeps {
   conversationStore: ConversationStore & Pick<MessageStore, "listMessages">;
   isAuthorized(request: IncomingMessage): boolean;
+  getAuthContext(request: IncomingMessage): AuthContext | null;
+  isConversationVisibleToAuth(conversation: ConversationRecord, auth: AuthContext): boolean;
   sendJson(response: ServerResponse, statusCode: number, body: unknown): void;
   makeErrorResponse(code: ErrorResponseDto["error"]["code"], message: string, details?: Record<string, unknown>): ErrorResponseDto;
   readJsonBody(request: IncomingMessage): Promise<unknown>;
@@ -101,17 +104,24 @@ export async function handleConversationRoute(
       return true;
     }
 
+    const auth = deps.getAuthContext(request);
+    if (!auth) {
+      deps.sendJson(response, 401, deps.makeErrorResponse("AUTH_INVALID_TOKEN", "Login is required."));
+      return true;
+    }
+
     if (request.method === "GET") {
       deps.sendJson(response, 200, {
         conversations: deps.conversationStore.listConversations({
+          ownerId: auth.user.role === "admin" ? undefined : auth.user.id,
           includeArchived: url.searchParams.get("include_archived") === "1",
-        }).map(conversationToDto),
+        }).filter((conversation) => deps.isConversationVisibleToAuth(conversation, auth)).map(conversationToDto),
       });
       return true;
     }
 
     const payload = await deps.readJsonBody(request);
-    const conversation = deps.conversationStore.createConversation({ title: titleFromPayload(payload) });
+    const conversation = deps.conversationStore.createConversation({ ownerId: auth.user.id, title: titleFromPayload(payload) });
     deps.sendJson(response, 201, { conversation: conversationToDto(conversation) });
     return true;
   }
@@ -122,8 +132,9 @@ export async function handleConversationRoute(
       deps.sendJson(response, 401, deps.makeErrorResponse("AUTH_INVALID_TOKEN", "API key is invalid."));
       return true;
     }
+    const auth = deps.getAuthContext(request);
     const conversation = deps.conversationStore.getConversation(conversationHistoryId);
-    if (!conversation) {
+    if (!auth || !conversation || !deps.isConversationVisibleToAuth(conversation, auth)) {
       deps.sendJson(response, 404, deps.makeErrorResponse("CONVERSATION_NOT_FOUND", "Conversation not found.", { conversation_id: conversationHistoryId }));
       return true;
     }
@@ -137,8 +148,9 @@ export async function handleConversationRoute(
       deps.sendJson(response, 401, deps.makeErrorResponse("AUTH_INVALID_TOKEN", "API key is invalid."));
       return true;
     }
+    const auth = deps.getAuthContext(request);
     const conversation = deps.conversationStore.getConversation(conversationId);
-    if (!conversation) {
+    if (!auth || !conversation || !deps.isConversationVisibleToAuth(conversation, auth)) {
       deps.sendJson(response, 404, deps.makeErrorResponse("CONVERSATION_NOT_FOUND", "Conversation not found.", { conversation_id: conversationId }));
       return true;
     }

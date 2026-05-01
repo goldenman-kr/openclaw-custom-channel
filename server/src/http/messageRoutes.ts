@@ -20,6 +20,7 @@ export interface MessageRouteDeps {
   sessionStore: SessionStore;
   validApiKeys: Set<string>;
   getAuthContext(request: IncomingMessage): AuthContext | null;
+  isConversationVisibleToAuth(conversation: ConversationRecord, auth: AuthContext): boolean;
   conversationStore: ConversationStore & MessageStore & JobStore;
   historyStore: HistoryStore;
   sendJson(response: ServerResponse, statusCode: number, body: unknown): void;
@@ -130,7 +131,7 @@ export async function handleMessageRoute(
 
     const requestedConversationId = conversationIdFromPayload(payload);
     const conversation = requestedConversationId ? deps.conversationStore.getConversation(requestedConversationId) : null;
-    if (requestedConversationId && !conversation) {
+    if (requestedConversationId && (!auth || !conversation || !deps.isConversationVisibleToAuth(conversation, auth))) {
       deps.sendJson(response, 404, makeErrorResponse("CONVERSATION_NOT_FOUND", "Conversation not found.", { conversation_id: requestedConversationId }));
       return true;
     }
