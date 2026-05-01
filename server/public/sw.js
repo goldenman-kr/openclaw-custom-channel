@@ -1,5 +1,16 @@
-const CACHE_NAME = 'openclaw-web-channel-v123';
-const ASSETS = ['/', '/index.html', '/styles.css', '/app.js', '/manifest.webmanifest', '/icon.svg', '/assets/chevron-up.svg', '/assets/chevron-down.svg'];
+const CACHE_NAME = 'openclaw-web-channel-v124';
+const ASSETS = [
+  '/',
+  '/index.html',
+  '/styles.css',
+  '/app.js',
+  '/manifest.webmanifest',
+  '/assets/openclaw-app-icon-180.png',
+  '/assets/openclaw-app-icon-192.png',
+  '/assets/openclaw-app-icon-512.png',
+  '/assets/chevron-up.svg',
+  '/assets/chevron-down.svg',
+];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(ASSETS)));
