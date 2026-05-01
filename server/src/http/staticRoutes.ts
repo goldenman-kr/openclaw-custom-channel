@@ -40,12 +40,25 @@ export async function handleStaticRoute(request: IncomingMessage, response: Serv
       return false;
     }
   } catch {
-    return false;
+    const extension = extname(normalizedPath).toLowerCase();
+    const isAssetRequest = Boolean(extension) || normalizedPath.startsWith("assets/");
+    if (isAssetRequest) {
+      return false;
+    }
+    filePath = resolve(deps.publicDir, "index.html");
+    try {
+      const indexStat = await stat(filePath);
+      if (!indexStat.isFile()) {
+        return false;
+      }
+    } catch {
+      return false;
+    }
   }
 
   response.writeHead(200, {
     "content-type": contentTypeFor(filePath),
-    "cache-control": filePath.endsWith("index.html") ? "no-cache" : "public, max-age=3600",
+    "cache-control": filePath.endsWith("index.html") || filePath.endsWith("sw.js") ? "no-cache" : "public, max-age=3600",
   });
   if (request.method === "HEAD") {
     response.end();
