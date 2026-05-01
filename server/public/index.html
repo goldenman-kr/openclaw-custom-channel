@@ -20,7 +20,14 @@
         </div>
         <nav id="conversationList" class="conversation-list" aria-label="대화 목록"></nav>
         <div class="sidebar-footer">
-          <button id="sidebarSettingsButton" class="ghost-button sidebar-settings-button" type="button">설정</button>
+          <button id="archiveToggleButton" class="ghost-button sidebar-archive-button" type="button">
+            <span class="sidebar-button-icon sidebar-button-icon--archive" aria-hidden="true"></span>
+            <span class="sidebar-button-label">보관함</span>
+          </button>
+          <button id="sidebarSettingsButton" class="ghost-button sidebar-settings-button" type="button">
+            <span class="sidebar-button-icon sidebar-button-icon--settings" aria-hidden="true"></span>
+            <span>설정</span>
+          </button>
         </div>
       </aside>
 
@@ -55,7 +62,7 @@
               </span>
             </button>
           </div>
-          <button id="floatingActionToggle" class="ghost-button floating-action-toggle" type="button" aria-label="빠른 작업 열기" aria-expanded="false" aria-controls="floatingActionPanel" title="빠른 작업">⌃</button>
+          <button id="floatingActionToggle" class="ghost-button floating-action-toggle" type="button" aria-label="빠른 작업 열기" aria-expanded="false" aria-controls="floatingActionPanel" title="빠른 작업"><span class="floating-action-toggle-icon" aria-hidden="true"></span></button>
         </div>
         <button id="scrollToLatestButton" class="ghost-button scroll-latest-button hidden" type="button" aria-label="최신 응답으로 이동" title="최신 응답으로 이동">↓</button>
 
@@ -112,7 +119,7 @@
         </div>
 
         <form id="messageForm" class="composer">
-          <input id="attachmentInput" class="hidden-file-input" type="file" multiple accept="image/jpeg,image/png,image/webp,application/pdf,text/plain,application/zip" />
+          <input id="attachmentInput" class="hidden-file-input" type="file" multiple accept="*/*" />
           <div id="attachmentTray" class="attachment-tray hidden" aria-live="polite"></div>
           <div id="slashCommandPalette" class="slash-command-palette hidden" aria-label="슬래시 명령어" role="listbox"></div>
           <div class="input-row">
@@ -123,7 +130,10 @@
               </label>
               <button id="attachButton" class="attach-button" type="button" aria-label="파일 첨부">＋</button>
             </div>
-            <textarea id="messageInput" rows="2" placeholder="메시지를 입력하세요. 예: 여기서 서울역까지"></textarea>
+            <div class="message-input-wrap">
+              <textarea id="messageInput" rows="2" placeholder="메시지를 입력하세요"></textarea>
+              <button id="clearMessageInputButton" class="clear-message-input-button hidden" type="button" aria-label="입력 내용 지우기">×</button>
+            </div>
             <button id="sendButton" type="submit">전송</button>
           </div>
           <p id="statusText" class="status-text"></p>

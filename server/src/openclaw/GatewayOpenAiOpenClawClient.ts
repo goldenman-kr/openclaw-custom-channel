@@ -12,6 +12,12 @@ export class GatewayOpenAiOpenClawClient implements OpenClawClient {
   async sendMessage(input: OpenClawClientInput): Promise<OpenClawClientResult> {
     const url = new URL("/v1/chat/completions", this.baseUrl);
     const abortController = new AbortController();
+    const onExternalAbort = () => abortController.abort(input.abortSignal?.reason ?? new Error("OpenClaw Gateway request cancelled."));
+    if (input.abortSignal?.aborted) {
+      onExternalAbort();
+    } else {
+      input.abortSignal?.addEventListener("abort", onExternalAbort, { once: true });
+    }
     const timeout = setTimeout(() => abortController.abort(new Error("OpenClaw Gateway request timed out.")), this.timeoutMs);
     const streamed: string[] = [];
 
@@ -58,6 +64,7 @@ export class GatewayOpenAiOpenClawClient implements OpenClawClient {
       };
     } finally {
       clearTimeout(timeout);
+      input.abortSignal?.removeEventListener("abort", onExternalAbort);
     }
   }
 
@@ -109,13 +116,42 @@ export class GatewayOpenAiOpenClawClient implements OpenClawClient {
     const nonImageAttachments = attachments.filter((attachment) => attachment.type !== "image");
     if (nonImageAttachments.length > 0) {
       sections.push(
-        `첨부 파일 metadata가 제공되었습니다. 현재 gateway-openai transport는 이미지 data URL 외의 첨부 원문 전달을 지원하지 않습니다.\n${nonImageAttachments
+        `첨부 파일이 제공되었습니다. 아래 파일 metadata와, 텍스트로 추출 가능한 파일은 원문을 함께 제공합니다.\n${nonImageAttachments
           .map((attachment) => `- ${attachment.name} (${attachment.mime_type}, ${attachment.type})`)
           .join("\n")}`,
       );
+
+      for (const attachment of nonImageAttachments) {
+        const text = this.extractTextAttachment(attachment);
+        if (text) {
+          sections.push(
+            `첨부 파일 원문: ${attachment.name}\n\`\`\`\n${text}\n\`\`\``,
+          );
+        }
+      }
     }
 
     return sections.join("\n\n");
+  }
+
+  private extractTextAttachment(attachment: MessageAttachment): string | null {
+    const textMimeTypes = new Set(["text/plain", "text/csv", "application/csv"]);
+    const lowerName = attachment.name.toLowerCase();
+    const looksText = textMimeTypes.has(attachment.mime_type) || lowerName.endsWith(".txt") || lowerName.endsWith(".csv");
+    if (!looksText || !attachment.content_base64) {
+      return null;
+    }
+
+    try {
+      const text = Buffer.from(attachment.content_base64, "base64").toString("utf8");
+      const maxChars = 120_000;
+      if (text.length <= maxChars) {
+        return text;
+      }
+      return `${text.slice(0, maxChars)}\n\n[첨부 원문이 길어서 ${maxChars.toLocaleString()}자까지만 포함했습니다.]`;
+    } catch {
+      return null;
+    }
   }
 
   private async readOpenAiSse(body: ReadableStream<Uint8Array>, onToken: (token: string) => Promise<void>): Promise<string> {

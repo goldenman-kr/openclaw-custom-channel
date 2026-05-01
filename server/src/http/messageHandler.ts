@@ -23,6 +23,7 @@ export interface MessageHandlerDeps {
   validApiKeys: Set<string>;
   conversationStore?: Pick<ConversationStore, "getConversation">;
   runtimeCallbacks?: ChatRuntimeCallbacks;
+  abortSignal?: AbortSignal;
 }
 
 const ERROR_STATUS: Record<ErrorCode, number> = {
@@ -35,6 +36,7 @@ const ERROR_STATUS: Record<ErrorCode, number> = {
   VALIDATION_ATTACHMENT_TOO_LARGE: 400,
   VALIDATION_ATTACHMENT_TOTAL_TOO_LARGE: 400,
   VALIDATION_ATTACHMENT_COUNT_EXCEEDED: 400,
+  VALIDATION_CONVERSATION_ARCHIVED: 409,
   UPSTREAM_OPENCLAW_UNAVAILABLE: 502,
   UPSTREAM_OPENCLAW_TIMEOUT: 504,
   CONVERSATION_NOT_FOUND: 404,
@@ -124,6 +126,14 @@ export async function handlePostMessage(
       details: { conversation_id: conversationId },
     });
   }
+  if (conversation?.archivedAt) {
+    return errorResponse({
+      requestId,
+      code: "VALIDATION_CONVERSATION_ARCHIVED",
+      message: "보관된 대화에는 새 메시지를 보낼 수 없습니다. 아카이브를 해제한 뒤 이어가세요.",
+      details: { conversation_id: conversation.id },
+    });
+  }
   const sessionId = conversation?.openclawSessionId ?? deps.sessionStore.getSessionId({ deviceId, userId });
 
   try {
@@ -134,6 +144,7 @@ export async function handlePostMessage(
       attachments: payload.attachments,
       metadata: payload.metadata,
       callbacks: deps.runtimeCallbacks,
+      abortSignal: deps.abortSignal,
     });
 
     return {

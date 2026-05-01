@@ -5,7 +5,7 @@ import Database from "better-sqlite3";
 import type { HistoryAttachment, HistoryRole } from "./HistoryStore.js";
 
 export type ConversationRole = HistoryRole;
-export type JobState = "queued" | "running" | "completed" | "failed";
+export type JobState = "queued" | "running" | "completed" | "failed" | "cancelled";
 
 export interface ConversationRecord {
   id: string;
@@ -24,6 +24,7 @@ export interface ChatMessageRecord {
   text: string;
   jobId?: string;
   createdAt: string;
+  completedAt?: string;
   attachments?: HistoryAttachment[];
 }
 
@@ -52,9 +53,10 @@ export interface MessageStore {
     id?: string;
     jobId?: string;
     createdAt?: string;
+    completedAt?: string | null;
     attachments?: HistoryAttachment[];
   }): ChatMessageRecord;
-  updateMessage(id: string, patch: { role?: ConversationRole; text?: string; jobId?: string | null; createdAt?: string }): ChatMessageRecord | null;
+  updateMessage(id: string, patch: { role?: ConversationRole; text?: string; jobId?: string | null; createdAt?: string; completedAt?: string | null; attachments?: HistoryAttachment[] }): ChatMessageRecord | null;
   listMessages(conversationId: string, input?: { limit?: number }): ChatMessageRecord[];
   clearMessages(conversationId: string, input?: { now?: string }): number;
 }
@@ -82,6 +84,7 @@ interface MessageRow {
   text: string;
   job_id: string | null;
   created_at: string;
+  completed_at: string | null;
 }
 
 interface AttachmentRow {
@@ -189,6 +192,7 @@ export class SqliteChatStore implements ConversationStore, MessageStore, JobStor
     id?: string;
     jobId?: string;
     createdAt?: string;
+    completedAt?: string | null;
     attachments?: HistoryAttachment[];
   }): ChatMessageRecord {
     const id = input.id ?? `msg_${randomUUID()}`;
@@ -196,8 +200,8 @@ export class SqliteChatStore implements ConversationStore, MessageStore, JobStor
     const insert = this.db.transaction(() => {
       this.db
         .prepare(
-          `INSERT INTO messages (id, conversation_id, role, text, job_id, created_at)
-           VALUES (@id, @conversationId, @role, @text, @jobId, @createdAt)`,
+          `INSERT INTO messages (id, conversation_id, role, text, job_id, created_at, completed_at)
+           VALUES (@id, @conversationId, @role, @text, @jobId, @createdAt, @completedAt)`,
         )
         .run({
           id,
@@ -206,6 +210,7 @@ export class SqliteChatStore implements ConversationStore, MessageStore, JobStor
           text: input.text,
           jobId: input.jobId ?? null,
           createdAt,
+          completedAt: input.completedAt ?? null,
         });
       this.insertAttachments(id, input.attachments ?? [], createdAt);
       this.db.prepare("UPDATE conversations SET updated_at = ? WHERE id = ?").run(createdAt, input.conversationId);
@@ -218,27 +223,35 @@ export class SqliteChatStore implements ConversationStore, MessageStore, JobStor
     return mapMessage(row, this.attachmentsFor([id]).get(id) ?? []);
   }
 
-  updateMessage(id: string, patch: { role?: ConversationRole; text?: string; jobId?: string | null; createdAt?: string }): ChatMessageRecord | null {
+  updateMessage(id: string, patch: { role?: ConversationRole; text?: string; jobId?: string | null; createdAt?: string; completedAt?: string | null; attachments?: HistoryAttachment[] }): ChatMessageRecord | null {
     const current = this.db.prepare("SELECT * FROM messages WHERE id = ?").get(id) as MessageRow | undefined;
     if (!current) {
       return null;
     }
     const createdAt = patch.createdAt ?? current.created_at;
     const updatedAt = patch.createdAt ?? new Date().toISOString();
-    this.db
-      .prepare(
-        `UPDATE messages
-         SET role = @role, text = @text, job_id = @jobId, created_at = @createdAt
-         WHERE id = @id`,
-      )
-      .run({
-        id,
-        role: patch.role ?? current.role,
-        text: patch.text ?? current.text,
-        jobId: patch.jobId === undefined ? current.job_id : patch.jobId,
-        createdAt,
-      });
-    this.db.prepare("UPDATE conversations SET updated_at = ? WHERE id = ?").run(updatedAt, current.conversation_id);
+    const update = this.db.transaction(() => {
+      this.db
+        .prepare(
+          `UPDATE messages
+           SET role = @role, text = @text, job_id = @jobId, created_at = @createdAt, completed_at = @completedAt
+           WHERE id = @id`,
+        )
+        .run({
+          id,
+          role: patch.role ?? current.role,
+          text: patch.text ?? current.text,
+          jobId: patch.jobId === undefined ? current.job_id : patch.jobId,
+          createdAt,
+          completedAt: patch.completedAt === undefined ? current.completed_at : patch.completedAt,
+        });
+      if (patch.attachments !== undefined) {
+        this.db.prepare("DELETE FROM attachments WHERE message_id = ?").run(id);
+        this.insertAttachments(id, patch.attachments, createdAt);
+      }
+      this.db.prepare("UPDATE conversations SET updated_at = ? WHERE id = ?").run(updatedAt, current.conversation_id);
+    });
+    update();
     const row = this.db.prepare("SELECT * FROM messages WHERE id = ?").get(id) as MessageRow | undefined;
     return row ? mapMessage(row, this.attachmentsFor([id]).get(id) ?? []) : null;
   }
@@ -327,6 +340,7 @@ export class SqliteChatStore implements ConversationStore, MessageStore, JobStor
           text TEXT NOT NULL,
           job_id TEXT,
           created_at TEXT NOT NULL,
+          completed_at TEXT,
           FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
         );
 
@@ -348,7 +362,7 @@ export class SqliteChatStore implements ConversationStore, MessageStore, JobStor
         CREATE TABLE IF NOT EXISTS jobs (
           id TEXT PRIMARY KEY,
           conversation_id TEXT NOT NULL,
-          state TEXT NOT NULL CHECK (state IN ('queued', 'running', 'completed', 'failed')),
+          state TEXT NOT NULL CHECK (state IN ('queued', 'running', 'completed', 'failed', 'cancelled')),
           error TEXT,
           created_at TEXT NOT NULL,
           updated_at TEXT NOT NULL,
@@ -360,9 +374,48 @@ export class SqliteChatStore implements ConversationStore, MessageStore, JobStor
           value TEXT NOT NULL
         );
       `);
+      this.ensureJobsCancelledStateAllowed();
+      const conversationColumns = new Set(
+        (this.db.prepare("PRAGMA table_info(conversations)").all() as Array<{ name: string }>).map((column) => column.name),
+      );
+      if (!conversationColumns.has("archived_at")) {
+        this.db.exec("ALTER TABLE conversations ADD COLUMN archived_at TEXT");
+      }
+      if (!conversationColumns.has("pinned")) {
+        this.db.exec("ALTER TABLE conversations ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0");
+      }
+      const messageColumns = new Set(
+        (this.db.prepare("PRAGMA table_info(messages)").all() as Array<{ name: string }>).map((column) => column.name),
+      );
+      if (!messageColumns.has("completed_at")) {
+        this.db.exec("ALTER TABLE messages ADD COLUMN completed_at TEXT");
+      }
       this.setMeta("schema_version", "1");
     });
     migration();
+  }
+
+  private ensureJobsCancelledStateAllowed(): void {
+    const row = this.db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'jobs'").get() as { sql?: string } | undefined;
+    if (row?.sql?.includes("'cancelled'")) {
+      return;
+    }
+
+    this.db.exec(`
+      CREATE TABLE jobs_new (
+        id TEXT PRIMARY KEY,
+        conversation_id TEXT NOT NULL,
+        state TEXT NOT NULL CHECK (state IN ('queued', 'running', 'completed', 'failed', 'cancelled')),
+        error TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+      );
+      INSERT INTO jobs_new (id, conversation_id, state, error, created_at, updated_at)
+        SELECT id, conversation_id, state, error, created_at, updated_at FROM jobs;
+      DROP TABLE jobs;
+      ALTER TABLE jobs_new RENAME TO jobs;
+    `);
   }
 
   private insertAttachments(messageId: string, attachments: HistoryAttachment[], createdAt: string): void {
@@ -437,6 +490,7 @@ function mapMessage(row: MessageRow, attachments: HistoryAttachment[]): ChatMess
     text: row.text,
     ...(row.job_id ? { jobId: row.job_id } : {}),
     createdAt: row.created_at,
+    ...(row.completed_at ? { completedAt: row.completed_at } : {}),
     ...(attachments.length > 0 ? { attachments } : {}),
   };
 }
