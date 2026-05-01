@@ -1,4 +1,4 @@
-const CACHE_NAME = 'openclaw-web-channel-v125';
+const CACHE_NAME = 'openclaw-web-channel-v137';
 const ASSETS = [
   '/',
   '/index.html',
@@ -32,7 +32,13 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
+  const isNavigation = event.request.mode === 'navigate';
   event.respondWith(
-    caches.match(event.request).then((cached) => cached || fetch(event.request)),
+    caches.match(event.request).then((cached) => {
+      if (cached) {
+        return cached;
+      }
+      return fetch(event.request).catch(() => isNavigation ? caches.match('/index.html') : undefined);
+    }),
   );
 });

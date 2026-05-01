@@ -58,9 +58,12 @@ const elements = {
   sidebarSettingsButton: document.querySelector('#sidebarSettingsButton'),
   archiveToggleButton: document.querySelector('#archiveToggleButton'),
   mobileMenuButton: document.querySelector('#mobileMenuButton'),
+  chatTitle: document.querySelector('#chatTitle'),
   mobileDrawerBackdrop: document.querySelector('#mobileDrawerBackdrop'),
   newConversationButton: document.querySelector('#newConversationButton'),
   conversationList: document.querySelector('#conversationList'),
+  conversationSearchInput: document.querySelector('#conversationSearchInput'),
+  clearConversationSearchButton: document.querySelector('#clearConversationSearchButton'),
   conversationRenameDialog: document.querySelector('#conversationRenameDialog'),
   conversationRenameInput: document.querySelector('#conversationRenameInput'),
   conversationRenameCancel: document.querySelector('#conversationRenameCancel'),
@@ -175,6 +178,45 @@ const slashCommands = [
   { command: '/tasks', title: '작업 목록', description: 'TaskFlow/작업 상태를 확인합니다.' },
 ];
 let selectedSlashCommandIndex = 0;
+let conversationSearchQuery = '';
+let conversationContentMatches = new Set();
+let conversationSearchTimer = null;
+let conversationSearchRunId = 0;
+const conversationSearchCache = new Map();
+
+function conversationIdFromPath(pathname = window.location.pathname) {
+  const match = pathname.match(/^\/chat\/([^/?#]+)/);
+  if (!match) {
+    return '';
+  }
+  try {
+    return decodeURIComponent(match[1]) || '';
+  } catch {
+    return '';
+  }
+}
+
+function conversationPath(conversationId) {
+  return `/chat/${encodeURIComponent(conversationId)}`;
+}
+
+function syncConversationUrl(conversationId, options = {}) {
+  if (!window.history?.pushState || !window.history?.replaceState) {
+    return;
+  }
+  const targetPath = conversationId ? conversationPath(conversationId) : '/';
+  const currentPath = window.location.pathname || '/';
+  if (currentPath === targetPath) {
+    return;
+  }
+  const url = new URL(window.location.href);
+  url.pathname = targetPath;
+  url.search = '';
+  url.hash = '';
+  const method = options.replace ? 'replaceState' : 'pushState';
+  window.history[method]({ conversationId: conversationId || '' }, '', url);
+}
+
 
 function applyTheme(themeMode) {
   document.documentElement.dataset.theme = ['light', 'dark'].includes(themeMode) ? themeMode : 'system';
@@ -577,6 +619,10 @@ function preserveScrollAfterRender(previousBottomOffset) {
   window.setTimeout(restore, 250);
 }
 
+function isDesktopLayout() {
+  return window.matchMedia('(min-width: 900px)').matches;
+}
+
 function openMobileDrawer() {
   document.body.classList.add('drawer-open');
   elements.mobileMenuButton?.setAttribute('aria-expanded', 'true');
@@ -588,6 +634,11 @@ function closeMobileDrawer() {
 }
 
 function toggleMobileDrawer() {
+  if (isDesktopLayout()) {
+    document.body.classList.toggle('sidebar-collapsed');
+    elements.mobileMenuButton?.setAttribute('aria-expanded', document.body.classList.contains('sidebar-collapsed') ? 'false' : 'true');
+    return;
+  }
   if (document.body.classList.contains('drawer-open')) {
     closeMobileDrawer();
   } else {
@@ -736,6 +787,13 @@ function conversationTitle(conversation) {
   return title || '새 대화';
 }
 
+function updateChatTitle() {
+  if (!elements.chatTitle) {
+    return;
+  }
+  elements.chatTitle.textContent = activeConversation?.id ? conversationTitle(activeConversation) : 'OpenClaw';
+}
+
 function formatConversationDate(value) {
   const time = Date.parse(value || '');
   if (!Number.isFinite(time)) {
@@ -759,8 +817,85 @@ function isConversationArchived(conversation) {
   return Boolean(conversation?.archived_at);
 }
 
-function visibleConversations() {
+function normalizedConversationSearchQuery() {
+  return conversationSearchQuery.trim().toLocaleLowerCase('ko-KR');
+}
+
+function updateConversationSearchClearButton() {
+  elements.clearConversationSearchButton?.classList.toggle('hidden', !conversationSearchQuery);
+}
+
+function conversationMatchesTitle(conversation, query = normalizedConversationSearchQuery()) {
+  return !query || conversationTitle(conversation).toLocaleLowerCase('ko-KR').includes(query);
+}
+
+function baseVisibleConversations() {
   return conversations.filter((conversation) => showingArchived ? isConversationArchived(conversation) : !isConversationArchived(conversation));
+}
+
+function conversationMatchesSearch(conversation, query = normalizedConversationSearchQuery()) {
+  return !query || conversationMatchesTitle(conversation, query) || conversationContentMatches.has(conversation.id);
+}
+
+async function fetchConversationHistoryMessages(conversationId) {
+  const response = await fetch(apiUrl('/v1/history', { conversation_id: conversationId }), {
+    headers: await historyHeaders(),
+  });
+  if (!response.ok) {
+    return [];
+  }
+  const body = await response.json().catch(() => null);
+  return Array.isArray(body?.messages) ? body.messages : [];
+}
+
+async function runConversationContentSearch(runId, query) {
+  if (!query || !canUseApi()) {
+    conversationContentMatches = new Set();
+    renderConversationList();
+    return;
+  }
+  const candidates = baseVisibleConversations().filter((conversation) => !conversationMatchesTitle(conversation, query));
+  const nextMatches = new Set();
+  let index = 0;
+  const worker = async () => {
+    while (index < candidates.length && runId === conversationSearchRunId) {
+      const conversation = candidates[index++];
+      const cacheKey = `${conversation.id}:${query}`;
+      let matched = conversationSearchCache.get(cacheKey);
+      if (matched === undefined) {
+        const messages = await fetchConversationHistoryMessages(conversation.id);
+        const haystack = messages.map((message) => typeof message?.text === 'string' ? message.text : '').join('\n').toLocaleLowerCase('ko-KR');
+        matched = haystack.includes(query);
+        conversationSearchCache.set(cacheKey, matched);
+      }
+      if (matched) {
+        nextMatches.add(conversation.id);
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(4, candidates.length) }, worker));
+  if (runId !== conversationSearchRunId) {
+    return;
+  }
+  conversationContentMatches = nextMatches;
+  renderConversationList();
+}
+
+function scheduleConversationSearch() {
+  const query = normalizedConversationSearchQuery();
+  conversationSearchRunId += 1;
+  const runId = conversationSearchRunId;
+  if (conversationSearchTimer) {
+    window.clearTimeout(conversationSearchTimer);
+  }
+  conversationSearchTimer = window.setTimeout(() => {
+    runConversationContentSearch(runId, query).catch(() => {});
+  }, query ? 260 : 0);
+}
+
+function visibleConversations() {
+  const query = normalizedConversationSearchQuery();
+  return baseVisibleConversations().filter((conversation) => conversationMatchesSearch(conversation, query));
 }
 
 function sortConversations(items) {
@@ -828,7 +963,7 @@ function renderHome() {
   updateComposerAvailability();
 }
 
-function goHome() {
+function goHome(options = {}) {
   saveComposerDraft();
   activeConversation = null;
   settings.lastActiveConversationId = '';
@@ -840,6 +975,8 @@ function goHome() {
   autoResizeTextarea();
   renderConversationList();
   renderHome();
+  updateChatTitle();
+  syncConversationUrl('', { replace: options.replaceUrl === true });
 }
 
 function renderConversationList() {
@@ -856,10 +993,11 @@ function renderConversationList() {
   }
   updateArchiveToggleButton();
   const list = visibleConversations();
+  const query = normalizedConversationSearchQuery();
   if (list.length === 0) {
     const empty = document.createElement('p');
     empty.className = 'conversation-empty';
-    empty.textContent = showingArchived ? '보관된 대화가 없습니다.' : '대화가 없습니다.';
+    empty.textContent = query ? '검색 결과가 없습니다.' : (showingArchived ? '보관된 대화가 없습니다.' : '대화가 없습니다.');
     elements.conversationList.append(empty);
     return;
   }
@@ -958,22 +1096,30 @@ async function refreshConversations() {
     return conversations;
   }
   conversations = sortConversations(await fetchConversations());
+  conversationSearchCache.clear();
   renderConversationList();
+  scheduleConversationSearch();
   return conversations;
 }
 
-async function selectConversation(conversationId) {
-  if (!conversationId || conversationId === activeConversationId()) {
-    return;
+async function selectConversation(conversationId, options = {}) {
+  if (!conversationId) {
+    return false;
+  }
+  if (conversationId === activeConversationId()) {
+    syncConversationUrl(conversationId, { replace: options.replaceUrl === true });
+    return true;
   }
   saveComposerDraft();
   const conversation = conversations.find((item) => item.id === conversationId) || null;
   if (!conversation) {
-    return;
+    return false;
   }
   activeConversation = conversation;
+  updateChatTitle();
   settings.lastActiveConversationId = conversation.id;
   saveSettings(settings);
+  syncConversationUrl(conversation.id, { replace: options.replaceUrl === true });
   lastHistoryVersion = null;
   clearPendingJob();
   renderConversationList();
@@ -982,6 +1128,7 @@ async function selectConversation(conversationId) {
   closeMobileDrawer();
   await renderHistory({ scrollToLatest: true });
   await resumePendingJobIfNeeded();
+  return true;
 }
 
 async function fetchConversations() {
@@ -1150,6 +1297,7 @@ async function toggleConversationPinned(conversationId) {
     conversations = sortConversations(conversations.map((item) => item.id === updated.id ? updated : item));
     if (activeConversation?.id === updated.id) {
       activeConversation = updated;
+      updateChatTitle();
     }
     renderConversationList();
     appendMessage('system', updated.pinned ? '대화를 상단에 고정했습니다.' : '대화 상단고정을 해제했습니다.', { persist: false });
@@ -1193,6 +1341,7 @@ async function renameConversation(conversationId) {
     conversations = conversations.map((item) => item.id === updated.id ? updated : item);
     if (activeConversation?.id === updated.id) {
       activeConversation = updated;
+      updateChatTitle();
     }
     renderConversationList();
     appendMessage('system', '대화 이름을 변경했습니다.', { persist: false });
@@ -1233,7 +1382,9 @@ async function ensureActiveConversation() {
   assertValidApiKey(settings.apiKey);
   conversations = sortConversations(await fetchConversations());
   activeConversation = await createConversation('새 대화');
+  updateChatTitle();
   settings.lastActiveConversationId = activeConversation.id;
+  syncConversationUrl(activeConversation.id);
   if (!conversations.some((conversation) => conversation.id === activeConversation.id)) {
     conversations = [activeConversation, ...conversations];
   }
@@ -1248,7 +1399,9 @@ async function startNewConversation() {
   showingArchived = false;
   updateArchiveToggleButton();
   activeConversation = await createConversation('새 대화');
+  updateChatTitle();
   settings.lastActiveConversationId = activeConversation.id;
+  syncConversationUrl(activeConversation.id);
   conversations = [activeConversation, ...conversations.filter((conversation) => conversation.id !== activeConversation.id)];
   saveSettings(settings);
   lastHistoryVersion = null;
@@ -2266,13 +2419,12 @@ function appendCancelJobAction(node, role, text, options = {}) {
   const button = document.createElement('button');
   button.type = 'button';
   button.className = 'message-cancel-button';
-  button.textContent = '중지';
   button.title = '이 응답 작업 중지';
   button.setAttribute('aria-label', '이 응답 작업 중지');
   button.addEventListener('click', async () => {
     const conversationId = activeConversationId();
     button.disabled = true;
-    button.textContent = '중지 중';
+    button.setAttribute('aria-label', '응답 작업 중지 중');
     setStatus('응답을 중지하는 중입니다...');
     try {
       await cancelJob(jobId, conversationId);
@@ -2283,7 +2435,7 @@ function appendCancelJobAction(node, role, text, options = {}) {
       setStatus('');
     } catch (error) {
       button.disabled = false;
-      button.textContent = '중지';
+      button.setAttribute('aria-label', '이 응답 작업 중지');
       appendMessage('system', error instanceof Error ? error.message : String(error), { persist: false });
       setStatus('');
     }
@@ -3061,7 +3213,20 @@ function acceptSelectedSlashCommand() {
 
 applySettingsToForm();
 renderHome();
-refreshConversations().catch((error) => appendMessage('system', error instanceof Error ? error.message : String(error), { persist: false }));
+updateChatTitle();
+updateConversationSearchClearButton();
+const initialConversationId = conversationIdFromPath();
+refreshConversations()
+  .then(async () => {
+    if (!initialConversationId) {
+      return;
+    }
+    const selected = await selectConversation(initialConversationId, { replaceUrl: true });
+    if (!selected) {
+      goHome({ replaceUrl: true });
+    }
+  })
+  .catch((error) => appendMessage('system', error instanceof Error ? error.message : String(error), { persist: false }));
 startHistoryPolling();
 
 function toggleSettingsPanel() {
@@ -3113,15 +3278,14 @@ elements.saveSettingsButton.addEventListener('click', () => {
   saveSettings(settings);
   applySettingsToForm();
   if (previousApiKey !== settings.apiKey) {
-    activeConversation = null;
     conversations = [];
-    settings.lastActiveConversationId = '';
-    saveSettings(settings);
     lastHistoryVersion = null;
-    renderHome();
     refreshConversations().catch(() => {});
+    if (activeConversation) {
+      refreshHistory({ force: true, preserveScroll: true }).catch(() => {});
+    }
   }
-  appendMessage('system', '설정을 저장했습니다.');
+  showToast('설정을 저장했습니다.', { kind: 'success' });
   elements.settingsPanel.classList.add('hidden');
 });
 
@@ -3147,6 +3311,26 @@ elements.archiveToggleButton?.addEventListener('click', () => {
   showingArchived = !showingArchived;
   openConversationMenuId = null;
   goHome();
+});
+
+elements.conversationSearchInput?.addEventListener('input', () => {
+  conversationSearchQuery = elements.conversationSearchInput.value;
+  updateConversationSearchClearButton();
+  conversationContentMatches = new Set();
+  renderConversationList();
+  scheduleConversationSearch();
+});
+
+elements.clearConversationSearchButton?.addEventListener('click', () => {
+  conversationSearchQuery = '';
+  if (elements.conversationSearchInput) {
+    elements.conversationSearchInput.value = '';
+    elements.conversationSearchInput.focus();
+  }
+  updateConversationSearchClearButton();
+  conversationContentMatches = new Set();
+  renderConversationList();
+  scheduleConversationSearch();
 });
 
 elements.clearHistoryButton.addEventListener('click', async () => {
@@ -3198,7 +3382,18 @@ elements.mediaViewer.addEventListener('click', (event) => {
 window.addEventListener('popstate', () => {
   if (mediaViewerHistoryActive && !elements.mediaViewer.classList.contains('hidden')) {
     closeMediaViewer({ syncHistory: false });
+    return;
   }
+  const conversationId = conversationIdFromPath();
+  if (conversationId) {
+    selectConversation(conversationId, { replaceUrl: true }).then((selected) => {
+      if (!selected) {
+        goHome({ replaceUrl: true });
+      }
+    }).catch(() => goHome({ replaceUrl: true }));
+    return;
+  }
+  goHome({ replaceUrl: true });
 });
 
 document.addEventListener('keydown', (event) => {

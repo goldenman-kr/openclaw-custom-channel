@@ -12,7 +12,6 @@
   </head>
   <body>
     <main class="app-shell">
-      <button id="mobileMenuButton" class="ghost-button mobile-menu-button" type="button" aria-label="대화 메뉴 열기" aria-expanded="false" aria-controls="conversationSidebar">☰</button>
       <div id="mobileDrawerBackdrop" class="drawer-backdrop" data-drawer-close></div>
 
       <aside id="conversationSidebar" class="conversation-sidebar" aria-label="대화 목록">
@@ -21,6 +20,11 @@
           <button id="newConversationButton" class="ghost-button sidebar-new-button" type="button">새 대화</button>
         </div>
         <nav id="conversationList" class="conversation-list" aria-label="대화 목록"></nav>
+        <label class="conversation-search" aria-label="대화 검색">
+          <span class="conversation-search-icon" aria-hidden="true">⌕</span>
+          <input id="conversationSearchInput" type="search" placeholder="대화 검색" autocomplete="off" />
+          <button id="clearConversationSearchButton" class="clear-message-input-button conversation-search-clear hidden" type="button" aria-label="검색어 지우기">×</button>
+        </label>
         <div class="sidebar-footer">
           <button id="archiveToggleButton" class="ghost-button sidebar-archive-button" type="button">
             <span class="sidebar-button-icon sidebar-button-icon--archive" aria-hidden="true"></span>
@@ -34,6 +38,11 @@
       </aside>
 
       <section class="chat-panel" aria-label="채팅">
+        <header class="chat-titlebar">
+          <button id="mobileMenuButton" class="ghost-button mobile-menu-button" type="button" aria-label="대화 목록 열기" aria-expanded="false" aria-controls="conversationSidebar">☰</button>
+          <h1 id="chatTitle" class="chat-title">OpenClaw</h1>
+          <span class="chat-titlebar-spacer" aria-hidden="true"></span>
+        </header>
         <div id="floatingActionMenu" class="floating-action-menu">
           <div id="floatingActionPanel" class="floating-action-panel hidden" role="menu" aria-label="빠른 작업">
             <button id="floatingSettingsButton" class="ghost-button floating-action-item" type="button" role="menuitem">
