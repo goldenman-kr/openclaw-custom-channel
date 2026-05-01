@@ -10,6 +10,7 @@ import {
 } from "../contracts/apiContractV1.js";
 import type { RuntimeWorkspaceScope } from "../openclaw/OpenClawClient.js";
 import type { ChatRuntime, ChatRuntimeCallbacks } from "../runtime/ChatRuntime.js";
+import type { AuthContext } from "./authRoutes.js";
 import type { ConversationStore } from "../session/SqliteChatStore.js";
 import type { SessionStore } from "../session/SessionStore.js";
 
@@ -23,6 +24,7 @@ export interface MessageHandlerDeps {
   sessionStore: SessionStore;
   validApiKeys: Set<string>;
   conversationStore?: Pick<ConversationStore, "getConversation">;
+  authContext?: AuthContext | null;
   runtimeWorkspace?: RuntimeWorkspaceScope;
   runtimeCallbacks?: ChatRuntimeCallbacks;
   abortSignal?: AbortSignal;
@@ -88,22 +90,24 @@ export async function handlePostMessage(
   payload: MessageRequestDto,
 ): Promise<HttpResult> {
   const requestId = createRequestId();
-  const tokenOrError = extractBearerToken(getSingleHeader(headers, "authorization"));
-  if (typeof tokenOrError !== "string") {
-    return errorResponse({
-      requestId,
-      code: tokenOrError.code,
-      message: tokenOrError.message,
-      details: tokenOrError.details,
-    });
-  }
+  if (!deps.authContext) {
+    const tokenOrError = extractBearerToken(getSingleHeader(headers, "authorization"));
+    if (typeof tokenOrError !== "string") {
+      return errorResponse({
+        requestId,
+        code: tokenOrError.code,
+        message: tokenOrError.message,
+        details: tokenOrError.details,
+      });
+    }
 
-  if (!deps.validApiKeys.has(tokenOrError)) {
-    return errorResponse({
-      requestId,
-      code: "AUTH_INVALID_TOKEN",
-      message: "API key is invalid.",
-    });
+    if (!deps.validApiKeys.has(tokenOrError)) {
+      return errorResponse({
+        requestId,
+        code: "AUTH_INVALID_TOKEN",
+        message: "API key is invalid.",
+      });
+    }
   }
 
   const validationError = validateMessageRequestDto(payload);
@@ -117,7 +121,7 @@ export async function handlePostMessage(
   }
 
   const deviceId = getSingleHeader(headers, "x-device-id");
-  const userId = getSingleHeader(headers, "x-user-id");
+  const userId = deps.authContext?.user.id ?? getSingleHeader(headers, "x-user-id");
   const conversationId = payload.conversation_id?.trim();
   const conversation = conversationId && deps.conversationStore ? deps.conversationStore.getConversation(conversationId) : null;
   if (conversationId && deps.conversationStore && !conversation) {

@@ -1019,7 +1019,7 @@ function renderHome() {
   title.textContent = 'OpenClaw Web Channel';
   const description = document.createElement('p');
   if (!canUseApi()) {
-    description.textContent = 'API 연결이 설정되지 않았습니다. 설정에서 API URL과 API Key를 저장한 뒤 대화를 시작하세요.';
+    description.textContent = '로그인 후 대화를 시작할 수 있습니다.';
     const settingsButton = document.createElement('button');
     settingsButton.type = 'button';
     settingsButton.textContent = '설정 열기';
@@ -1067,7 +1067,7 @@ function renderConversationList() {
   if (!canUseApi()) {
     const empty = document.createElement('p');
     empty.className = 'conversation-empty';
-    empty.textContent = 'API Key를 저장하면 대화 목록이 표시됩니다.';
+    empty.textContent = '로그인하면 대화 목록이 표시됩니다.';
     elements.conversationList.append(empty);
     return;
   }
@@ -1460,7 +1460,6 @@ async function ensureActiveConversation() {
   if (activeConversation?.id) {
     return activeConversation;
   }
-  assertValidApiKey(settings.apiKey);
   conversations = sortConversations(await fetchConversations());
   activeConversation = await createConversation('새 대화');
   updateChatTitle();
@@ -1546,7 +1545,7 @@ async function continueInNewSession() {
     return;
   }
   if (!canUseApi()) {
-    appendMessage('system', '설정에서 API URL과 API Key를 먼저 저장해주세요.', { persist: false });
+    appendMessage('system', '로그인 후 대화를 시작할 수 있습니다.', { persist: false });
     elements.settingsPanel.classList.remove('hidden');
     return;
   }
@@ -3045,7 +3044,7 @@ async function handleSubmit(event) {
   }
 
   if (!canUseApi()) {
-    appendMessage('system', '설정에서 API URL과 API Key를 먼저 저장해주세요.');
+    appendMessage('system', '로그인 후 대화를 시작할 수 있습니다.');
     elements.settingsPanel.classList.remove('hidden');
     return;
   }
@@ -3310,7 +3309,13 @@ const initialConversationId = conversationIdFromPath();
     return;
   }
   await refreshConversations();
+  if (user && !initialConversationId && !activeConversation?.id && conversations.length === 0) {
+    await startNewConversation();
+    return;
+  }
   if (!initialConversationId) {
+    renderHome();
+    renderConversationList();
     return;
   }
   const selected = await selectConversation(initialConversationId, { replaceUrl: true });
@@ -3371,11 +3376,18 @@ elements.loginForm?.addEventListener('submit', async (event) => {
   try {
     await login(username, password);
     await refreshConversations();
-    if (initialConversationId) {
-      const selected = await selectConversation(initialConversationId, { replaceUrl: true });
-      if (!selected) {
-        goHome({ replaceUrl: true });
-      }
+    if (!initialConversationId && !activeConversation?.id && conversations.length === 0) {
+      await startNewConversation();
+      return;
+    }
+    if (!initialConversationId) {
+      renderHome();
+      renderConversationList();
+      return;
+    }
+    const selected = await selectConversation(initialConversationId, { replaceUrl: true });
+    if (!selected) {
+      goHome({ replaceUrl: true });
     }
   } catch (error) {
     showLoginScreen(error instanceof Error ? error.message : String(error));

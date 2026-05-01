@@ -3,10 +3,13 @@ import type { ChatRuntimeCallbacks } from "../runtime/ChatRuntime.js";
 
 export interface RuntimeWorkspaceScope {
   userId: string;
+  username?: string;
+  displayName?: string;
   workspaceRoot: string;
   userDir: string;
   commonDir: string;
   commonWritable: boolean;
+  identityFile?: string;
 }
 
 export interface OpenClawClientInput {
