@@ -133,7 +133,7 @@ export class SseJobEventPublisher {
   }
 
   private isTerminal(job: JobEventRecord): boolean {
-    return job.state === "completed" || job.state === "failed";
+    return job.state === "completed" || job.state === "failed" || job.state === "cancelled";
   }
 
   private writeEvent(response: ServerResponse, event: string, data: unknown): void {

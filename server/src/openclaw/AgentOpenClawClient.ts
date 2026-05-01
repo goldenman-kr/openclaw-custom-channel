@@ -42,6 +42,7 @@ export class AgentOpenClawClient implements OpenClawClient {
       timeout: this.timeoutMs,
       maxBuffer: 20 * 1024 * 1024,
       env: process.env,
+      signal: input.abortSignal,
     });
 
     return {
@@ -168,11 +169,15 @@ function pickNestedText(parsed: Record<string, unknown>): string | null {
 
   const meta = asRecord(result?.meta) ?? asRecord(parsed.meta);
   const finalAssistantVisibleText = asString(meta?.finalAssistantVisibleText);
+  const finalAssistantRawText = asString(meta?.finalAssistantRawText);
+  if (finalAssistantRawText && containsMediaDirective(finalAssistantRawText)) {
+    return finalAssistantRawText;
+  }
+
   if (finalAssistantVisibleText) {
     return finalAssistantVisibleText;
   }
 
-  const finalAssistantRawText = asString(meta?.finalAssistantRawText);
   if (finalAssistantRawText) {
     return finalAssistantRawText;
   }
@@ -225,4 +230,8 @@ function asArray(value: unknown): unknown[] | null {
 
 function asString(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function containsMediaDirective(text: string): boolean {
+  return /^\s*MEDIA:/im.test(text);
 }

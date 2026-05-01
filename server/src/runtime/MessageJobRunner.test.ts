@@ -193,6 +193,111 @@ test("appends recent generated media files when streaming omits media payload", 
   );
 });
 
+test("stores assistant MEDIA refs as conversation attachments", async () => {
+  const mediaDir = await mkdtemp(join(tmpdir(), "openclaw-conversation-media-"));
+  const pdfPath = join(mediaDir, "report.pdf");
+  await writeFile(pdfPath, "pdf");
+  const patches: Array<{ attachments?: unknown[] }> = [];
+  const conversationStore = {
+    ...unusedConversationStore(),
+    updateMessage(_id: string, patch: { attachments?: unknown[] }) {
+      patches.push(patch);
+      return null;
+    },
+  };
+  const runtime: ChatRuntime = {
+    async sendMessage() {
+      return { reply: `보고서입니다.\n\nMEDIA:${pdfPath}` };
+    },
+  };
+  const job: MessageJob = {
+    id: "job_runner_conversation_media_test",
+    sessionId: "session-runner-conversation-media-test",
+    conversationId: "conv-runner-conversation-media-test",
+    state: "queued",
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+
+  const runner = new MessageJobRunner({
+    chatRuntime: runtime,
+    sessionStore: new InMemorySessionStore(),
+    validApiKeys: new Set(["test-key"]),
+    conversationStore,
+    historyStore: memoryHistoryStore(),
+    shouldPersistMessage: () => true,
+    updateJob(jobToUpdate, patch) {
+      Object.assign(jobToUpdate, patch);
+    },
+  });
+
+  runner.enqueue(job, { authorization: "Bearer test-key" }, { message: "보고서 만들어줘" });
+
+  await waitUntil(() => job.state === "completed");
+  assert.deepEqual(patches.at(-1)?.attachments, [
+    {
+      name: "report.pdf",
+      mime_type: "application/pdf",
+      type: "file",
+      path: pdfPath,
+      size: 3,
+    },
+  ]);
+});
+
+test("stores mentioned existing document path as conversation attachment even when MEDIA is stripped", async () => {
+  const mediaDir = await mkdtemp(join(tmpdir(), "openclaw-mentioned-media-"));
+  const actualPath = join(mediaDir, "예수는_나의_힘이요_A4_통일_출력용.pdf");
+  await writeFile(actualPath, "pdf");
+  const requestedPath = join(mediaDir, "예수는나의힘이요A4통일_출력용.pdf");
+  const patches: Array<{ attachments?: unknown[] }> = [];
+  const conversationStore = {
+    ...unusedConversationStore(),
+    updateMessage(_id: string, patch: { attachments?: unknown[] }) {
+      patches.push(patch);
+      return null;
+    },
+  };
+  const runtime: ChatRuntime = {
+    async sendMessage() {
+      return { reply: "PDF 문서 첨부 테스트합니다. 아래에 클립 표시와 다운로드 버튼이 보여야 합니다." };
+    },
+  };
+  const job: MessageJob = {
+    id: "job_runner_mentioned_document_test",
+    sessionId: "session-runner-mentioned-document-test",
+    conversationId: "conv-runner-mentioned-document-test",
+    state: "queued",
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+
+  const runner = new MessageJobRunner({
+    chatRuntime: runtime,
+    sessionStore: new InMemorySessionStore(),
+    validApiKeys: new Set(["test-key"]),
+    conversationStore,
+    historyStore: memoryHistoryStore(),
+    shouldPersistMessage: () => true,
+    updateJob(jobToUpdate, patch) {
+      Object.assign(jobToUpdate, patch);
+    },
+  });
+
+  runner.enqueue(job, { authorization: "Bearer test-key" }, { message: `이걸로 보내줘: ${requestedPath}` });
+
+  await waitUntil(() => job.state === "completed");
+  assert.deepEqual(patches.at(-1)?.attachments, [
+    {
+      name: "예수는_나의_힘이요_A4_통일_출력용.pdf",
+      mime_type: "application/pdf",
+      type: "file",
+      path: actualPath,
+      size: 3,
+    },
+  ]);
+});
+
 test("publishes runtime tokens for queued message jobs", async () => {
   const tokens: string[] = [];
   const states: string[] = [];

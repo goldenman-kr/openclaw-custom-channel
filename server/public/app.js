@@ -9,11 +9,45 @@ const ALLOWED_ATTACHMENT_TYPES = new Set([
   'image/webp',
   'application/pdf',
   'text/plain',
+  'text/csv',
+  'application/csv',
+  'application/vnd.ms-excel',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.ms-powerpoint',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
   'application/zip',
 ]);
 
+const ATTACHMENT_MIME_BY_EXTENSION = new Map([
+  ['jpg', 'image/jpeg'],
+  ['jpeg', 'image/jpeg'],
+  ['png', 'image/png'],
+  ['webp', 'image/webp'],
+  ['pdf', 'application/pdf'],
+  ['txt', 'text/plain'],
+  ['csv', 'text/csv'],
+  ['xls', 'application/vnd.ms-excel'],
+  ['xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],
+  ['doc', 'application/msword'],
+  ['docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
+  ['ppt', 'application/vnd.ms-powerpoint'],
+  ['pptx', 'application/vnd.openxmlformats-officedocument.presentationml.presentation'],
+  ['zip', 'application/zip'],
+]);
+
+function inferAttachmentMimeType(name, mimeType = '') {
+  if (ALLOWED_ATTACHMENT_TYPES.has(mimeType)) {
+    return mimeType;
+  }
+  const extension = String(name || '').split('.').pop()?.toLowerCase();
+  return ATTACHMENT_MIME_BY_EXTENSION.get(extension) || mimeType;
+}
+
 const elements = {
   settingsButton: document.querySelector('#settingsButton'),
+  chatPanel: document.querySelector('.chat-panel'),
   floatingActionMenu: document.querySelector('#floatingActionMenu'),
   floatingActionPanel: document.querySelector('#floatingActionPanel'),
   floatingActionToggle: document.querySelector('#floatingActionToggle'),
@@ -22,6 +56,7 @@ const elements = {
   continueNewSessionButton: document.querySelector('#continueNewSessionButton'),
   scrollToLatestButton: document.querySelector('#scrollToLatestButton'),
   sidebarSettingsButton: document.querySelector('#sidebarSettingsButton'),
+  archiveToggleButton: document.querySelector('#archiveToggleButton'),
   mobileMenuButton: document.querySelector('#mobileMenuButton'),
   mobileDrawerBackdrop: document.querySelector('#mobileDrawerBackdrop'),
   newConversationButton: document.querySelector('#newConversationButton'),
@@ -51,6 +86,7 @@ const elements = {
   messagesScrollIndicator: document.querySelector('#messagesScrollIndicator'),
   messageForm: document.querySelector('#messageForm'),
   messageInput: document.querySelector('#messageInput'),
+  clearMessageInputButton: document.querySelector('#clearMessageInputButton'),
   includeLocationInput: document.querySelector('#includeLocationInput'),
   attachmentInput: document.querySelector('#attachmentInput'),
   attachButton: document.querySelector('#attachButton'),
@@ -117,6 +153,7 @@ let activeConversation = null;
 let openConversationMenuId = null;
 let floatingActionsExpanded = false;
 let conversations = [];
+let showingArchived = false;
 let mediaViewerCurrentUrl = '';
 let mediaViewerCurrentName = 'openclaw-image.png';
 let mediaViewerTransform = { scale: 1, x: 0, y: 0 };
@@ -124,6 +161,7 @@ const mediaViewerPointers = new Map();
 let mediaViewerGestureStart = null;
 let mediaViewerHistoryActive = false;
 let messagesScrollIndicatorTimer = null;
+let drawerSwipeStart = null;
 const mediaUrlCache = new Map();
 const slashCommands = [
   { command: '/status', title: '상태 확인', description: '현재 세션/모델/토큰/설정 상태를 확인합니다.' },
@@ -269,7 +307,8 @@ function renderAttachmentTray() {
 }
 
 function validateAttachmentFile(file) {
-  if (!ALLOWED_ATTACHMENT_TYPES.has(file.type)) {
+  const mimeType = inferAttachmentMimeType(file.name, file.type);
+  if (!ALLOWED_ATTACHMENT_TYPES.has(mimeType)) {
     throw new Error(`${file.name}: 지원하지 않는 파일 형식입니다.`);
   }
   if (file.size > MAX_ATTACHMENT_BYTES) {
@@ -297,6 +336,14 @@ function addAttachmentFilesSafely(files, sourceLabel = '첨부') {
   }
   if (isSendingMessage) {
     appendMessage('system', '응답 전송 중에는 첨부 파일을 추가할 수 없습니다.', { persist: false });
+    return true;
+  }
+  if (!activeConversation?.id) {
+    appendMessage('system', '새 대화를 열거나 목록에서 대화를 선택한 뒤 파일을 첨부해주세요.', { persist: false });
+    return true;
+  }
+  if (isConversationArchived(activeConversation)) {
+    appendMessage('system', '보관된 대화에는 파일을 첨부할 수 없습니다. 대화를 이어가려면 아카이브를 해제하세요.', { persist: false });
     return true;
   }
   try {
@@ -397,12 +444,15 @@ function fileToBase64(file) {
 
 async function buildAttachmentsPayload() {
   return Promise.all(
-    selectedAttachments.map(async (file) => ({
-      type: file.type.startsWith('image/') ? 'image' : 'file',
-      name: file.name,
-      mime_type: file.type,
-      content_base64: await fileToBase64(file),
-    })),
+    selectedAttachments.map(async (file) => {
+      const mimeType = inferAttachmentMimeType(file.name, file.type);
+      return {
+        type: mimeType.startsWith('image/') ? 'image' : 'file',
+        name: file.name,
+        mime_type: mimeType,
+        content_base64: await fileToBase64(file),
+      };
+    }),
   );
 }
 
@@ -410,7 +460,7 @@ function attachmentSummary(files = selectedAttachments) {
   if (files.length === 0) {
     return '';
   }
-  return `\n\n첨부 파일:\n${files.map((file) => `- ${file.name} (${file.type || 'unknown'}, ${formatBytes(file.size)})`).join('\n')}`;
+  return `\n\n첨부 파일:\n${files.map((file) => `- ${file.name} (${inferAttachmentMimeType(file.name, file.type) || 'unknown'}, ${formatBytes(file.size)})`).join('\n')}`;
 }
 
 function normalizeApiKey(value) {
@@ -437,6 +487,27 @@ function readSettingsFromForm() {
 
 function setStatus(message) {
   elements.statusText.textContent = message || '';
+}
+
+function showToast(message, options = {}) {
+  const container = document.querySelector('.toast-stack') || (() => {
+    const node = document.createElement('div');
+    node.className = 'toast-stack';
+    node.setAttribute('aria-live', 'polite');
+    node.setAttribute('aria-atomic', 'true');
+    document.body.append(node);
+    return node;
+  })();
+  const toast = document.createElement('div');
+  toast.className = `toast toast--${options.kind || 'info'}`;
+  toast.textContent = message;
+  container.append(toast);
+  window.setTimeout(() => toast.classList.add('toast--visible'), 20);
+  window.setTimeout(() => {
+    toast.classList.remove('toast--visible');
+    toast.addEventListener('transitionend', () => toast.remove(), { once: true });
+    window.setTimeout(() => toast.remove(), 500);
+  }, options.durationMs || 2400);
 }
 
 function isNearBottom(threshold = 120) {
@@ -466,7 +537,8 @@ function updateMessagesScrollIndicator() {
   const maxThumbTop = Math.max(0, trackHeight - thumbHeight);
   const maxScrollTop = Math.max(1, scrollHeight - clientHeight);
   const thumbTop = (scrollTop / maxScrollTop) * maxThumbTop;
-  indicator.style.top = `${elements.messages.offsetTop}px`;
+  const messagesRect = elements.messages.getBoundingClientRect();
+  indicator.style.top = `${messagesRect.top}px`;
   indicator.style.height = `${thumbHeight}px`;
   indicator.style.transform = `translateY(${thumbTop}px)`;
   indicator.classList.add('visible');
@@ -520,6 +592,50 @@ function toggleMobileDrawer() {
     closeMobileDrawer();
   } else {
     openMobileDrawer();
+  }
+}
+
+function shouldIgnoreDrawerSwipe(target) {
+  return Boolean(target?.closest?.('input, textarea, button, a, select, dialog, .composer, .settings-panel, .media-viewer, .floating-action-menu, .markdown-table-wrapper, .code-block pre'));
+}
+
+function handleDrawerSwipeStart(event) {
+  if (!isMobileLikeInput() || document.body.classList.contains('drawer-open') || !elements.mediaViewer.classList.contains('hidden')) {
+    drawerSwipeStart = null;
+    return;
+  }
+  const touch = event.touches?.[0];
+  if (!touch || shouldIgnoreDrawerSwipe(event.target)) {
+    drawerSwipeStart = null;
+    return;
+  }
+  drawerSwipeStart = {
+    x: touch.clientX,
+    y: touch.clientY,
+    time: Date.now(),
+  };
+}
+
+function handleDrawerSwipeEnd(event) {
+  if (!drawerSwipeStart) {
+    return;
+  }
+  const touch = event.changedTouches?.[0];
+  const start = drawerSwipeStart;
+  drawerSwipeStart = null;
+  if (!touch) {
+    return;
+  }
+  const deltaX = touch.clientX - start.x;
+  const deltaY = touch.clientY - start.y;
+  const elapsed = Date.now() - start.time;
+  if (Math.abs(deltaX) < 90 || Math.abs(deltaY) > 70 || elapsed > 800) {
+    return;
+  }
+  if (deltaX > 0) {
+    openMobileDrawer();
+  } else {
+    elements.settingsPanel.classList.remove('hidden');
   }
 }
 
@@ -580,7 +696,7 @@ async function apiHeaders(extra = {}) {
 }
 
 function activeConversationId() {
-  return activeConversation?.id || settings.lastActiveConversationId || '';
+  return activeConversation?.id || '';
 }
 
 function composerDraftStorageKey(conversationId = activeConversationId()) {
@@ -629,6 +745,103 @@ function formatConversationDate(value) {
   return date.toLocaleDateString('ko-KR', { month: 'short', day: 'numeric' });
 }
 
+function formatMessageTimestamp(value) {
+  const time = Date.parse(value || '');
+  if (!Number.isFinite(time)) {
+    return '';
+  }
+  const date = new Date(time);
+  const pad = (number) => String(number).padStart(2, '0');
+  return `${pad(date.getMonth() + 1)}월${pad(date.getDate())}일 ${pad(date.getHours())}시${pad(date.getMinutes())}분${pad(date.getSeconds())}초`;
+}
+
+function isConversationArchived(conversation) {
+  return Boolean(conversation?.archived_at);
+}
+
+function visibleConversations() {
+  return conversations.filter((conversation) => showingArchived ? isConversationArchived(conversation) : !isConversationArchived(conversation));
+}
+
+function sortConversations(items) {
+  return [...items].sort((first, second) => Number(Boolean(second.pinned)) - Number(Boolean(first.pinned)) || Date.parse(second.updated_at || second.created_at || '') - Date.parse(first.updated_at || first.created_at || ''));
+}
+
+function updateArchiveToggleButton() {
+  if (!elements.archiveToggleButton) {
+    return;
+  }
+  const label = elements.archiveToggleButton.querySelector('.sidebar-button-label');
+  if (label) {
+    label.textContent = showingArchived ? '보관함 나가기' : '보관함';
+  }
+  elements.archiveToggleButton.setAttribute('aria-pressed', showingArchived ? 'true' : 'false');
+}
+
+function updateComposerAvailability() {
+  const archived = isConversationArchived(activeConversation);
+  const hasConversation = Boolean(activeConversation?.id);
+  const disabled = isSendingMessage || archived || !hasConversation;
+  elements.messageInput.disabled = disabled;
+  elements.includeLocationInput.disabled = disabled;
+  elements.attachButton.disabled = disabled;
+  elements.sendButton.disabled = disabled;
+  elements.sendButton.textContent = isSendingMessage ? '전송 중' : '전송';
+  if (archived) {
+    elements.messageInput.placeholder = '보관된 대화입니다. 대화를 이어가려면 아카이브를 해제하세요.';
+  } else if (!hasConversation) {
+    elements.messageInput.placeholder = '새 대화를 열거나 목록에서 대화를 선택하세요.';
+  } else {
+    elements.messageInput.placeholder = '메시지를 입력하세요';
+  }
+}
+
+function renderHome() {
+  clearRenderedMessages();
+  const home = document.createElement('section');
+  home.className = 'home-screen';
+  const title = document.createElement('h1');
+  title.textContent = 'OpenClaw Web Channel';
+  const description = document.createElement('p');
+  if (!canUseApi()) {
+    description.textContent = 'API 연결이 설정되지 않았습니다. 설정에서 API URL과 API Key를 저장한 뒤 대화를 시작하세요.';
+    const settingsButton = document.createElement('button');
+    settingsButton.type = 'button';
+    settingsButton.textContent = '설정 열기';
+    settingsButton.addEventListener('click', (event) => {
+      event.stopPropagation();
+      elements.settingsPanel.classList.remove('hidden');
+    });
+    home.append(title, description, settingsButton);
+  } else {
+    description.textContent = showingArchived
+      ? '보관함입니다. 보관된 대화를 선택해 읽거나, 메뉴에서 아카이브를 해제할 수 있습니다.'
+      : '새 대화를 열어 대화를 시작하거나, 목록에서 기존 대화를 선택하세요.';
+    const newButton = document.createElement('button');
+    newButton.type = 'button';
+    newButton.textContent = '새 대화 시작';
+    newButton.addEventListener('click', () => startNewConversation().catch((error) => appendMessage('system', error instanceof Error ? error.message : String(error), { persist: false })));
+    home.append(title, description, newButton);
+  }
+  elements.messages.append(home);
+  lastHistoryVersion = null;
+  updateComposerAvailability();
+}
+
+function goHome() {
+  saveComposerDraft();
+  activeConversation = null;
+  settings.lastActiveConversationId = '';
+  saveSettings(settings);
+  clearPendingJob('');
+  selectedAttachments = [];
+  renderAttachmentTray();
+  elements.messageInput.value = '';
+  autoResizeTextarea();
+  renderConversationList();
+  renderHome();
+}
+
 function renderConversationList() {
   if (!elements.conversationList) {
     return;
@@ -641,15 +854,17 @@ function renderConversationList() {
     elements.conversationList.append(empty);
     return;
   }
-  if (conversations.length === 0) {
+  updateArchiveToggleButton();
+  const list = visibleConversations();
+  if (list.length === 0) {
     const empty = document.createElement('p');
     empty.className = 'conversation-empty';
-    empty.textContent = '대화가 없습니다.';
+    empty.textContent = showingArchived ? '보관된 대화가 없습니다.' : '대화가 없습니다.';
     elements.conversationList.append(empty);
     return;
   }
   const activeId = activeConversationId();
-  for (const conversation of conversations) {
+  for (const conversation of list) {
     const item = document.createElement('div');
     item.className = `conversation-item${conversation.id === activeId ? ' active' : ''}`;
     item.dataset.conversationId = conversation.id;
@@ -661,7 +876,15 @@ function renderConversationList() {
 
     const title = document.createElement('span');
     title.className = 'conversation-title';
-    title.textContent = conversationTitle(conversation);
+    if (conversation.pinned) {
+      const pin = document.createElement('span');
+      pin.className = 'conversation-pin-icon';
+      pin.setAttribute('aria-label', '상단 고정됨');
+      pin.textContent = '⌖';
+      title.append(pin, document.createTextNode(conversationTitle(conversation)));
+    } else {
+      title.textContent = conversationTitle(conversation);
+    }
     const meta = document.createElement('span');
     meta.className = 'conversation-meta';
     meta.textContent = formatConversationDate(conversation.updated_at || conversation.created_at);
@@ -683,6 +906,24 @@ function renderConversationList() {
 
     const menu = document.createElement('div');
     menu.className = `conversation-menu${openConversationMenuId === conversation.id ? '' : ' hidden'}`;
+    const pinButton = document.createElement('button');
+    pinButton.type = 'button';
+    pinButton.textContent = conversation.pinned ? '상단고정 해제' : '상단고정';
+    pinButton.addEventListener('click', async (event) => {
+      event.stopPropagation();
+      openConversationMenuId = null;
+      renderConversationList();
+      await toggleConversationPinned(conversation.id);
+    });
+    const archiveButton = document.createElement('button');
+    archiveButton.type = 'button';
+    archiveButton.textContent = isConversationArchived(conversation) ? '아카이브 해제' : '아카이브';
+    archiveButton.addEventListener('click', async (event) => {
+      event.stopPropagation();
+      openConversationMenuId = null;
+      renderConversationList();
+      await toggleConversationArchived(conversation.id);
+    });
     const renameButton = document.createElement('button');
     renameButton.type = 'button';
     renameButton.textContent = '이름 변경';
@@ -702,7 +943,7 @@ function renderConversationList() {
       renderConversationList();
       await deleteConversation(conversation.id);
     });
-    menu.append(renameButton, deleteButton);
+    menu.append(pinButton, archiveButton, renameButton, deleteButton);
     menuWrap.append(menuButton, menu);
 
     item.append(selectButton, menuWrap);
@@ -716,7 +957,7 @@ async function refreshConversations() {
     renderConversationList();
     return conversations;
   }
-  conversations = await fetchConversations();
+  conversations = sortConversations(await fetchConversations());
   renderConversationList();
   return conversations;
 }
@@ -737,13 +978,14 @@ async function selectConversation(conversationId) {
   clearPendingJob();
   renderConversationList();
   restoreComposerDraft(conversation.id);
+  updateComposerAvailability();
   closeMobileDrawer();
   await renderHistory({ scrollToLatest: true });
   await resumePendingJobIfNeeded();
 }
 
 async function fetchConversations() {
-  const response = await fetch(apiUrl('/v1/conversations'), {
+  const response = await fetch(apiUrl('/v1/conversations', { include_archived: 1 }), {
     headers: await historyHeaders(),
   });
   if (!response.ok) {
@@ -766,17 +1008,25 @@ async function createConversation(title = '새 대화') {
   return body.conversation;
 }
 
-async function updateConversationTitle(conversationId, title) {
+async function patchConversation(conversationId, patch) {
   const response = await fetch(apiUrl(`/v1/conversations/${encodeURIComponent(conversationId)}`), {
     method: 'PATCH',
     headers: await apiHeaders({ 'content-type': 'application/json' }),
-    body: JSON.stringify({ title }),
+    body: JSON.stringify(patch),
   });
   const body = await response.json().catch(() => null);
   if (!response.ok) {
-    throw new Error(body?.error?.message || `대화 이름 변경을 실패했습니다: HTTP ${response.status}`);
+    throw new Error(body?.error?.message || `대화 수정을 실패했습니다: HTTP ${response.status}`);
   }
   return body.conversation;
+}
+
+async function updateConversationTitle(conversationId, title) {
+  try {
+    return await patchConversation(conversationId, { title });
+  } catch (error) {
+    throw new Error(error instanceof Error ? error.message.replace('대화 수정을', '대화 이름 변경을') : String(error));
+  }
 }
 
 async function destroyConversation(conversationId) {
@@ -822,14 +1072,30 @@ function openRenameDialog(currentTitle) {
     const cleanup = () => {
       elements.conversationRenameConfirm?.removeEventListener('click', onConfirm);
       elements.conversationRenameCancel?.removeEventListener('click', onCancel);
+      elements.conversationRenameInput.removeEventListener('keydown', onInputKeydown);
       dialog.removeEventListener('cancel', onCancel);
       dialog.removeEventListener('close', onClose);
     };
     const onConfirm = () => settle(elements.conversationRenameInput.value.trim());
     const onCancel = () => settle(null);
     const onClose = () => settle(null);
+    const onInputKeydown = (event) => {
+      if (event.isComposing || event.keyCode === 229) {
+        return;
+      }
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        event.stopPropagation();
+        onConfirm();
+      } else if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
+        onCancel();
+      }
+    };
     elements.conversationRenameConfirm?.addEventListener('click', onConfirm);
     elements.conversationRenameCancel?.addEventListener('click', onCancel);
+    elements.conversationRenameInput.addEventListener('keydown', onInputKeydown);
     dialog.addEventListener('cancel', onCancel);
     dialog.addEventListener('close', onClose);
     dialog.showModal?.();
@@ -874,6 +1140,45 @@ function openDeleteDialog(title) {
   });
 }
 
+async function toggleConversationPinned(conversationId) {
+  const conversation = conversations.find((item) => item.id === conversationId);
+  if (!conversation) {
+    return;
+  }
+  try {
+    const updated = await patchConversation(conversation.id, { pinned: !conversation.pinned });
+    conversations = sortConversations(conversations.map((item) => item.id === updated.id ? updated : item));
+    if (activeConversation?.id === updated.id) {
+      activeConversation = updated;
+    }
+    renderConversationList();
+    appendMessage('system', updated.pinned ? '대화를 상단에 고정했습니다.' : '대화 상단고정을 해제했습니다.', { persist: false });
+  } catch (error) {
+    appendMessage('system', error instanceof Error ? error.message : String(error), { persist: false });
+  }
+}
+
+async function toggleConversationArchived(conversationId) {
+  const conversation = conversations.find((item) => item.id === conversationId);
+  if (!conversation) {
+    return;
+  }
+  const shouldArchive = !isConversationArchived(conversation);
+  try {
+    const updated = await patchConversation(conversation.id, { archived: shouldArchive });
+    conversations = sortConversations(conversations.map((item) => item.id === updated.id ? updated : item));
+    if (activeConversation?.id === updated.id) {
+      activeConversation = updated;
+      goHome();
+      return;
+    }
+    renderConversationList();
+    appendMessage('system', shouldArchive ? '대화를 보관함으로 이동했습니다.' : '대화 아카이브를 해제했습니다.', { persist: false });
+  } catch (error) {
+    appendMessage('system', error instanceof Error ? error.message : String(error), { persist: false });
+  }
+}
+
 async function renameConversation(conversationId) {
   const conversation = conversations.find((item) => item.id === conversationId);
   if (!conversation) {
@@ -910,26 +1215,12 @@ async function deleteConversation(conversationId) {
     clearComposerDraft(conversation.id);
     conversations = conversations.filter((item) => item.id !== conversation.id);
     if (activeConversation?.id === conversation.id) {
-      activeConversation = conversations[0] || null;
-      settings.lastActiveConversationId = activeConversation?.id || '';
-      saveSettings(settings);
-      lastHistoryVersion = null;
-      clearPendingJob();
-      clearRenderedMessages();
-      if (activeConversation) {
-        restoreComposerDraft(activeConversation.id);
-        await renderHistory({ scrollToLatest: true });
-      } else if (canUseApi()) {
-        activeConversation = await createConversation('새 대화');
-        conversations = [activeConversation];
-        settings.lastActiveConversationId = activeConversation.id;
-        saveSettings(settings);
-        restoreComposerDraft(activeConversation.id);
-        await renderHistory({ scrollToLatest: true });
-      }
+      goHome();
+      showToast('대화를 삭제했습니다.', { kind: 'success' });
+      return;
     }
     renderConversationList();
-    appendMessage('system', '대화를 삭제했습니다.', { persist: false });
+    showToast('대화를 삭제했습니다.', { kind: 'success' });
   } catch (error) {
     appendMessage('system', error instanceof Error ? error.message : String(error), { persist: false });
   }
@@ -940,11 +1231,8 @@ async function ensureActiveConversation() {
     return activeConversation;
   }
   assertValidApiKey(settings.apiKey);
-  conversations = await fetchConversations();
-  const preferred = settings.lastActiveConversationId
-    ? conversations.find((conversation) => conversation.id === settings.lastActiveConversationId)
-    : null;
-  activeConversation = preferred || conversations[0] || await createConversation('새 대화');
+  conversations = sortConversations(await fetchConversations());
+  activeConversation = await createConversation('새 대화');
   settings.lastActiveConversationId = activeConversation.id;
   if (!conversations.some((conversation) => conversation.id === activeConversation.id)) {
     conversations = [activeConversation, ...conversations];
@@ -957,6 +1245,8 @@ async function ensureActiveConversation() {
 
 async function startNewConversation() {
   saveComposerDraft();
+  showingArchived = false;
+  updateArchiveToggleButton();
   activeConversation = await createConversation('새 대화');
   settings.lastActiveConversationId = activeConversation.id;
   conversations = [activeConversation, ...conversations.filter((conversation) => conversation.id !== activeConversation.id)];
@@ -966,6 +1256,7 @@ async function startNewConversation() {
   clearRenderedMessages();
   renderConversationList();
   restoreComposerDraft(activeConversation.id);
+  updateComposerAvailability();
   await renderHistory({ scrollToLatest: true });
   closeMobileDrawer();
   return activeConversation;
@@ -975,7 +1266,6 @@ function setFloatingActionsExpanded(expanded) {
   floatingActionsExpanded = expanded;
   elements.floatingActionPanel?.classList.toggle('hidden', !expanded);
   if (elements.floatingActionToggle) {
-    elements.floatingActionToggle.textContent = expanded ? '⌄' : '⌃';
     elements.floatingActionToggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
     elements.floatingActionToggle.setAttribute('aria-label', expanded ? '빠른 작업 닫기' : '빠른 작업 열기');
     elements.floatingActionToggle.title = expanded ? '빠른 작업 닫기' : '빠른 작업';
@@ -1056,13 +1346,15 @@ async function continueInNewSession() {
       savePendingJob({ job_id: response.job_id, startedAt: Date.now() }, conversationId);
       setSending(false);
       setStatus('새 세션을 초기화하는 중입니다...');
+      lastHistoryVersion = null;
       await refreshHistoryIfChanged();
+      ensurePendingJobBubble(response.job_id, conversationId);
       let receivedStreamingToken = false;
       const job = await waitForJob(response.job_id, (jobUpdate) => {
         if (!isActiveConversation(conversationId)) {
           return;
         }
-        if (!receivedStreamingToken || jobUpdate.state === 'completed' || jobUpdate.state === 'failed') {
+        if (!receivedStreamingToken || isTerminalJobState(jobUpdate.state)) {
           refreshHistoryIfChanged();
         }
       }, conversationId, (token) => {
@@ -1074,6 +1366,8 @@ async function continueInNewSession() {
       }
       if (job.state === 'failed') {
         setStatus(job.error || '새 세션 초기화 응답이 실패했습니다.');
+      } else if (job.state === 'cancelled') {
+        setStatus('새 세션 초기화 요청이 취소되었습니다.');
       } else {
         setStatus('새 세션으로 이어갈 준비가 됐습니다.');
       }
@@ -1118,6 +1412,11 @@ async function fetchHistoryMeta() {
 }
 
 async function renderHistory(options = {}) {
+  if (!activeConversation?.id) {
+    renderHome();
+    return;
+  }
+  updateComposerAvailability();
   const { scrollToLatest = false } = options;
   const hadRenderedMessages = elements.messages.children.length > 0;
   const shouldFollow = isNearBottom();
@@ -1131,13 +1430,13 @@ async function renderHistory(options = {}) {
   try {
     const history = await fetchHistory();
     if (history.length === 0) {
-      appendMessage('system', 'OpenClaw Web Channel MVP입니다. 현재위치 포함을 켜면 전송 시 GPS 좌표가 메시지에 붙습니다.', { persist: false });
+      appendMessage('system', '📌 TIP: 채팅에 "여기"가 포함되거나, 현재위치 포함을 켜면 전송 시 GPS 좌표가 메시지에 붙습니다.', { persist: false });
       return;
     }
 
     for (const item of history) {
       if (typeof item?.role === 'string' && typeof item?.text === 'string') {
-        appendMessage(item.role, item.text, { id: item.id, persist: false, autoScroll: false, suppressScrollButton: true, mediaRefs: mediaRefsFromHistoryAttachments(item.attachments), pending: isPendingHistoryMessage(item) });
+        appendMessage(item.role, item.text, { id: item.id, savedAt: item.savedAt, completedAt: item.completedAt, persist: false, autoScroll: false, suppressScrollButton: true, mediaRefs: mediaRefsFromHistoryAttachments(item.attachments), pending: isPendingHistoryMessage(item) });
       }
     }
     if (scrollToLatest || shouldFollow) {
@@ -1213,6 +1512,72 @@ function copyTextToClipboard(text) {
   return copied ? Promise.resolve() : Promise.reject(new Error('복사하지 못했습니다.'));
 }
 
+function isMarkdownTableRow(line) {
+  const trimmed = line.trim();
+  return trimmed.startsWith('|') && trimmed.endsWith('|') && trimmed.slice(1, -1).includes('|');
+}
+
+function isMarkdownTableSeparator(line) {
+  if (!isMarkdownTableRow(line)) {
+    return false;
+  }
+  return splitMarkdownTableRow(line).every((cell) => /^:?-{3,}:?$/.test(cell.trim()));
+}
+
+function splitMarkdownTableRow(line) {
+  return line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map((cell) => cell.trim());
+}
+
+function tableAlignments(separatorLine) {
+  return splitMarkdownTableRow(separatorLine).map((cell) => {
+    const trimmed = cell.trim();
+    if (trimmed.startsWith(':') && trimmed.endsWith(':')) {
+      return 'center';
+    }
+    if (trimmed.endsWith(':')) {
+      return 'right';
+    }
+    return '';
+  });
+}
+
+function appendMarkdownTable(parent, headerCells, separatorLine, bodyRows) {
+  const wrapper = document.createElement('div');
+  wrapper.className = 'markdown-table-wrapper';
+  const table = document.createElement('table');
+  const alignments = tableAlignments(separatorLine);
+
+  const thead = document.createElement('thead');
+  const headerRow = document.createElement('tr');
+  for (const [index, cell] of headerCells.entries()) {
+    const th = document.createElement('th');
+    if (alignments[index]) {
+      th.style.textAlign = alignments[index];
+    }
+    appendInlineMarkdown(th, cell);
+    headerRow.append(th);
+  }
+  thead.append(headerRow);
+  table.append(thead);
+
+  const tbody = document.createElement('tbody');
+  for (const rowCells of bodyRows) {
+    const tr = document.createElement('tr');
+    for (let index = 0; index < headerCells.length; index += 1) {
+      const td = document.createElement('td');
+      if (alignments[index]) {
+        td.style.textAlign = alignments[index];
+      }
+      appendInlineMarkdown(td, rowCells[index] || '');
+      tr.append(td);
+    }
+    tbody.append(tr);
+  }
+  table.append(tbody);
+  wrapper.append(table);
+  parent.append(wrapper);
+}
+
 function appendCodeBlock(parent, codeText, language = '') {
   const wrapper = document.createElement('div');
   wrapper.className = 'code-block';
@@ -1253,7 +1618,8 @@ function appendMarkdown(parent, text) {
   let codeLanguage = '';
   let codeLines = [];
 
-  for (const line of lines) {
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
     const fence = line.match(/^```\s*([^`]*)\s*$/);
     if (fence) {
       list = null;
@@ -1272,6 +1638,21 @@ function appendMarkdown(parent, text) {
 
     if (inCodeBlock) {
       codeLines.push(line);
+      continue;
+    }
+
+    if (isMarkdownTableRow(line) && isMarkdownTableSeparator(lines[index + 1] || '')) {
+      list = null;
+      const headerCells = splitMarkdownTableRow(line);
+      const separatorLine = lines[index + 1];
+      const bodyRows = [];
+      index += 2;
+      while (index < lines.length && isMarkdownTableRow(lines[index])) {
+        bodyRows.push(splitMarkdownTableRow(lines[index]));
+        index += 1;
+      }
+      index -= 1;
+      appendMarkdownTable(parent, headerCells, separatorLine, bodyRows);
       continue;
     }
 
@@ -1328,7 +1709,7 @@ function currentRenderedHistorySignature() {
 }
 
 function historySignature(history) {
-  return history.map((item) => `${item.id || ''}:${item.role}:${item.text}`).join('\n---\n');
+  return history.map((item) => `${item.id || ''}:${item.role}:${item.text}:${item.completedAt || ''}`).join('\n---\n');
 }
 
 function isPendingHistoryMessage(item) {
@@ -1340,7 +1721,7 @@ function isPendingHistoryMessage(item) {
 }
 
 async function refreshHistoryIfChanged() {
-  if (!canUseApi() || document.hidden) {
+  if (!canUseApi() || document.hidden || !activeConversation?.id) {
     return;
   }
 
@@ -1359,11 +1740,14 @@ async function refreshHistoryIfChanged() {
       for (const item of history) {
         if (typeof item?.role === 'string' && typeof item?.text === 'string') {
           appendMessage(item.role, item.text, {
+            id: item.id,
             persist: false,
             autoScroll: false,
             suppressScrollButton: true,
             mediaRefs: mediaRefsFromHistoryAttachments(item.attachments),
             pending: isPendingHistoryMessage(item),
+            savedAt: item.savedAt,
+            completedAt: item.completedAt,
           });
         }
       }
@@ -1799,6 +2183,43 @@ function retryTextForNode(node) {
   return '';
 }
 
+function ensureMessageActions(node) {
+  let actions = node.querySelector(':scope > .message-actions');
+  if (!actions) {
+    actions = document.createElement('div');
+    actions.className = 'message-actions';
+    node.append(actions);
+  }
+  return actions;
+}
+
+function appendCopyAction(node, role, text, options = {}) {
+  if (options.pending || !['user', 'assistant', 'system'].includes(role)) {
+    return;
+  }
+  const copyText = extractMediaRefs(text).text.trim();
+  if (!copyText) {
+    return;
+  }
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'message-copy-button';
+  button.setAttribute('aria-label', '메시지 원문 복사');
+  button.title = '메시지 원문 복사';
+  button.innerHTML = '<svg class="message-copy-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 7.5V5.75A2.75 2.75 0 0 1 10.75 3h6.5A2.75 2.75 0 0 1 20 5.75v8.5A2.75 2.75 0 0 1 17.25 17H15.5"/><path d="M3.75 7h7.5A2.75 2.75 0 0 1 14 9.75v8.5A2.75 2.75 0 0 1 11.25 21h-7.5A2.75 2.75 0 0 1 1 18.25v-8.5A2.75 2.75 0 0 1 3.75 7Z"/></svg>';
+  button.addEventListener('click', async () => {
+    try {
+      await copyTextToClipboard(copyText);
+      button.classList.add('copied');
+      window.setTimeout(() => { button.classList.remove('copied'); }, 900);
+    } catch {
+      button.classList.add('copy-failed');
+      window.setTimeout(() => { button.classList.remove('copy-failed'); }, 900);
+    }
+  });
+  node.append(button);
+}
+
 function appendRetryAction(node, role, text) {
   if (role !== 'system' || !text.startsWith('전송 실패:')) {
     return;
@@ -1807,8 +2228,6 @@ function appendRetryAction(node, role, text) {
   if (!retryText) {
     return;
   }
-  const actions = document.createElement('div');
-  actions.className = 'message-actions';
   const button = document.createElement('button');
   button.type = 'button';
   button.className = 'message-action-button';
@@ -1819,8 +2238,43 @@ function appendRetryAction(node, role, text) {
     autoResizeTextarea();
     elements.messageInput.focus();
   });
-  actions.append(button);
-  node.append(actions);
+  ensureMessageActions(node).append(button);
+}
+
+function appendCancelJobAction(node, role, text, options = {}) {
+  const jobId = node.dataset.messageId;
+  const normalizedRole = String(role || '').split(/\s+/)[0];
+  const rawText = typeof text === 'string' ? text.trim() : '';
+  const looksPending = options.pending || rawText === '응답 대기 중입니다…' || rawText === '응답을 처리 중입니다…' || /^응답을 처리 중입니다\s*\(\d+초\)$/.test(rawText);
+  if (!looksPending || normalizedRole !== 'assistant' || !jobId?.startsWith('job_')) {
+    return;
+  }
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'message-cancel-button';
+  button.textContent = '중지';
+  button.title = '이 응답 작업 중지';
+  button.setAttribute('aria-label', '이 응답 작업 중지');
+  button.addEventListener('click', async () => {
+    const conversationId = activeConversationId();
+    button.disabled = true;
+    button.textContent = '중지 중';
+    setStatus('응답을 중지하는 중입니다...');
+    try {
+      await cancelJob(jobId, conversationId);
+      clearPendingJob(conversationId);
+      await refreshHistoryIfChanged();
+      await refreshConversations().catch(() => {});
+      showToast('응답을 중지했습니다.', { kind: 'success' });
+      setStatus('');
+    } catch (error) {
+      button.disabled = false;
+      button.textContent = '중지';
+      appendMessage('system', error instanceof Error ? error.message : String(error), { persist: false });
+      setStatus('');
+    }
+  });
+  node.append(button);
 }
 
 function renderMessageNode(node, role, text, options = {}) {
@@ -1832,7 +2286,9 @@ function renderMessageNode(node, role, text, options = {}) {
   for (const ref of [...media.refs, ...(node._mediaRefs || [])]) {
     appendMediaRef(node, ref);
   }
+  appendCopyAction(node, role, text, options);
   appendRetryAction(node, role, text);
+  appendCancelJobAction(node, role, text, options);
   if (options.autoScroll === false) {
     if (!wasNearBottom && !options.pending && !options.suppressScrollButton) {
       showScrollToLatestButton();
@@ -1884,6 +2340,10 @@ function appendMessage(role, text, options = {}) {
   if (options.id) {
     node.dataset.messageId = options.id;
   }
+  const timestamp = options.pending ? '' : formatMessageTimestamp(options.completedAt || options.savedAt);
+  if (timestamp && (role === 'user' || role === 'assistant')) {
+    node.dataset.messageTime = timestamp;
+  }
   node._mediaRefs = options.mediaRefs || [];
   renderMessageNode(node, role, text, options);
   appendAttachmentPreview(node, options.files || []);
@@ -1924,14 +2384,11 @@ function startThinkingMessage(options = {}) {
 
 function setSending(isSending) {
   isSendingMessage = isSending;
-  elements.sendButton.disabled = isSending;
-  elements.messageInput.disabled = isSending;
-  elements.includeLocationInput.disabled = isSending;
-  elements.attachButton.disabled = isSending;
+  updateComposerAvailability();
   if (elements.continueNewSessionButton) {
     elements.continueNewSessionButton.disabled = isSending;
   }
-  elements.sendButton.textContent = isSending ? '전송 중' : '전송';
+  updateComposerAvailability();
 }
 
 function isActiveConversation(conversationId) {
@@ -2028,6 +2485,27 @@ function pendingJobStorageKey(conversationId = activeConversationId()) {
 
 function savePendingJob(job, conversationId = activeConversationId()) {
   localStorage.setItem(pendingJobStorageKey(conversationId), JSON.stringify(job));
+  if (isActiveConversation(conversationId)) {
+    ensurePendingJobBubble(job.job_id, conversationId);
+    updateComposerAvailability();
+  }
+}
+
+function ensurePendingJobBubble(jobId, conversationId = activeConversationId()) {
+  if (!jobId || !isActiveConversation(conversationId)) {
+    return null;
+  }
+
+  let node = elements.messages.querySelector(`[data-message-id="${jobId}"]`);
+  if (!node) {
+    return null;
+  }
+
+  if (!node.querySelector(':scope > .message-cancel-button')) {
+    const text = messageTextWithoutAttachmentPreview(node).trim() || '응답 대기 중입니다…';
+    renderMessageNode(node, 'assistant', text, { pending: true, autoScroll: false, suppressScrollButton: true });
+  }
+  return node;
 }
 
 function loadPendingJob(conversationId = activeConversationId()) {
@@ -2041,6 +2519,9 @@ function loadPendingJob(conversationId = activeConversationId()) {
 
 function clearPendingJob(conversationId = activeConversationId()) {
   localStorage.removeItem(pendingJobStorageKey(conversationId));
+  if (isActiveConversation(conversationId)) {
+    updateComposerAvailability();
+  }
 }
 
 async function fetchConversationHistory(conversationId) {
@@ -2065,6 +2546,49 @@ async function fetchJob(jobId, conversationId = activeConversationId()) {
     throw error;
   }
   return body;
+}
+
+async function cancelJob(jobId, conversationId = activeConversationId()) {
+  const response = await fetch(apiUrl(`/v1/jobs/${encodeURIComponent(jobId)}/cancel`, { conversation_id: conversationId }), {
+    method: 'POST',
+    headers: await historyHeaders(),
+  });
+  const body = await response.json().catch(() => null);
+  if (!response.ok) {
+    const error = new Error(body?.error?.message || `Cancel HTTP ${response.status}`);
+    error.status = response.status;
+    throw error;
+  }
+  return body;
+}
+
+async function cancelActiveJob() {
+  const conversationId = activeConversationId();
+  const pendingJob = loadPendingJob(conversationId);
+  if (!pendingJob?.job_id) {
+    return false;
+  }
+  setSending(true);
+  setStatus('응답을 중지하는 중입니다...');
+  try {
+    await cancelJob(pendingJob.job_id, conversationId);
+    clearPendingJob(conversationId);
+    await refreshHistoryIfChanged();
+    await refreshConversations().catch(() => {});
+    showToast('응답을 중지했습니다.', { kind: 'success' });
+    setStatus('');
+  } catch (error) {
+    appendMessage('system', error instanceof Error ? error.message : String(error), { persist: false });
+    setStatus('');
+  } finally {
+    setSending(false);
+  }
+  return true;
+}
+
+
+function isTerminalJobState(state) {
+  return state === 'completed' || state === 'failed' || state === 'cancelled';
 }
 
 function parseSseBlock(block) {
@@ -2151,7 +2675,7 @@ async function waitForJobViaSse(jobId, onTick = () => {}, conversationId = activ
         if (message.event === 'job' && message.data) {
           const job = message.data;
           onTick(job);
-          if (job.state === 'completed' || job.state === 'failed') {
+          if (isTerminalJobState(job.state)) {
             clearPendingJob(conversationId);
             return job;
           }
@@ -2179,8 +2703,14 @@ async function isJobResolvedInHistory(jobId, conversationId = activeConversation
 }
 
 async function waitForJob(jobId, onTick = () => {}, conversationId = activeConversationId(), onToken = () => {}) {
+  ensurePendingJobBubble(jobId, conversationId);
   try {
-    return await waitForJobViaSse(jobId, onTick, conversationId, onToken);
+    return await waitForJobViaSse(jobId, (job) => {
+      if (!isTerminalJobState(job.state)) {
+        ensurePendingJobBubble(jobId, conversationId);
+      }
+      onTick(job);
+    }, conversationId, onToken);
   } catch (error) {
     console.warn('SSE job events unavailable; falling back to polling.', error);
   }
@@ -2193,8 +2723,11 @@ async function waitForJob(jobId, onTick = () => {}, conversationId = activeConve
       const job = await fetchJob(jobId, conversationId);
       transientFailures = 0;
       lastError = null;
+      if (!isTerminalJobState(job.state)) {
+        ensurePendingJobBubble(jobId, conversationId);
+      }
       onTick(job);
-      if (job.state === 'completed' || job.state === 'failed') {
+      if (isTerminalJobState(job.state)) {
         clearPendingJob(conversationId);
         return job;
       }
@@ -2253,6 +2786,15 @@ async function handleSubmit(event) {
     elements.settingsPanel.classList.remove('hidden');
     return;
   }
+  if (!activeConversation?.id) {
+    appendMessage('system', '새 대화를 열거나 목록에서 대화를 선택한 뒤 메시지를 보내주세요.', { persist: false });
+    return;
+  }
+  if (isConversationArchived(activeConversation)) {
+    appendMessage('system', '보관된 대화입니다. 대화를 이어가려면 아카이브를 해제하세요.', { persist: false });
+    updateComposerAvailability();
+    return;
+  }
 
   setSending(true);
   setStatus('메시지를 준비하는 중입니다...');
@@ -2272,7 +2814,7 @@ async function handleSubmit(event) {
     const attachedFiles = [...selectedAttachments];
     const attachments = await buildAttachmentsPayload();
     const displayedUserText = `${outgoingMessage}${attachmentSummary(attachedFiles)}`;
-    appendMessage('user', displayedUserText, { files: attachedFiles });
+    appendMessage('user', displayedUserText, { files: attachedFiles, savedAt: new Date().toISOString() });
     elements.messageInput.value = '';
     clearComposerDraft(conversation.id);
     autoResizeTextarea();
@@ -2293,13 +2835,15 @@ async function handleSubmit(event) {
         if (isActiveConversation(conversationId)) {
           setStatus('서버에서 응답을 처리 중입니다. 앱을 닫아도 작업은 계속됩니다.');
         }
+        lastHistoryVersion = null;
         await refreshHistoryIfChanged();
+        ensurePendingJobBubble(response.job_id, conversationId);
         let receivedStreamingToken = false;
         const job = await waitForJob(response.job_id, (jobUpdate) => {
           if (!isActiveConversation(conversationId)) {
             return;
           }
-          if (!receivedStreamingToken || jobUpdate.state === 'completed' || jobUpdate.state === 'failed') {
+          if (!receivedStreamingToken || isTerminalJobState(jobUpdate.state)) {
             refreshHistoryIfChanged();
           }
         }, conversationId, (token) => {
@@ -2316,7 +2860,7 @@ async function handleSubmit(event) {
           notifyReplyReady();
         }
       } else {
-        appendMessage('assistant', response.reply || '(빈 응답)', { force: true });
+        appendMessage('assistant', response.reply || '(빈 응답)', { force: true, savedAt: new Date().toISOString() });
       }
       setStatus('');
       window.setTimeout(refreshHistoryIfChanged, 800);
@@ -2404,10 +2948,15 @@ async function healthCheck() {
   }
 }
 
+function updateClearMessageInputButton() {
+  elements.clearMessageInputButton?.classList.toggle('hidden', elements.messageInput.value.length === 0);
+}
+
 function autoResizeTextarea() {
   elements.messageInput.style.height = 'auto';
   const minHeight = Number.parseFloat(getComputedStyle(elements.messageInput).minHeight) || 74;
   elements.messageInput.style.height = `${Math.max(minHeight, Math.min(elements.messageInput.scrollHeight, 150))}px`;
+  updateClearMessageInputButton();
 }
 
 function slashCommandQuery() {
@@ -2486,8 +3035,8 @@ function acceptSelectedSlashCommand() {
 }
 
 applySettingsToForm();
-renderConversationList();
-renderHistory({ scrollToLatest: true }).then(() => resumePendingJobIfNeeded()).catch(() => {});
+renderHome();
+refreshConversations().catch((error) => appendMessage('system', error instanceof Error ? error.message : String(error), { persist: false }));
 startHistoryPolling();
 
 function toggleSettingsPanel() {
@@ -2501,6 +3050,8 @@ elements.sidebarSettingsButton?.addEventListener('click', () => {
 });
 elements.mobileMenuButton?.addEventListener('click', toggleMobileDrawer);
 elements.mobileDrawerBackdrop?.addEventListener('click', closeMobileDrawer);
+elements.chatPanel?.addEventListener('touchstart', handleDrawerSwipeStart, { passive: true });
+elements.chatPanel?.addEventListener('touchend', handleDrawerSwipeEnd, { passive: true });
 
 document.addEventListener('click', (event) => {
   const target = event.target;
@@ -2542,7 +3093,8 @@ elements.saveSettingsButton.addEventListener('click', () => {
     settings.lastActiveConversationId = '';
     saveSettings(settings);
     lastHistoryVersion = null;
-    renderHistory();
+    renderHome();
+    refreshConversations().catch(() => {});
   }
   appendMessage('system', '설정을 저장했습니다.');
   elements.settingsPanel.classList.add('hidden');
@@ -2564,6 +3116,12 @@ elements.newConversationButton?.addEventListener('click', async () => {
   } catch (error) {
     appendMessage('system', error instanceof Error ? error.message : String(error), { persist: false });
   }
+});
+
+elements.archiveToggleButton?.addEventListener('click', () => {
+  showingArchived = !showingArchived;
+  openConversationMenuId = null;
+  goHome();
 });
 
 elements.clearHistoryButton.addEventListener('click', async () => {
@@ -2632,6 +3190,12 @@ document.addEventListener('keydown', (event) => {
   }
 });
 elements.attachButton.addEventListener('click', () => elements.attachmentInput.click());
+elements.clearMessageInputButton?.addEventListener('click', () => {
+  elements.messageInput.focus();
+  document.execCommand('selectAll');
+  document.execCommand('delete');
+  elements.messageInput.dispatchEvent(new Event('input', { bubbles: true }));
+});
 elements.attachmentInput.addEventListener('change', () => {
   try {
     addAttachmentFilesSafely(elements.attachmentInput.files || [], '파일 선택');

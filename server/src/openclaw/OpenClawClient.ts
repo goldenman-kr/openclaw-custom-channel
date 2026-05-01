@@ -8,6 +8,7 @@ export interface OpenClawClientInput {
   attachments?: MessageAttachment[];
   metadata?: MessageRequestMetadata;
   callbacks?: ChatRuntimeCallbacks;
+  abortSignal?: AbortSignal;
 }
 
 export interface OpenClawClientResult {

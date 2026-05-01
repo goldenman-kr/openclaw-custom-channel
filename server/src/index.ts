@@ -166,8 +166,16 @@ function isAuthorized(request: IncomingMessage): boolean {
   return typeof tokenOrError === "string" && validApiKeys.has(tokenOrError);
 }
 
-function updateJob(job: MessageJob, patch: Partial<Pick<MessageJob, "state" | "error">>): void {
-  Object.assign(job, patch, { updatedAt: new Date().toISOString() });
+function updateJob(job: MessageJob, patch: { state?: MessageJob["state"]; error?: string | null }): void {
+  if (patch.state) {
+    job.state = patch.state;
+  }
+  if (patch.error === null) {
+    delete job.error;
+  } else if (patch.error !== undefined) {
+    job.error = patch.error;
+  }
+  job.updatedAt = new Date().toISOString();
   jobs.set(job.id, job);
   if (job.conversationId) {
     chatStore.updateJob(job.id, {
@@ -190,6 +198,31 @@ function jobForRequest(jobId: string, request: IncomingMessage, url: URL): JobEv
     return job;
   }
   return null;
+}
+
+function cancelJobForRequest(jobId: string, request: IncomingMessage, url: URL): JobEventRecord | null {
+  const visibleJob = jobForRequest(jobId, request, url);
+  if (!visibleJob || ["completed", "failed", "cancelled"].includes(visibleJob.state)) {
+    return null;
+  }
+
+  const memoryJob = jobs.get(jobId);
+  if (memoryJob) {
+    messageJobRunner.cancel(memoryJob);
+    return memoryJob;
+  }
+
+  const storedJob = chatStore.getJob(jobId);
+  if (!storedJob) {
+    return null;
+  }
+  const now = new Date().toISOString();
+  const cancelled = chatStore.updateJob(jobId, { state: "cancelled", error: null, now });
+  chatStore.updateMessage(jobId, { role: "system", text: "요청이 취소되었습니다." });
+  if (cancelled) {
+    jobEventPublisher.publishJob(cancelled);
+  }
+  return cancelled;
 }
 
 const jobEventPublisher = new SseJobEventPublisher({
@@ -271,6 +304,7 @@ const server = createServer(async (request, response) => {
     sendJson,
     makeErrorResponse,
     getJob: jobForRequest,
+    cancelJob: cancelJobForRequest,
     eventPublisher: jobEventPublisher,
   })) {
     return;

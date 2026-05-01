@@ -36,6 +36,7 @@ export function chatMessageToHistoryDto(message: ChatMessageRecord) {
     role: message.role,
     text: message.text,
     savedAt: message.createdAt,
+    ...(message.completedAt ? { completedAt: message.completedAt } : {}),
     ...(message.attachments && message.attachments.length > 0 ? { attachments: message.attachments } : {}),
   };
 }
@@ -79,6 +80,13 @@ function pinnedFromPayload(payload: unknown): boolean | undefined {
     return undefined;
   }
   return Boolean((payload as { pinned?: unknown }).pinned);
+}
+
+function archivedAtFromPayload(payload: unknown): string | null | undefined {
+  if (typeof payload !== "object" || payload === null || !("archived" in payload)) {
+    return undefined;
+  }
+  return Boolean((payload as { archived?: unknown }).archived) ? new Date().toISOString() : null;
 }
 
 export async function handleConversationRoute(
@@ -145,6 +153,7 @@ export async function handleConversationRoute(
       const updated = deps.conversationStore.updateConversation(conversation.id, {
         title: titleFromPayload(payload),
         pinned: pinnedFromPayload(payload),
+        archivedAt: archivedAtFromPayload(payload),
       });
       deps.sendJson(response, 200, { conversation: conversationToDto(updated ?? conversation) });
       return true;

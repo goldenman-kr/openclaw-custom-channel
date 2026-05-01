@@ -22,6 +22,21 @@
 - 모바일에서는 플로팅 메뉴 버튼을 통해 채팅 목록과 설정 버튼을 표시한다.
 - 응답 스트리밍 구조 적용 가능성을 검토하되, 초기 구현과 분리한다.
 
+향후 확장 메모 — 멀티유저/권한 분리:
+
+- 현재는 Eddy 1인 사용을 전제로 하므로 API key는 “사용자 계정”이 아니라 공용 관리자 접근 토큰으로 유지한다.
+- API key를 단순히 여러 개 발급하는 것만으로는 사용자별 채팅그룹이 분리되지 않는다. 현재 구조에서는 유효한 key가 모두 같은 `conversations` DB를 본다.
+- 다른 사용자를 고려하는 경우에는 단순 key 추가가 아니라 `users`/`owner_id` 기반의 멀티유저 설계가 필요하다.
+- 가능성 차원에서는 오브스 가이드봇처럼 사용자별 설정을 둘 수 있다:
+  - 사용자별 기본/허용 모델(`default_model`, `allowed_models`)
+  - 사용자별 agent 또는 persona/system prompt
+  - 사용자별 허용 기능/도구/명령(`/memory`, 파일 첨부, 이미지 생성, 삭제 등)
+  - 사용자별 quota/rate limit/audit log
+  - 사용자별 conversation/history/session 격리
+- 멀티유저 구현 시 모든 conversation/history/message/job API는 인증된 사용자 identity를 기준으로 필터링해야 한다.
+- 안정성/보안을 제대로 보려면 작은 SaaS 백엔드처럼 권한 모델, 감사로그, 삭제/초기화 제한, 세션/workspace 격리를 별도 설계한다.
+- 따라서 현재 브랜치에서는 구현하지 않고, 향후 확장 요구가 명확해질 때 별도 계획으로 분리한다.
+
 ## 2. OpenClaw 기술 구조 검토
 
 OpenClaw는 `openclaw agent --session-id <id>` 형태로 명시적 세션 ID를 받을 수 있다.
@@ -416,6 +431,28 @@ GET /v1/jobs/:id/events
 - 2차: SSE로 job 상태와 최종 응답 이벤트 제공
 - 3차: OpenClaw에서 token stream 접근이 가능해질 때 token-level streaming 검토
 - WebSocket은 멀티유저/협업/실시간 sync가 필요해질 때 재검토
+
+### 7.5 향후 확장 메모 — 응답 생성 취소/중단
+
+사용자가 질의를 보낸 뒤 모델이 답변을 생성 중일 때 “취소/중지”할 수 있는 기능은 향후 검토한다.
+
+중요 원칙:
+
+- 단순히 프론트엔드의 polling/SSE 표시만 멈추는 것은 의미가 부족하다.
+- 실제 모델/OpenClaw 실행까지 중단되어야 같은 conversation에서 바로 다음 질의를 안정적으로 보낼 수 있다.
+- 따라서 구현 시 `UI 중지 버튼 → bridge job cancel → OpenClaw/Gateway request abort → provider/model 실행 중단 시도` 흐름을 하나로 연결해야 한다.
+
+요구사항 초안:
+
+- 전송 후 send 버튼 또는 별도 버튼을 “중지” 상태로 전환한다.
+- 사용자가 중지를 누르면 현재 active conversation의 active job만 취소한다.
+- 서버는 job 상태를 `cancelled`로 저장하고, pending assistant placeholder를 “응답 취소됨” 또는 partial answer 상태로 마무리한다.
+- `GatewayOpenAiOpenClawClient`의 timeout용 `AbortController`를 외부 cancel signal과 연결해 streaming fetch 자체를 abort할 수 있게 한다.
+- CLI transport 경로를 쓸 경우 child process에 `SIGTERM`을 보내고, 필요 시 제한 시간 후 강제 종료하는 별도 취소 경로가 필요하다.
+- provider/Gateway가 이미 받은 요청을 완전히 중단하지 못할 수도 있으므로, UX에는 “취소 요청됨/중단됨” 상태를 구분할 수 있게 한다.
+- 취소 후 같은 conversation에서 다음 메시지를 보낼 수 있어야 하며, 이전 job의 늦은 결과가 history에 덮어쓰이지 않도록 job id 검증이 필요하다.
+
+현재 브랜치에서는 구현하지 않고 plan에만 남긴다.
 
 ## 8. 검증 계획
 
