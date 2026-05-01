@@ -33,6 +33,32 @@ test("creates users and verifies password-backed sessions", () => {
   }
 });
 
+test("stores workspace scopes for users", () => {
+  const dir = tempDir();
+  const store = new AuthStore(join(dir, "auth.sqlite"));
+  try {
+    const user = store.createUser({ username: "worker", password: "worker password", role: "user" });
+    store.upsertWorkspaceScope({
+      userId: user.id,
+      workspaceRoot: "/workspace",
+      userDir: "/workspace/users/worker",
+      commonDir: "/workspace/common",
+      commonWritable: false,
+    });
+
+    assert.deepEqual(store.getWorkspaceScope(user.id), {
+      userId: user.id,
+      workspaceRoot: "/workspace",
+      userDir: "/workspace/users/worker",
+      commonDir: "/workspace/common",
+      commonWritable: false,
+    });
+  } finally {
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("ensureUser creates or updates an enabled login user", () => {
   const dir = tempDir();
   const store = new AuthStore(join(dir, "auth.sqlite"));

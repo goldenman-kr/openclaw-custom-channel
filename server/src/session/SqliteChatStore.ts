@@ -62,6 +62,10 @@ export interface MessageStore {
   clearMessages(conversationId: string, input?: { now?: string }): number;
 }
 
+export interface AttachmentVisibilityStore {
+  isAttachmentPathVisibleToOwner(path: string, ownerId: string): boolean;
+}
+
 export interface JobStore {
   createJob(input: { conversationId: string; id?: string; state?: JobState; error?: string; now?: string }): JobRecord;
   getJob(id: string): JobRecord | null;
@@ -330,6 +334,20 @@ export class SqliteChatStore implements ConversationStore, MessageStore, JobStor
       .prepare("UPDATE jobs SET state = @state, error = @error, updated_at = @updatedAt WHERE id = @id")
       .run({ id, state: patch.state ?? current.state, error: patch.error === undefined ? current.error ?? null : patch.error, updatedAt: now });
     return this.getJob(id);
+  }
+
+  isAttachmentPathVisibleToOwner(path: string, ownerId: string): boolean {
+    const row = this.db
+      .prepare(
+        `SELECT attachments.id
+         FROM attachments
+         JOIN messages ON messages.id = attachments.message_id
+         JOIN conversations ON conversations.id = messages.conversation_id
+         WHERE attachments.path = ? AND conversations.owner_id = ?
+         LIMIT 1`,
+      )
+      .get(path, ownerId) as { id: string } | undefined;
+    return Boolean(row);
   }
 
   private migrate(): void {
