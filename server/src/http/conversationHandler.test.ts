@@ -7,11 +7,13 @@ import type { ConversationStore } from "../session/SqliteChatStore.js";
 
 let capturedSessionId = "";
 let capturedRuntimeWorkspaceUserDir = "";
+let capturedUserId = "";
 
 const fakeChatRuntime: ChatRuntime = {
   async sendMessage(input) {
     capturedSessionId = input.sessionId;
     capturedRuntimeWorkspaceUserDir = input.runtimeWorkspace?.userDir ?? "";
+    capturedUserId = input.userId ?? "";
     return { reply: `reply:${input.message}` };
   },
 };
@@ -65,6 +67,21 @@ test("uses conversation openclawSessionId when conversation_id is provided", asy
   }
 });
 
+test("accepts cookie auth context without Authorization header", async () => {
+  capturedUserId = "";
+  const result = await handlePostMessage(
+    {
+      ...deps(),
+      authContext: { user: { id: "usr_soprano", username: "soprano", displayName: "soprano", role: "user" }, source: "cookie" },
+    },
+    {},
+    { message: "hello" },
+  );
+
+  assert.equal(result.statusCode, 200);
+  assert.equal(capturedUserId, "usr_soprano");
+});
+
 test("passes runtime workspace to chat runtime", async () => {
   capturedRuntimeWorkspaceUserDir = "";
   const result = await handlePostMessage(
@@ -72,10 +89,13 @@ test("passes runtime workspace to chat runtime", async () => {
       ...deps(),
       runtimeWorkspace: {
         userId: "usr_alice",
+        username: "alice",
+        displayName: "Alice",
         workspaceRoot: "/tmp/workspaces",
         userDir: "/tmp/workspaces/alice",
         commonDir: "/tmp/workspaces/common",
         commonWritable: false,
+        identityFile: "/tmp/workspaces/alice/WEBCHAT_USER.md",
       },
     },
     { authorization: "Bearer test-key" },

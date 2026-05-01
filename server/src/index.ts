@@ -15,6 +15,7 @@ import { handleJobRoute } from "./http/jobRoutes.js";
 import { handleMessageRoute } from "./http/messageRoutes.js";
 import { handleMediaRoute, handleStaticRoute } from "./http/staticRoutes.js";
 import { createOpenClawClient } from "./openclaw/createOpenClawClient.js";
+import type { RuntimeWorkspaceScope } from "./openclaw/OpenClawClient.js";
 import { deleteOpenClawSession } from "./openclaw/SessionCleaner.js";
 import type { MessageJob } from "./runtime/MessageJob.js";
 import { MessageJobRunner } from "./runtime/MessageJobRunner.js";
@@ -227,22 +228,52 @@ function normalizeMediaPath(rawPath: string): string {
   return rawPath;
 }
 
-async function workspaceScopeForAuth(auth: AuthContext): Promise<WorkspaceScopeRecord> {
+async function ensureWorkspaceIdentityFile(scope: RuntimeWorkspaceScope): Promise<string> {
+  const identityFile = join(scope.userDir, "WEBCHAT_USER.md");
+  const displayName = scope.displayName?.trim() || scope.username || scope.userId;
+  const username = scope.username?.trim() || scope.userId;
+  const content = [
+    "# Webchat User Identity",
+    "",
+    `- Current webchat login user id: ${scope.userId}`,
+    `- Current webchat username: ${username}`,
+    `- Current webchat display name: ${displayName}`,
+    "- This user is not Eddy unless the username/display name explicitly says Eddy.",
+    "- Do not apply Eddy-specific memories, preferences, private details, or identity assumptions to this user.",
+    "- Treat this directory as this user's private workspace context.",
+    "- If new durable preferences or facts are learned for this user, store them under this user workspace, not the global Eddy workspace.",
+    "",
+  ].join("\n");
+  await writeFile(identityFile, content, { flag: "wx" }).catch((error: NodeJS.ErrnoException) => {
+    if (error.code !== "EEXIST") {
+      throw error;
+    }
+  });
+  return identityFile;
+}
+
+async function workspaceScopeForAuth(auth: AuthContext): Promise<RuntimeWorkspaceScope> {
   const existing = authStore.getWorkspaceScope(auth.user.id);
   if (existing) {
-    return existing;
+    const scope = { ...existing, username: auth.user.username, displayName: auth.user.displayName, identityFile: join(existing.userDir, "WEBCHAT_USER.md") };
+    await ensureWorkspaceIdentityFile(scope);
+    return scope;
   }
   const userDir = resolve(workspaceRoot, safeFileName(auth.user.username, auth.user.id));
   await mkdir(userDir, { recursive: true });
   await mkdir(workspaceCommonDir, { recursive: true });
   const scope = {
     userId: auth.user.id,
+    username: auth.user.username,
+    displayName: auth.user.displayName,
     workspaceRoot,
     userDir,
     commonDir: workspaceCommonDir,
     commonWritable: workspaceCommonWritable,
+    identityFile: join(userDir, "WEBCHAT_USER.md"),
   };
   authStore.upsertWorkspaceScope(scope);
+  await ensureWorkspaceIdentityFile(scope);
   return scope;
 }
 
@@ -265,6 +296,18 @@ async function resolveAuthorizedMediaPath(rawPath: string, auth: AuthContext): P
   return null;
 }
 
+function publicJob(job: MessageJob): JobEventRecord {
+  return {
+    id: job.id,
+    sessionId: job.sessionId,
+    ...(job.conversationId ? { conversationId: job.conversationId } : {}),
+    state: job.state,
+    createdAt: job.createdAt,
+    updatedAt: job.updatedAt,
+    ...(job.error ? { error: job.error } : {}),
+  } as JobEventRecord;
+}
+
 function updateJob(job: MessageJob, patch: { state?: MessageJob["state"]; error?: string | null }): void {
   if (patch.state) {
     job.state = patch.state;
@@ -283,7 +326,7 @@ function updateJob(job: MessageJob, patch: { state?: MessageJob["state"]; error?
       now: job.updatedAt,
     });
   }
-  jobEventPublisher.publishJob(job);
+  jobEventPublisher.publishJob(publicJob(job));
 }
 
 function jobForRequest(jobId: string, request: IncomingMessage, url: URL): JobEventRecord | null {
@@ -298,11 +341,11 @@ function jobForRequest(jobId: string, request: IncomingMessage, url: URL): JobEv
       return null;
     }
     const conversation = chatStore.getConversation(job.conversationId);
-    return conversation && isConversationVisibleToAuth(conversation, auth) ? job : null;
+    return conversation && isConversationVisibleToAuth(conversation, auth) ? publicJob(job as MessageJob) : null;
   }
   const sessionId = sessionIdFromHeaders(request);
   if (job && "sessionId" in job && job.sessionId === sessionId) {
-    return job;
+    return publicJob(job as MessageJob);
   }
   return null;
 }
@@ -316,7 +359,7 @@ function cancelJobForRequest(jobId: string, request: IncomingMessage, url: URL):
   const memoryJob = jobs.get(jobId);
   if (memoryJob) {
     messageJobRunner.cancel(memoryJob);
-    return memoryJob;
+    return publicJob(memoryJob);
   }
 
   const storedJob = chatStore.getJob(jobId);

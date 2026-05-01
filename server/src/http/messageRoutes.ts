@@ -109,13 +109,29 @@ export async function handleMessageRoute(
   try {
     const payload = (await deps.readJsonBody(request)) as MessageRequestDto;
 
+    const auth = deps.getAuthContext(request);
+
     if (getSingleHeader(request.headers, "x-openclaw-sync") === "1") {
+      const validationError = validateAuthorizedMessage(request.headers, payload, deps.validApiKeys, auth);
+      if (validationError) {
+        deps.sendJson(response, statusForErrorCode(validationError.error.code), validationError);
+        return true;
+      }
+      const requestedConversationId = conversationIdFromPayload(payload);
+      const conversation = requestedConversationId ? deps.conversationStore.getConversation(requestedConversationId) : null;
+      if (requestedConversationId && (!auth || !conversation || !deps.isConversationVisibleToAuth(conversation, auth))) {
+        deps.sendJson(response, 404, makeErrorResponse("CONVERSATION_NOT_FOUND", "Conversation not found.", { conversation_id: requestedConversationId }));
+        return true;
+      }
+      const runtimeWorkspace = auth && auth.user.role !== "admin" && deps.workspaceScopeForAuth ? await deps.workspaceScopeForAuth(auth) : undefined;
       const result = await handlePostMessage(
         {
           chatRuntime: deps.chatRuntime,
           sessionStore: deps.sessionStore,
           validApiKeys: deps.validApiKeys,
           conversationStore: deps.conversationStore,
+          authContext: auth,
+          runtimeWorkspace,
         },
         request.headers,
         payload,
@@ -123,8 +139,6 @@ export async function handleMessageRoute(
       deps.sendJson(response, result.statusCode, result.body);
       return true;
     }
-
-    const auth = deps.getAuthContext(request);
     const validationError = validateAuthorizedMessage(request.headers, payload, deps.validApiKeys, auth);
     if (validationError) {
       deps.sendJson(response, statusForErrorCode(validationError.error.code), validationError);
@@ -151,6 +165,7 @@ export async function handleMessageRoute(
       id: `job_${randomUUID()}`,
       sessionId,
       ...(conversation ? { conversationId: conversation.id } : {}),
+      ...(auth ? { authContext: auth } : {}),
       ...(runtimeWorkspace ? { runtimeWorkspace } : {}),
       state: "queued",
       createdAt: now,

@@ -80,6 +80,13 @@ export class GatewayOpenAiOpenClawClient implements OpenClawClient {
       headers["x-openclaw-runtime-user-dir"] = input.runtimeWorkspace.userDir;
       headers["x-openclaw-runtime-common-dir"] = input.runtimeWorkspace.commonDir;
       headers["x-openclaw-runtime-common-writable"] = input.runtimeWorkspace.commonWritable ? "1" : "0";
+      headers["x-openclaw-runtime-user-id"] = input.runtimeWorkspace.userId;
+      if (input.runtimeWorkspace.username) {
+        headers["x-openclaw-runtime-username"] = input.runtimeWorkspace.username;
+      }
+      if (input.runtimeWorkspace.identityFile) {
+        headers["x-openclaw-runtime-identity-file"] = input.runtimeWorkspace.identityFile;
+      }
     }
     if (this.token) {
       headers.authorization = `Bearer ${this.token}`;
@@ -144,11 +151,18 @@ export class GatewayOpenAiOpenClawClient implements OpenClawClient {
   }
 
   private runtimeWorkspaceText(scope: RuntimeWorkspaceScope): string {
+    const username = scope.username?.trim() || scope.userId;
+    const displayName = scope.displayName?.trim() || username;
     return [
       "비공개 runtime workspace metadata: 이 요청은 사용자별 workspace 범위 안에서 처리되어야 합니다.",
+      `- current_webchat_user_id=${scope.userId}`,
+      `- current_webchat_username=${username}`,
+      `- current_webchat_display_name=${displayName}`,
+      `- user_identity_file=${scope.identityFile ?? `${scope.userDir}/WEBCHAT_USER.md`}`,
       `- user_dir=${scope.userDir}`,
       `- common_dir=${scope.commonDir}`,
       `- common_writable=${scope.commonWritable ? "true" : "false"}`,
+      "이 사용자는 username/display name이 Eddy라고 명시되지 않는 한 Eddy가 아닙니다. Eddy 관련 기억, 선호, 개인정보, 호칭을 이 사용자에게 적용하지 마세요.",
       "파일 작업이 필요하면 user_dir 안에서 작업하고, common_dir는 명시적으로 필요한 읽기 참고자료로만 사용하세요.",
     ].join("\n");
   }

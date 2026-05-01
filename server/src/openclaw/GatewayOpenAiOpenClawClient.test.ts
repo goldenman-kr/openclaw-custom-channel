@@ -81,17 +81,23 @@ test("passes runtime workspace metadata to Gateway requests", async () => {
       message: "hello",
       runtimeWorkspace: {
         userId: "usr_alice",
+        username: "alice",
+        displayName: "Alice",
         workspaceRoot: "/tmp/workspaces",
         userDir: "/tmp/workspaces/alice",
         commonDir: "/tmp/workspaces/common",
         commonWritable: false,
+        identityFile: "/tmp/workspaces/alice/WEBCHAT_USER.md",
       },
     });
 
     assert.equal(requests[0]?.headers["x-openclaw-runtime-user-dir"], "/tmp/workspaces/alice");
+    assert.equal(requests[0]?.headers["x-openclaw-runtime-username"], "alice");
     const messages = requests[0]?.body.messages as Array<{ content: string }>;
+    assert.match(messages[0]?.content, /current_webchat_username=alice/);
     assert.match(messages[0]?.content, /user_dir=\/tmp\/workspaces\/alice/);
     assert.match(messages[0]?.content, /common_writable=false/);
+    assert.match(messages[0]?.content, /Eddy가 아닙니다/);
   } finally {
     await server.close();
   }
