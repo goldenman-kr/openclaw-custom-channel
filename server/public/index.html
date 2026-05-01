@@ -11,6 +11,23 @@
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
+    <section id="loginScreen" class="login-screen hidden" aria-label="로그인">
+      <form id="loginForm" class="login-card">
+        <div class="login-brand">OpenClaw</div>
+        <h1>로그인</h1>
+        <label>
+          ID
+          <input id="loginUsernameInput" type="text" autocomplete="username" required />
+        </label>
+        <label>
+          Password
+          <input id="loginPasswordInput" type="password" autocomplete="current-password" required />
+        </label>
+        <button id="loginSubmitButton" type="submit">로그인</button>
+        <p id="loginStatusText" class="status-text"></p>
+      </form>
+    </section>
+
     <main class="app-shell">
       <div id="mobileDrawerBackdrop" class="drawer-backdrop" data-drawer-close></div>
 
@@ -30,6 +47,7 @@
             <span class="sidebar-button-icon sidebar-button-icon--archive" aria-hidden="true"></span>
             <span class="sidebar-button-label">보관함</span>
           </button>
+          <button id="logoutButton" class="ghost-button sidebar-logout-button" type="button">로그아웃</button>
           <button id="sidebarSettingsButton" class="ghost-button sidebar-settings-button" type="button">
             <span class="sidebar-button-icon sidebar-button-icon--settings" aria-hidden="true"></span>
             <span>설정</span>

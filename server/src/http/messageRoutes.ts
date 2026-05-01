@@ -13,11 +13,13 @@ import type { MessageJob } from "../runtime/MessageJob.js";
 import type { HistoryStore } from "../session/HistoryStore.js";
 import type { ConversationRecord, ConversationStore, JobStore, MessageStore } from "../session/SqliteChatStore.js";
 import type { SessionStore } from "../session/SessionStore.js";
+import type { AuthContext } from "./authRoutes.js";
 
 export interface MessageRouteDeps {
   chatRuntime: ChatRuntime;
   sessionStore: SessionStore;
   validApiKeys: Set<string>;
+  getAuthContext(request: IncomingMessage): AuthContext | null;
   conversationStore: ConversationStore & MessageStore & JobStore;
   historyStore: HistoryStore;
   sendJson(response: ServerResponse, statusCode: number, body: unknown): void;
@@ -70,13 +72,15 @@ function statusForErrorCode(code: ErrorResponseDto["error"]["code"]): number {
   }
 }
 
-function validateAuthorizedMessage(headers: IncomingMessage["headers"], payload: MessageRequestDto, validApiKeys: Set<string>): ErrorResponseDto | null {
-  const tokenOrError = extractBearerToken(getSingleHeader(headers, "authorization"));
-  if (typeof tokenOrError !== "string") {
-    return makeErrorResponse(tokenOrError.code, tokenOrError.message, tokenOrError.details);
-  }
-  if (!validApiKeys.has(tokenOrError)) {
-    return makeErrorResponse("AUTH_INVALID_TOKEN", "API key is invalid.");
+function validateAuthorizedMessage(headers: IncomingMessage["headers"], payload: MessageRequestDto, validApiKeys: Set<string>, auth?: AuthContext | null): ErrorResponseDto | null {
+  if (!auth) {
+    const tokenOrError = extractBearerToken(getSingleHeader(headers, "authorization"));
+    if (typeof tokenOrError !== "string") {
+      return makeErrorResponse(tokenOrError.code, tokenOrError.message, tokenOrError.details);
+    }
+    if (!validApiKeys.has(tokenOrError)) {
+      return makeErrorResponse("AUTH_INVALID_TOKEN", "API key is invalid.");
+    }
   }
   const validationError = validateMessageRequestDto(payload);
   if (validationError) {
@@ -117,7 +121,8 @@ export async function handleMessageRoute(
       return true;
     }
 
-    const validationError = validateAuthorizedMessage(request.headers, payload, deps.validApiKeys);
+    const auth = deps.getAuthContext(request);
+    const validationError = validateAuthorizedMessage(request.headers, payload, deps.validApiKeys, auth);
     if (validationError) {
       deps.sendJson(response, statusForErrorCode(validationError.error.code), validationError);
       return true;

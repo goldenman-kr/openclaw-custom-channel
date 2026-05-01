@@ -8,6 +8,7 @@ import {
   type MessageRequestDto,
 } from "./contracts/apiContractV1.js";
 import { SseJobEventPublisher, type JobEventRecord } from "./events/SseJobEventPublisher.js";
+import { AUTH_COOKIE_NAME, handleAuthRoute, parseCookies, type AuthContext } from "./http/authRoutes.js";
 import { handleConversationRoute } from "./http/conversationRoutes.js";
 import { handleHistoryRoute } from "./http/historyRoutes.js";
 import { handleJobRoute } from "./http/jobRoutes.js";
@@ -19,6 +20,7 @@ import type { MessageJob } from "./runtime/MessageJob.js";
 import { MessageJobRunner } from "./runtime/MessageJobRunner.js";
 import { OpenClawChatRuntime } from "./runtime/OpenClawChatRuntime.js";
 import { FileHistoryStore, type HistoryAttachment } from "./session/HistoryStore.js";
+import { AuthStore, publicUser } from "./session/AuthStore.js";
 import { InMemorySessionStore } from "./session/SessionStore.js";
 import { SqliteChatStore, type ConversationRecord } from "./session/SqliteChatStore.js";
 
@@ -44,9 +46,14 @@ const assistantGeneratedMediaDirs = (process.env.ASSISTANT_MEDIA_SCAN_DIRS ?? "/
   .map((dir) => dir.trim())
   .filter(Boolean)
   .map((dir) => resolve(dir));
-const chatStore = new SqliteChatStore(resolve(process.env.CHAT_DB_PATH ?? join(stateDir, "chat.sqlite")));
+const chatDbPath = resolve(process.env.CHAT_DB_PATH ?? join(stateDir, "chat.sqlite"));
+const authStore = new AuthStore(chatDbPath);
+const chatStore = new SqliteChatStore(chatDbPath);
+configureInitialAdminUser();
 const openClawAgentId = process.env.OPENCLAW_AGENT ?? "main";
 const jobs = new Map<string, MessageJob>();
+const sessionTtlMs = Number(process.env.AUTH_SESSION_TTL_MS ?? 30 * 24 * 60 * 60 * 1000);
+const cookieSecure = process.env.AUTH_COOKIE_SECURE ? process.env.AUTH_COOKIE_SECURE === "1" : process.env.NODE_ENV === "production";
 
 const mediaRoots = [
   resolve(process.env.MEDIA_ROOT ?? "/home/orbsian/.openclaw/workspace"),
@@ -59,12 +66,24 @@ const corsHeaders = {
   "access-control-allow-origin": "*",
   "access-control-allow-methods": "GET,POST,PATCH,DELETE,OPTIONS",
   "access-control-allow-headers": "authorization,content-type,x-device-id,x-user-id,x-openclaw-sync",
+  "access-control-allow-credentials": "true",
 };
 
-function sendJson(response: ServerResponse, statusCode: number, body: unknown): void {
+function configureInitialAdminUser(): void {
+  const password = process.env.AUTH_ADMIN_PASSWORD;
+  if (!password) {
+    return;
+  }
+  const username = process.env.AUTH_ADMIN_USERNAME ?? "admin";
+  const displayName = process.env.AUTH_ADMIN_DISPLAY_NAME ?? "Admin";
+  authStore.ensureUser({ username, displayName, password, role: "admin" });
+}
+
+function sendJson(response: ServerResponse, statusCode: number, body: unknown, extraHeaders: Record<string, string> = {}): void {
   response.writeHead(statusCode, {
     "content-type": "application/json; charset=utf-8",
     ...corsHeaders,
+    ...extraHeaders,
   });
   response.end(JSON.stringify(body));
 }
@@ -161,9 +180,32 @@ async function saveHistoryAttachments(sessionId: string, payload: MessageRequest
   );
 }
 
-function isAuthorized(request: IncomingMessage): boolean {
+function getSessionToken(request: IncomingMessage): string | null {
+  return parseCookies(getSingleHeader(request.headers, "cookie")).get(AUTH_COOKIE_NAME) ?? null;
+}
+
+function getAuthContext(request: IncomingMessage): AuthContext | null {
+  const sessionToken = getSessionToken(request);
+  if (sessionToken) {
+    const authSession = authStore.getSessionByToken(sessionToken);
+    if (authSession) {
+      return { user: publicUser(authSession.user), source: "cookie" };
+    }
+  }
+
   const tokenOrError = extractBearerToken(getSingleHeader(request.headers, "authorization"));
-  return typeof tokenOrError === "string" && validApiKeys.has(tokenOrError);
+  if (typeof tokenOrError === "string" && validApiKeys.has(tokenOrError)) {
+    return {
+      user: { id: "admin", username: "admin", displayName: "Admin", role: "admin" },
+      source: "api_key",
+    };
+  }
+
+  return null;
+}
+
+function isAuthorized(request: IncomingMessage): boolean {
+  return Boolean(getAuthContext(request));
 }
 
 function updateJob(job: MessageJob, patch: { state?: MessageJob["state"]; error?: string | null }): void {
@@ -290,6 +332,19 @@ const server = createServer(async (request, response) => {
     return;
   }
 
+  if (await handleAuthRoute(request, response, url, {
+    authStore,
+    sendJson,
+    makeErrorResponse,
+    readJsonBody,
+    cookieSecure,
+    sessionTtlMs,
+    getSessionToken,
+    getAuthContext,
+  })) {
+    return;
+  }
+
   if (await handleMediaRoute(request, response, url, {
     corsHeaders,
     mediaRoots,
@@ -353,6 +408,7 @@ const server = createServer(async (request, response) => {
     chatRuntime,
     sessionStore,
     validApiKeys,
+    getAuthContext,
     conversationStore: chatStore,
     historyStore,
     sendJson,
