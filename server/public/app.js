@@ -2049,21 +2049,35 @@ function normalizeMediaRefPath(ref) {
   return ref;
 }
 
+function canonicalMediaRefKey(ref) {
+  return normalizeMediaRefPath(ref).trim().replace(/\/+$/, '');
+}
+
 function appendMediaRef(parent, rawRef) {
   const refInfo = typeof rawRef === 'string' ? { path: rawRef } : rawRef;
   const ref = normalizeMediaRefPath(refInfo?.path);
   if (!ref || isPlaceholderMediaRef(ref)) {
     return;
   }
+  const refKey = canonicalMediaRefKey(ref);
+  if (!refKey) {
+    return;
+  }
 
   const preview = parent.querySelector('.message-attachments') || document.createElement('div');
   preview.className = 'message-attachments';
+  preview._mediaRefKeys ||= new Set([...preview.querySelectorAll('[data-media-ref-key]')].map((item) => item.dataset.mediaRefKey));
+  if (preview._mediaRefKeys.has(refKey)) {
+    return;
+  }
+  preview._mediaRefKeys.add(refKey);
   if (!preview.parentElement) {
     parent.append(preview);
   }
 
   const item = document.createElement('div');
   item.className = 'message-attachment';
+  item.dataset.mediaRefKey = refKey;
   const isRemote = /^https?:\/\//i.test(ref);
   const fileName = refInfo.name || ref.split('/').pop() || ref;
   const displayName = shortenFileName(fileName);
@@ -2283,7 +2297,18 @@ function renderMessageNode(node, role, text, options = {}) {
   node.className = `message ${role}${options.pending ? ' pending' : ''}`;
   node.replaceChildren();
   appendMarkdown(node, media.text);
+  const mediaRefs = [];
+  const seenMediaRefs = new Set();
   for (const ref of [...media.refs, ...(node._mediaRefs || [])]) {
+    const refPath = typeof ref === 'string' ? ref : ref?.path;
+    const refKey = canonicalMediaRefKey(refPath);
+    if (!refKey || seenMediaRefs.has(refKey)) {
+      continue;
+    }
+    seenMediaRefs.add(refKey);
+    mediaRefs.push(ref);
+  }
+  for (const ref of mediaRefs) {
     appendMediaRef(node, ref);
   }
   appendCopyAction(node, role, text, options);
