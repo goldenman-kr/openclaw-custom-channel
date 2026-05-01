@@ -1398,12 +1398,12 @@ html[data-theme="light"] .toast--success {
 
   .messages {
     padding-left: 0;
-    padding-right: 0;
+    padding-right: 14px;
   }
 
   .composer {
     padding-left: 0;
-    padding-right: 0;
+    padding-right: 14px;
   }
 
   .chat-titlebar {
