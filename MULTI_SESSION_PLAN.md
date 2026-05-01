@@ -555,3 +555,61 @@ SQLite/Conversation API를 만들 때부터 store와 runtime 인터페이스를 
 단, 과도한 추상화는 피하고 실제 두 번째 채널이 필요해질 때 adapter를 확장한다.
 현재 단계의 목표는 “Web/PWA 구현을 방해하지 않는 얇은 인터페이스 경계”를 만드는 것이다.
 
+
+## 13. 향후 기능 계획 — 다중 유저 지원
+
+현재 브랜치는 관리자 1인용 다중 대화 세션을 완성하는 것이 목표이며, 다중 유저 기능은 **이번 브랜치 범위 밖**으로 둔다. 다만 향후 별도 브랜치/마일스톤으로 분리할 수 있도록 아래 요구사항을 기록한다.
+
+### 13.1 목표
+
+- 여러 사용자가 같은 웹/PWA 서버에 접속하더라도 각자의 대화 목록, 메시지, 첨부파일, job 상태가 서로 보이지 않게 분리한다.
+- API Key를 단순 공용 관리자 토큰이 아니라 사용자 인증/권한 식별 체계와 연결한다.
+- 사용자별 모델, agent/persona, 사용 가능한 기능, quota를 다르게 줄 수 있게 한다.
+
+### 13.2 서버 설계 초안
+
+- `users` 테이블 추가
+  - `id`, `display_name`, `created_at`, `disabled_at`
+- 인증 토큰 테이블 추가
+  - `api_tokens` 또는 `user_tokens`
+  - token hash만 저장하고 원문 토큰은 저장하지 않는다.
+  - 토큰은 `user_id`, scopes, revoked 상태를 가진다.
+- 기존 주요 테이블에 owner 컬럼 추가
+  - `conversations.owner_id`
+  - `messages`는 conversation을 통해 owner 검증
+  - `jobs.owner_id` 또는 conversation 기반 owner 검증
+  - `attachments`는 message/conversation 기반 owner 검증
+- 모든 API는 인증된 `user_id`를 기준으로 필터링한다.
+  - `GET /v1/conversations`는 해당 user의 목록만 반환
+  - `GET /v1/history`는 해당 user 소유 conversation만 허용
+  - `POST /v1/message`도 해당 user 소유 conversation만 허용
+  - `PATCH/DELETE`도 owner 검증 필수
+
+### 13.3 사용자별 설정 후보
+
+- 기본 모델 / 허용 모델 목록
+- 기본 agent 또는 persona/system prompt
+- 파일 첨부 허용 여부와 용량 제한
+- 이미지 생성, memory, task, route/weather 등 기능별 권한
+- 일/월별 메시지 수, 토큰, 비용 quota
+- 감사로그/audit log
+
+### 13.4 마이그레이션 원칙
+
+- 기존 1인 데이터는 `owner_id = Eddy/admin` 기본 사용자로 귀속한다.
+- 기존 API Key는 초기 admin token으로 마이그레이션하되, 이후에는 token hash 기반으로 전환한다.
+- owner 컬럼 추가 시 기존 conversation/history/job 데이터가 유실되지 않아야 한다.
+
+### 13.5 UX 원칙
+
+- 로그인/토큰 입력 후 해당 사용자 대화 목록만 표시한다.
+- 관리자는 사용자 생성/비활성화/토큰 재발급을 할 수 있다.
+- 사용자가 권한 없는 기능을 실행하면 명확한 제한 메시지를 보여준다.
+- 사용자의 대화 삭제/내보내기 범위는 본인 데이터로 제한한다.
+
+### 13.6 보안 주의사항
+
+- API Key 여러 개를 추가하는 것만으로는 다중 유저가 아니다. 반드시 `user_id`/`owner_id` 기반 데이터 격리가 필요하다.
+- 모든 read/write API에서 owner 검증을 누락하면 다른 사용자의 대화가 노출될 수 있다.
+- 첨부파일/미디어 URL도 owner 검증 또는 서명된 단기 URL이 필요하다.
+- 감사로그에는 민감한 메시지 원문을 남기지 않는 방향을 우선 검토한다.
