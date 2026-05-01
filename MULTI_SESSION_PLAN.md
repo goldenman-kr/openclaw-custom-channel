@@ -555,61 +555,309 @@ SQLite/Conversation API를 만들 때부터 store와 runtime 인터페이스를 
 단, 과도한 추상화는 피하고 실제 두 번째 채널이 필요해질 때 adapter를 확장한다.
 현재 단계의 목표는 “Web/PWA 구현을 방해하지 않는 얇은 인터페이스 경계”를 만드는 것이다.
 
+## 13. 구현 계획 — 다중 유저 지원
 
-## 13. 향후 기능 계획 — 다중 유저 지원
+현재 `multi-user` 브랜치의 목표는 기존 관리자 1인용 Web/PWA 다중 대화 구조를 **소규모 다중 유저 구조**로 확장하는 것이다. 다중 유저는 단순 API Key 추가가 아니라 인증, 데이터 owner 검증, 파일 접근 sandbox를 포함하는 보안 경계로 구현한다.
 
-현재 브랜치는 관리자 1인용 다중 대화 세션을 완성하는 것이 목표이며, 다중 유저 기능은 **이번 브랜치 범위 밖**으로 둔다. 다만 향후 별도 브랜치/마일스톤으로 분리할 수 있도록 아래 요구사항을 기록한다.
+### 13.1 확정 설계 결정
 
-### 13.1 목표
+- 인증 방식은 **id/password 로그인 + 서버 세션 쿠키**로 한다.
+- 공개 가입 기능은 만들지 않는다. 사용자는 관리자가 수동 생성한다.
+- 기존 API Key는 일반 사용자 인증 수단에서 제외한다.
+  - 필요 시 bootstrap/admin CLI/smoke test용 내부 토큰으로만 제한적으로 유지한다.
+- DB는 1차에서 **단일 SQLite + `owner_id` 기반 격리**를 사용한다.
+- URL에는 `userId`를 넣지 않는다.
+  - 현재 구조인 `/chat/:conversationId`를 유지한다.
+  - 로그인된 사용자 세션에서 `user_id`를 확인하고 conversation owner를 서버에서 검증한다.
+- 로그아웃 기능은 필수로 구현한다.
+- 파일/워크스페이스 접근 제어는 MD 정책만으로 처리하지 않고 **코드 레벨에서 강제**한다.
 
-- 여러 사용자가 같은 웹/PWA 서버에 접속하더라도 각자의 대화 목록, 메시지, 첨부파일, job 상태가 서로 보이지 않게 분리한다.
-- API Key를 단순 공용 관리자 토큰이 아니라 사용자 인증/권한 식별 체계와 연결한다.
-- 사용자별 모델, agent/persona, 사용 가능한 기능, quota를 다르게 줄 수 있게 한다.
+### 13.2 인증/세션 설계
 
-### 13.2 서버 설계 초안
+#### 사용자 테이블
 
-- `users` 테이블 추가
-  - `id`, `display_name`, `created_at`, `disabled_at`
-- 인증 토큰 테이블 추가
-  - `api_tokens` 또는 `user_tokens`
-  - token hash만 저장하고 원문 토큰은 저장하지 않는다.
-  - 토큰은 `user_id`, scopes, revoked 상태를 가진다.
-- 기존 주요 테이블에 owner 컬럼 추가
-  - `conversations.owner_id`
-  - `messages`는 conversation을 통해 owner 검증
-  - `jobs.owner_id` 또는 conversation 기반 owner 검증
-  - `attachments`는 message/conversation 기반 owner 검증
-- 모든 API는 인증된 `user_id`를 기준으로 필터링한다.
-  - `GET /v1/conversations`는 해당 user의 목록만 반환
-  - `GET /v1/history`는 해당 user 소유 conversation만 허용
-  - `POST /v1/message`도 해당 user 소유 conversation만 허용
-  - `PATCH/DELETE`도 owner 검증 필수
+```sql
+CREATE TABLE users (
+  id TEXT PRIMARY KEY,
+  username TEXT NOT NULL UNIQUE,
+  display_name TEXT NOT NULL,
+  password_hash TEXT NOT NULL,
+  role TEXT NOT NULL DEFAULT 'user',
+  created_at TEXT NOT NULL,
+  disabled_at TEXT
+);
+```
 
-### 13.3 사용자별 설정 후보
+- password는 원문 저장 금지.
+- 가능하면 `argon2id` 사용을 우선 검토하고, 배포 호환성이 애매하면 `bcrypt`를 사용한다.
+- `role`은 1차에서 `admin`/`user` 정도만 둔다.
+
+#### 세션 테이블
+
+```sql
+CREATE TABLE auth_sessions (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  token_hash TEXT NOT NULL UNIQUE,
+  created_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  revoked_at TEXT,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+```
+
+- 브라우저에는 세션 토큰을 `HttpOnly`, `Secure`, `SameSite=Lax` 쿠키로 저장한다.
+- 서버 DB에는 token hash만 저장한다.
+- 로그아웃 시 세션 revoke + 쿠키 만료.
+- 인증 만료 시 API는 401을 반환하고 UI는 로그인 화면으로 전환한다.
+
+#### 인증 API
+
+```text
+POST /v1/auth/login
+POST /v1/auth/logout
+GET  /v1/auth/me
+```
+
+- `login`: username/password 검증 후 세션 쿠키 발급.
+- `logout`: 현재 세션 revoke.
+- `me`: 현재 로그인 사용자와 권한/설정 요약 반환.
+
+### 13.3 사용자 수동 관리
+
+공개 가입은 만들지 않는다. 초기 구현은 CLI/script 기반으로 충분하다.
+
+예상 명령:
+
+```bash
+npm run user:create -- <username> --display-name <name>
+npm run user:reset-password -- <username>
+npm run user:disable -- <username>
+npm run user:list
+```
+
+관리 UI는 2차로 미룬다. 1차 목표는 안전한 수동 생성/비활성화/비밀번호 재설정이다.
+
+### 13.4 데이터 owner 격리
+
+기존 주요 테이블에 owner를 추가한다.
+
+```sql
+ALTER TABLE conversations ADD COLUMN owner_id TEXT;
+```
+
+원칙:
+
+- `conversations.owner_id`가 데이터 격리의 기준이다.
+- `messages`, `attachments`, `jobs`는 직접 owner 컬럼을 두거나 conversation join으로 owner를 검증한다.
+- 모든 read/write API는 인증된 `user_id` 기준으로 필터링한다.
+
+API별 원칙:
+
+- `GET /v1/conversations`: 내 conversation만 반환.
+- `POST /v1/conversations`: 생성 owner는 현재 user.
+- `GET /v1/history?conversation_id=...`: conversation owner가 현재 user일 때만 허용.
+- `POST /v1/message`: 현재 user 소유 conversation만 허용.
+- `PATCH/DELETE /v1/conversations/:id`: 현재 user 소유 또는 admin 권한일 때만 허용.
+- 권한 없는 conversation 접근은 가능하면 `404`로 응답해 존재 여부를 숨긴다.
+
+### 13.5 URL 설계
+
+현재 URL 구조를 유지한다.
+
+```text
+/chat/:conversationId
+```
+
+URL에 `userId`를 넣지 않는다.
+
+이유:
+
+- user identity는 로그인 세션으로 이미 알 수 있다.
+- URL에 userId를 넣어도 owner 검증은 어차피 서버에서 해야 한다.
+- userId 노출은 정보 노출만 늘리고 보안 이득이 없다.
+
+권한 확인 흐름:
+
+```text
+GET /chat/conv_xxx
+→ SPA index.html 반환
+→ 클라이언트가 /v1/history?conversation_id=conv_xxx 호출
+→ 서버가 쿠키 세션에서 user_id 확인
+→ conv_xxx.owner_id === user_id 검증
+→ 성공 시 반환, 실패 시 404/401
+```
+
+### 13.6 워크스페이스/파일 접근 정책
+
+다중 유저에서 파일 접근은 정책 문서만으로 충분하지 않다. 반드시 코드에서 강제한다.
+
+관리자는 전체 workspace root 아래에서 사용자별 접근 범위를 지정한다.
+
+권장 구조:
+
+```text
+<workspace-root>/
+├─ common/
+│  └─ 공유 자료
+├─ users/
+│  ├─ <user-a>/
+│  │  └─ 개인 작업공간
+│  └─ <user-b>/
+│     └─ 개인 작업공간
+└─ system/
+   └─ 관리자 전용
+```
+
+유저가 접근 가능한 경로:
+
+- `<workspace-root>/common/`
+- `<workspace-root>/users/<own-user-id-or-slug>/`
+
+유저가 접근하면 안 되는 경로:
+
+- 다른 사용자의 `users/<other-user>/`
+- `system/`
+- workspace root 상위 경로
+- symlink/`..`/absolute path를 통한 우회 경로
+
+#### common 권한
+
+1차 구현에서는 common을 **read-only**로 둔다.
+
+- user private dir: read/write 허용
+- common dir: read 허용, write 금지
+- common write가 필요하면 `common:write` 권한을 가진 사용자/관리자만 허용하는 2차 기능으로 분리한다.
+
+#### DB 설계 후보
+
+```sql
+CREATE TABLE user_workspace_scopes (
+  user_id TEXT PRIMARY KEY,
+  workspace_root TEXT NOT NULL,
+  user_dir TEXT NOT NULL,
+  common_dir TEXT NOT NULL,
+  common_writable INTEGER NOT NULL DEFAULT 0,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+```
+
+또는 users 테이블에 최소 컬럼을 직접 둘 수 있다. 단, 향후 복수 scope가 필요해질 가능성을 고려하면 별도 테이블이 낫다.
+
+#### 코드 강제 규칙
+
+모든 파일 경로는 다음 절차를 거친다.
+
+1. 사용자 입력 경로를 absolute path로 변환.
+2. `realpath`로 symlink 해석.
+3. 허용 root도 `realpath`로 정규화.
+4. 요청 path가 허용 root 하위인지 검사.
+5. read/write 권한을 분리 검사.
+
+개념 코드:
+
+```ts
+const allowedReadRoots = [commonDir, userDir].map(realpath);
+const allowedWriteRoots = [userDir, ...(commonWritable ? [commonDir] : [])].map(realpath);
+const resolved = await realpath(requestedPath);
+
+if (!isWithinAny(resolved, allowedReadRoots)) throw forbidden();
+if (isWrite && !isWithinAny(resolved, allowedWriteRoots)) throw forbidden();
+```
+
+주의:
+
+- `startsWith`만 쓰지 말고 path separator를 고려한 `isWithinDir()` 헬퍼를 사용한다.
+- symlink가 허용 root 밖을 가리키면 차단한다.
+- 업로드/첨부 저장 경로도 user별 디렉토리 하위로 제한한다.
+
+### 13.7 미디어/첨부 접근 제어
+
+`/v1/media` 같은 파일 반환 API도 같은 workspace scope와 owner 검증을 적용한다.
+
+원칙:
+
+- 첨부파일은 owner conversation/message를 통해 현재 user가 볼 수 있는지 검증한다.
+- 임의 path 기반 미디어 조회는 허용 root 검사 통과 시에만 허용한다.
+- 가능하면 장기적으로 path 직접 노출보다 media id 기반 조회로 바꾼다.
+- 외부로 공유 가능한 URL이 필요하면 서명된 단기 URL을 별도 설계한다.
+
+### 13.8 OpenClaw 실행 workspace 제한
+
+가장 중요한 보안 경계다.
+
+현재 bridge가 OpenClaw를 넓은 workspace에서 실행하면, UI/API에서 owner 검증을 해도 agent/tool이 다른 사용자 파일을 읽을 위험이 있다.
+
+구현 전 확인할 것:
+
+- `openclaw agent` 실행 시 cwd/workspace를 사용자별 디렉토리로 제한할 수 있는지.
+- tool/file 접근 root allowlist를 전달할 수 있는지.
+- 불가능하다면 최소한 bridge에서 노출하는 file/media API는 제한하되, OpenClaw 자체 tool 접근 위험을 별도 리스크로 문서화하고 해결책을 찾는다.
+
+권장 실행 원칙:
+
+```text
+user request
+→ auth user_id
+→ resolve user workspace scope
+→ OpenClaw runtime cwd = user_dir 또는 scoped workspace
+→ common은 read-only reference로 제공
+```
+
+common을 agent가 읽어야 하는 경우:
+
+- user_dir 안에 read-only symlink를 두는 방식은 symlink 우회 위험을 검토해야 한다.
+- 더 안전한 방식은 agent/tool layer에서 allowed read roots로 `common`과 `user_dir`을 명시하는 것이다.
+
+### 13.9 사용자별 설정 후보
 
 - 기본 모델 / 허용 모델 목록
 - 기본 agent 또는 persona/system prompt
 - 파일 첨부 허용 여부와 용량 제한
 - 이미지 생성, memory, task, route/weather 등 기능별 권한
+- common write 허용 여부
 - 일/월별 메시지 수, 토큰, 비용 quota
 - 감사로그/audit log
 
-### 13.4 마이그레이션 원칙
+1차에서는 인증/owner 격리/workspace scope를 우선하고, 사용자별 모델/권한은 schema만 열어두고 구현은 2차로 미룬다.
 
-- 기존 1인 데이터는 `owner_id = Eddy/admin` 기본 사용자로 귀속한다.
-- 기존 API Key는 초기 admin token으로 마이그레이션하되, 이후에는 token hash 기반으로 전환한다.
-- owner 컬럼 추가 시 기존 conversation/history/job 데이터가 유실되지 않아야 한다.
+### 13.10 마이그레이션 원칙
 
-### 13.5 UX 원칙
+- 기존 1인 데이터는 기본 admin 사용자에게 귀속한다.
+- 기존 conversation에는 `owner_id = <admin user id>`를 채운다.
+- 기존 API Key는 초기 admin bootstrap 또는 내부 토큰으로만 남기고, 일반 사용자 인증은 세션 쿠키로 전환한다.
+- 기존 첨부파일은 admin user scope로 귀속하거나 migration mapping을 기록한다.
+- migration 전후로 기존 conversation/history/job 데이터가 유실되지 않아야 한다.
 
-- 로그인/토큰 입력 후 해당 사용자 대화 목록만 표시한다.
-- 관리자는 사용자 생성/비활성화/토큰 재발급을 할 수 있다.
-- 사용자가 권한 없는 기능을 실행하면 명확한 제한 메시지를 보여준다.
-- 사용자의 대화 삭제/내보내기 범위는 본인 데이터로 제한한다.
+### 13.11 UX 원칙
 
-### 13.6 보안 주의사항
+- 로그인 전에는 로그인 화면만 보여준다.
+- 로그인 후에는 해당 사용자 대화 목록만 표시한다.
+- 로그아웃 버튼을 제공한다.
+- 인증 만료 시 로그인 화면으로 이동한다.
+- 권한 없는 conversation URL 접근 시 첫 화면 또는 404 안내로 보낸다.
+- 관리자는 CLI/script로 사용자 생성/비활성화/비밀번호 재설정을 수행한다.
+
+### 13.12 보안 주의사항
 
 - API Key 여러 개를 추가하는 것만으로는 다중 유저가 아니다. 반드시 `user_id`/`owner_id` 기반 데이터 격리가 필요하다.
 - 모든 read/write API에서 owner 검증을 누락하면 다른 사용자의 대화가 노출될 수 있다.
-- 첨부파일/미디어 URL도 owner 검증 또는 서명된 단기 URL이 필요하다.
+- 첨부파일/미디어 URL도 owner 검증 또는 workspace scope 검증이 필요하다.
+- 파일 접근은 MD 정책만으로 충분하지 않으며 코드 레벨 sandbox가 필수다.
+- common은 기본 read-only로 시작한다.
 - 감사로그에는 민감한 메시지 원문을 남기지 않는 방향을 우선 검토한다.
+
+### 13.13 구현 순서
+
+1. Auth/session schema 추가 및 migration 작성.
+2. admin user bootstrap 스크립트 작성.
+3. login/logout/me API 추가.
+4. 프론트 로그인 화면과 로그아웃 버튼 추가.
+5. `conversations.owner_id` 추가 및 기존 데이터 admin 귀속 migration.
+6. 모든 conversation/history/message/job API에 owner 검증 추가.
+7. workspace scope schema 추가.
+8. path normalize/realpath/isWithinDir 기반 workspace guard 구현.
+9. 첨부 저장과 `/v1/media`에 owner/scope 검증 적용.
+10. OpenClaw runtime의 cwd/workspace 제한 가능성 검증 및 적용.
+11. 테스트 추가: 인증, owner 격리, media 접근 차단, path traversal/symlink 차단.
+12. PWA cache version 갱신 및 통합 검증.
