@@ -8,6 +8,7 @@ import {
   type MessageResponseDto,
   validateMessageRequestDto,
 } from "../contracts/apiContractV1.js";
+import type { RuntimeWorkspaceScope } from "../openclaw/OpenClawClient.js";
 import type { ChatRuntime, ChatRuntimeCallbacks } from "../runtime/ChatRuntime.js";
 import type { ConversationStore } from "../session/SqliteChatStore.js";
 import type { SessionStore } from "../session/SessionStore.js";
@@ -22,6 +23,7 @@ export interface MessageHandlerDeps {
   sessionStore: SessionStore;
   validApiKeys: Set<string>;
   conversationStore?: Pick<ConversationStore, "getConversation">;
+  runtimeWorkspace?: RuntimeWorkspaceScope;
   runtimeCallbacks?: ChatRuntimeCallbacks;
   abortSignal?: AbortSignal;
 }
@@ -141,6 +143,7 @@ export async function handlePostMessage(
       sessionId,
       message: payload.message,
       userId,
+      runtimeWorkspace: deps.runtimeWorkspace,
       attachments: payload.attachments,
       metadata: payload.metadata,
       callbacks: deps.runtimeCallbacks,

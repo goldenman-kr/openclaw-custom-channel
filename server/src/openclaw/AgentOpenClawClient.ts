@@ -4,7 +4,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import type { MessageAttachment, MessageRequestMetadata } from "../contracts/apiContractV1.js";
-import type { OpenClawClient } from "./OpenClawClient.js";
+import type { OpenClawClient, RuntimeWorkspaceScope } from "./OpenClawClient.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -17,7 +17,7 @@ export class AgentOpenClawClient implements OpenClawClient {
 
   async sendMessage(input: Parameters<OpenClawClient["sendMessage"]>[0]) {
     const savedAttachments = await this.saveAttachments(input.sessionId, input.attachments ?? []);
-    const message = this.buildMessage(input.message, savedAttachments, input.metadata);
+    const message = this.buildMessage(input.message, savedAttachments, input.metadata, input.runtimeWorkspace);
     const args = [
       "agent",
       "--session-id",
@@ -41,7 +41,18 @@ export class AgentOpenClawClient implements OpenClawClient {
     const result = await execFileAsync(this.command, args, {
       timeout: this.timeoutMs,
       maxBuffer: 20 * 1024 * 1024,
-      env: process.env,
+      cwd: input.runtimeWorkspace?.userDir,
+      env: {
+        ...process.env,
+        ...(input.runtimeWorkspace
+          ? {
+              OPENCLAW_RUNTIME_WORKSPACE_ROOT: input.runtimeWorkspace.workspaceRoot,
+              OPENCLAW_RUNTIME_USER_DIR: input.runtimeWorkspace.userDir,
+              OPENCLAW_RUNTIME_COMMON_DIR: input.runtimeWorkspace.commonDir,
+              OPENCLAW_RUNTIME_COMMON_WRITABLE: input.runtimeWorkspace.commonWritable ? "1" : "0",
+            }
+          : {}),
+      },
       signal: input.abortSignal,
     });
 
@@ -75,8 +86,12 @@ export class AgentOpenClawClient implements OpenClawClient {
     );
   }
 
-  private buildMessage(message: string, attachments: SavedAttachment[], metadata?: MessageRequestMetadata): string {
+  private buildMessage(message: string, attachments: SavedAttachment[], metadata?: MessageRequestMetadata, runtimeWorkspace?: RuntimeWorkspaceScope): string {
     const sections = [message];
+
+    if (runtimeWorkspace) {
+      sections.push(this.runtimeWorkspaceText(runtimeWorkspace));
+    }
 
     const location = metadata?.location;
     if (location) {
@@ -98,6 +113,16 @@ export class AgentOpenClawClient implements OpenClawClient {
     }
 
     return sections.join("\n\n");
+  }
+
+  private runtimeWorkspaceText(scope: RuntimeWorkspaceScope): string {
+    return [
+      "비공개 runtime workspace metadata: 이 요청은 사용자별 workspace 범위 안에서 처리되어야 합니다.",
+      `- user_dir=${scope.userDir}`,
+      `- common_dir=${scope.commonDir}`,
+      `- common_writable=${scope.commonWritable ? "true" : "false"}`,
+      "파일 작업이 필요하면 user_dir 안에서 작업하고, common_dir는 명시적으로 필요한 읽기 참고자료로만 사용하세요.",
+    ].join("\n");
   }
 }
 
