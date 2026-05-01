@@ -46,6 +46,13 @@ function inferAttachmentMimeType(name, mimeType = '') {
 }
 
 const elements = {
+  loginScreen: document.querySelector('#loginScreen'),
+  loginForm: document.querySelector('#loginForm'),
+  loginUsernameInput: document.querySelector('#loginUsernameInput'),
+  loginPasswordInput: document.querySelector('#loginPasswordInput'),
+  loginSubmitButton: document.querySelector('#loginSubmitButton'),
+  loginStatusText: document.querySelector('#loginStatusText'),
+  logoutButton: document.querySelector('#logoutButton'),
   settingsButton: document.querySelector('#settingsButton'),
   chatPanel: document.querySelector('.chat-panel'),
   floatingActionMenu: document.querySelector('#floatingActionMenu'),
@@ -183,6 +190,7 @@ let conversationContentMatches = new Set();
 let conversationSearchTimer = null;
 let conversationSearchRunId = 0;
 const conversationSearchCache = new Map();
+let authUser = null;
 
 function conversationIdFromPath(pathname = window.location.pathname) {
   const match = pathname.match(/^\/chat\/([^/?#]+)/);
@@ -511,7 +519,7 @@ function normalizeApiKey(value) {
 
 function assertValidApiKey(apiKey) {
   if (!apiKey) {
-    throw new Error('API Key를 입력해주세요.');
+    return;
   }
   if (!/^[A-Za-z0-9._~+-]+$/.test(apiKey)) {
     throw new Error('API Key에 사용할 수 없는 문자가 포함되어 있습니다. 키만 다시 복사해서 붙여넣어 주세요.');
@@ -720,13 +728,12 @@ function clearRenderedMessages() {
 async function historyHeaders() {
   assertValidApiKey(settings.apiKey);
   return {
-    authorization: `Bearer ${settings.apiKey}`,
-    'x-user-id': await sharedUserId(),
+    ...(settings.apiKey ? { authorization: `Bearer ${settings.apiKey}`, 'x-user-id': await sharedUserId() } : {}),
   };
 }
 
 function canUseApi() {
-  return Boolean(settings.apiUrl && settings.apiKey);
+  return Boolean(settings.apiUrl && (authUser || settings.apiKey));
 }
 
 function apiUrl(path, params = {}) {
@@ -744,6 +751,78 @@ async function apiHeaders(extra = {}) {
     ...(await historyHeaders()),
     ...extra,
   };
+}
+
+async function apiFetch(path, options = {}) {
+  const response = await fetch(apiUrl(path, options.params || {}), {
+    ...options,
+    credentials: 'include',
+    headers: {
+      ...(options.headers || {}),
+    },
+  });
+  if (response.status === 401) {
+    authUser = null;
+    showLoginScreen();
+  }
+  return response;
+}
+
+function showLoginScreen(message = '') {
+  elements.loginScreen?.classList.remove('hidden');
+  document.body.classList.add('auth-required');
+  if (elements.loginStatusText) {
+    elements.loginStatusText.textContent = message;
+  }
+}
+
+function hideLoginScreen() {
+  elements.loginScreen?.classList.add('hidden');
+  document.body.classList.remove('auth-required');
+  if (elements.loginPasswordInput) {
+    elements.loginPasswordInput.value = '';
+  }
+}
+
+async function loadCurrentUser() {
+  const response = await apiFetch('/v1/auth/me');
+  if (!response.ok) {
+    authUser = null;
+    showLoginScreen();
+    return null;
+  }
+  const body = await response.json().catch(() => null);
+  authUser = body?.user || null;
+  if (authUser) {
+    hideLoginScreen();
+  }
+  return authUser;
+}
+
+async function login(username, password) {
+  const response = await apiFetch('/v1/auth/login', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ username, password }),
+  });
+  const body = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error(body?.error?.message || `로그인 실패: HTTP ${response.status}`);
+  }
+  authUser = body?.user || null;
+  hideLoginScreen();
+  return authUser;
+}
+
+async function logout() {
+  await apiFetch('/v1/auth/logout', { method: 'POST' }).catch(() => null);
+  authUser = null;
+  conversations = [];
+  activeConversation = null;
+  clearPendingJob();
+  renderHome();
+  renderConversationList();
+  showLoginScreen('로그아웃되었습니다.');
 }
 
 function activeConversationId() {
@@ -838,7 +917,8 @@ function conversationMatchesSearch(conversation, query = normalizedConversationS
 }
 
 async function fetchConversationHistoryMessages(conversationId) {
-  const response = await fetch(apiUrl('/v1/history', { conversation_id: conversationId }), {
+  const response = await apiFetch('/v1/history', {
+    params: { conversation_id: conversationId },
     headers: await historyHeaders(),
   });
   if (!response.ok) {
@@ -1132,7 +1212,8 @@ async function selectConversation(conversationId, options = {}) {
 }
 
 async function fetchConversations() {
-  const response = await fetch(apiUrl('/v1/conversations', { include_archived: 1 }), {
+  const response = await apiFetch('/v1/conversations', {
+    params: { include_archived: 1 },
     headers: await historyHeaders(),
   });
   if (!response.ok) {
@@ -1143,7 +1224,7 @@ async function fetchConversations() {
 }
 
 async function createConversation(title = '새 대화') {
-  const response = await fetch(apiUrl('/v1/conversations'), {
+  const response = await apiFetch('/v1/conversations', {
     method: 'POST',
     headers: await apiHeaders({ 'content-type': 'application/json' }),
     body: JSON.stringify({ title }),
@@ -1156,7 +1237,7 @@ async function createConversation(title = '새 대화') {
 }
 
 async function patchConversation(conversationId, patch) {
-  const response = await fetch(apiUrl(`/v1/conversations/${encodeURIComponent(conversationId)}`), {
+  const response = await apiFetch(`/v1/conversations/${encodeURIComponent(conversationId)}`, {
     method: 'PATCH',
     headers: await apiHeaders({ 'content-type': 'application/json' }),
     body: JSON.stringify(patch),
@@ -1177,7 +1258,7 @@ async function updateConversationTitle(conversationId, title) {
 }
 
 async function destroyConversation(conversationId) {
-  const response = await fetch(apiUrl(`/v1/conversations/${encodeURIComponent(conversationId)}`), {
+  const response = await apiFetch(`/v1/conversations/${encodeURIComponent(conversationId)}`, {
     method: 'DELETE',
     headers: await apiHeaders(),
   });
@@ -1542,7 +1623,8 @@ async function continueInNewSession() {
 
 async function fetchHistory() {
   const conversation = await ensureActiveConversation();
-  const response = await fetch(apiUrl('/v1/history', { conversation_id: conversation.id }), {
+  const response = await apiFetch('/v1/history', {
+    params: { conversation_id: conversation.id },
     headers: await historyHeaders(),
   });
   if (!response.ok) {
@@ -1555,7 +1637,8 @@ async function fetchHistory() {
 
 async function fetchHistoryMeta() {
   const conversation = await ensureActiveConversation();
-  const response = await fetch(apiUrl('/v1/history', { meta: '1', conversation_id: conversation.id }), {
+  const response = await apiFetch('/v1/history', {
+    params: { meta: '1', conversation_id: conversation.id },
     headers: await historyHeaders(),
   });
   if (!response.ok) {
@@ -1576,7 +1659,7 @@ async function renderHistory(options = {}) {
   const previousBottomOffset = elements.messages.scrollHeight - elements.messages.scrollTop;
   clearRenderedMessages();
   if (!canUseApi()) {
-    appendMessage('system', '설정에서 API Key를 입력하면 대화를 시작할 수 있습니다.', { persist: false });
+    appendMessage('system', '로그인하면 대화를 시작할 수 있습니다.', { persist: false });
     return;
   }
 
@@ -2176,6 +2259,7 @@ async function getAuthorizedMediaUrl(ref) {
   }
 
   const response = await fetch(`${settings.apiUrl}/v1/media?path=${encodeURIComponent(ref)}`, {
+    credentials: 'include',
     headers: await historyHeaders(),
     cache: 'force-cache',
   });
@@ -2636,14 +2720,12 @@ function delay(ms) {
 }
 
 async function sendMessage(message, attachments = [], metadata = undefined) {
-  assertValidApiKey(settings.apiKey);
   const conversation = await ensureActiveConversation();
-  const response = await fetch(apiUrl('/v1/message'), {
+  const response = await apiFetch('/v1/message', {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
-      authorization: `Bearer ${settings.apiKey}`,
-      'x-user-id': await sharedUserId(),
+      ...(await historyHeaders()),
     },
     body: JSON.stringify({ conversation_id: conversation.id, message, attachments, ...(metadata ? { metadata } : {}) }),
   });
@@ -2657,7 +2739,7 @@ async function sendMessage(message, attachments = [], metadata = undefined) {
 }
 
 function pendingJobStorageKey(conversationId = activeConversationId()) {
-  return `${PENDING_JOB_KEY}:${settings.apiUrl}:${settings.apiKey || 'anonymous'}:${conversationId || 'no-conversation'}`;
+  return `${PENDING_JOB_KEY}:${settings.apiUrl}:${authUser?.id || settings.apiKey || 'anonymous'}:${conversationId || 'no-conversation'}`;
 }
 
 function savePendingJob(job, conversationId = activeConversationId()) {
@@ -2702,7 +2784,8 @@ function clearPendingJob(conversationId = activeConversationId()) {
 }
 
 async function fetchConversationHistory(conversationId) {
-  const response = await fetch(apiUrl('/v1/history', { conversation_id: conversationId }), {
+  const response = await apiFetch('/v1/history', {
+    params: { conversation_id: conversationId },
     headers: await historyHeaders(),
   });
   if (!response.ok) {
@@ -2713,7 +2796,8 @@ async function fetchConversationHistory(conversationId) {
 }
 
 async function fetchJob(jobId, conversationId = activeConversationId()) {
-  const response = await fetch(apiUrl(`/v1/jobs/${encodeURIComponent(jobId)}`, { conversation_id: conversationId }), {
+  const response = await apiFetch(`/v1/jobs/${encodeURIComponent(jobId)}`, {
+    params: { conversation_id: conversationId },
     headers: await historyHeaders(),
   });
   const body = await response.json().catch(() => null);
@@ -2726,7 +2810,8 @@ async function fetchJob(jobId, conversationId = activeConversationId()) {
 }
 
 async function cancelJob(jobId, conversationId = activeConversationId()) {
-  const response = await fetch(apiUrl(`/v1/jobs/${encodeURIComponent(jobId)}/cancel`, { conversation_id: conversationId }), {
+  const response = await apiFetch(`/v1/jobs/${encodeURIComponent(jobId)}/cancel`, {
+    params: { conversation_id: conversationId },
     method: 'POST',
     headers: await historyHeaders(),
   });
@@ -2817,7 +2902,8 @@ async function waitForJobViaSse(jobId, onTick = () => {}, conversationId = activ
   const controller = new AbortController();
   const timeout = window.setTimeout(() => controller.abort(), 720_000);
   try {
-    const response = await fetch(apiUrl(`/v1/jobs/${encodeURIComponent(jobId)}/events`, { conversation_id: conversationId }), {
+    const response = await apiFetch(`/v1/jobs/${encodeURIComponent(jobId)}/events`, {
+    params: { conversation_id: conversationId },
       headers: await historyHeaders(),
       signal: controller.signal,
     });
@@ -3104,16 +3190,18 @@ async function healthCheck() {
     }
     const healthBody = await healthResponse.json();
 
-    const authResponse = await fetch(`${settings.apiUrl}/v1/message`, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        authorization: `Bearer ${settings.apiKey}`,
-        'x-user-id': `${await sharedUserId()}-connection-test`,
-        'x-openclaw-sync': '1',
-      },
-      body: JSON.stringify({ message: '연결 테스트입니다. OK만 답해주세요.' }),
-    });
+    const authResponse = settings.apiKey
+      ? await fetch(`${settings.apiUrl}/v1/message`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${settings.apiKey}`,
+          'x-user-id': `${await sharedUserId()}-connection-test`,
+          'x-openclaw-sync': '1',
+        },
+        body: JSON.stringify({ message: '연결 테스트입니다. OK만 답해주세요.' }),
+      })
+      : await apiFetch('/v1/auth/me');
     const authBody = await authResponse.json().catch(() => null);
     if (!authResponse.ok) {
       throw new Error(authBody?.error?.message || `인증 테스트 실패: HTTP ${authResponse.status}`);
@@ -3216,17 +3304,20 @@ renderHome();
 updateChatTitle();
 updateConversationSearchClearButton();
 const initialConversationId = conversationIdFromPath();
-refreshConversations()
-  .then(async () => {
-    if (!initialConversationId) {
-      return;
-    }
-    const selected = await selectConversation(initialConversationId, { replaceUrl: true });
-    if (!selected) {
-      goHome({ replaceUrl: true });
-    }
-  })
-  .catch((error) => appendMessage('system', error instanceof Error ? error.message : String(error), { persist: false }));
+(async () => {
+  const user = await loadCurrentUser();
+  if (!user && !settings.apiKey) {
+    return;
+  }
+  await refreshConversations();
+  if (!initialConversationId) {
+    return;
+  }
+  const selected = await selectConversation(initialConversationId, { replaceUrl: true });
+  if (!selected) {
+    goHome({ replaceUrl: true });
+  }
+})().catch((error) => appendMessage('system', error instanceof Error ? error.message : String(error), { persist: false }));
 startHistoryPolling();
 
 function toggleSettingsPanel() {
@@ -3265,6 +3356,37 @@ document.addEventListener('click', (event) => {
   }
   elements.settingsPanel.classList.add('hidden');
 });
+
+
+elements.loginForm?.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const username = elements.loginUsernameInput?.value.trim() || '';
+  const password = elements.loginPasswordInput?.value || '';
+  if (elements.loginSubmitButton) {
+    elements.loginSubmitButton.disabled = true;
+  }
+  if (elements.loginStatusText) {
+    elements.loginStatusText.textContent = '로그인 중입니다…';
+  }
+  try {
+    await login(username, password);
+    await refreshConversations();
+    if (initialConversationId) {
+      const selected = await selectConversation(initialConversationId, { replaceUrl: true });
+      if (!selected) {
+        goHome({ replaceUrl: true });
+      }
+    }
+  } catch (error) {
+    showLoginScreen(error instanceof Error ? error.message : String(error));
+  } finally {
+    if (elements.loginSubmitButton) {
+      elements.loginSubmitButton.disabled = false;
+    }
+  }
+});
+
+elements.logoutButton?.addEventListener('click', logout);
 
 elements.saveSettingsButton.addEventListener('click', () => {
   const previousApiKey = settings.apiKey;

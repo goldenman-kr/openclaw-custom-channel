@@ -1232,3 +1232,23 @@ mock token streaming SSE 경로를 반복 검증할 수 있도록 npm smoke scri
 - Gateway endpoint는 켜졌다.
 - WebChat production service는 아직 `OPENCLAW_TRANSPORT=agent` 상태이므로 production WebChat은 아직 token streaming transport를 사용하지 않는다.
 - 다음 운영 적용은 `openclaw-custom-channel.service` 환경을 `OPENCLAW_TRANSPORT=gateway-openai`로 바꾸고 해당 서비스만 재시작한 뒤 smoke/브라우저 확인하는 단계다.
+
+## 2026-05-01 multi-user 단위 재정렬 점검
+
+- `multi-user` 브랜치를 `origin/multi-user` 기준으로 리셋한 뒤 시작한 변경 상태를 점검했다.
+- 현재 미커밋 변경은 auth/session 기초, owner_id 기초, media/workspace guard 초안이 섞여 있으나 TypeScript 단계에서 깨지는 부분은 없다.
+- 검증:
+  - `git diff --check` 통과
+  - `npm run typecheck` 통과
+  - `npm test` 통과 (20/20)
+  - `npm run build` 통과
+- 판단: 즉시 리셋할 정도의 손상/꼬임은 없다. 다만 단위 커밋을 위해 이후 작업은 먼저 인증/세션 쿠키 단위를 완성하고, owner/media/workspace 변경은 별도 단위로 분리해 검증한다.
+
+## 2026-05-01 multi-user 1단계 auth/login 보강
+
+- 1단계 범위 안에서만 `id/password 로그인 + 서버 세션 쿠키 + logout + /v1/auth/login/logout/me + 프론트 로그인 화면`을 점검/보강했다.
+- `AUTH_ADMIN_PASSWORD`가 설정되어 있으면 서버 startup에서 `AUTH_ADMIN_USERNAME`(기본 `admin`) 계정을 admin role로 생성/갱신하도록 했다. 비밀번호는 DB에 scrypt hash로만 저장한다.
+- `/v1/auth/login`은 `username` 필드뿐 아니라 UI 용어에 맞춰 `id` 필드도 로그인 ID로 받을 수 있게 했다.
+- `AuthStore` 단위 테스트를 추가해 user 생성, password verify, session 생성/폐기, `ensureUser` 갱신/재활성화를 검증한다.
+- 프론트 로그인 화면 변경이 서비스워커 캐시에 묶이지 않도록 `server/public/sw.js` cache version을 `v140`으로 올렸다.
+- 1단계 범위를 좁히기 위해 이전 초안에 섞였던 `owner_id` 기반 conversation 격리와 media/workspace guard 변경은 현재 작업 트리에서 분리해 제외했다. 다음 단계에서 별도 패치로 다시 다룬다.
