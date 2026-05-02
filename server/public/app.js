@@ -1,6 +1,8 @@
 const STORAGE_KEY = 'openclaw-web-channel-settings-v1';
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
 const COMPOSER_DRAFT_KEY_PREFIX = 'openclaw-web-channel-composer-draft-v1';
+const CLIENT_BUILD_ID = 'pwa-2026-05-02-002';
+const VERSION_CHECK_DISMISSED_KEY = 'openclaw-web-channel-version-dismissed-v1';
 const MAX_ATTACHMENTS = 3;
 const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
 const ALLOWED_ATTACHMENT_TYPES = new Set([
@@ -560,6 +562,52 @@ function showToast(message, options = {}) {
     toast.addEventListener('transitionend', () => toast.remove(), { once: true });
     window.setTimeout(() => toast.remove(), 500);
   }, options.durationMs || 2400);
+}
+
+function showVersionMismatchAlert(serverBuildId) {
+  const dismissKey = `${CLIENT_BUILD_ID}:${serverBuildId}`;
+  if (localStorage.getItem(VERSION_CHECK_DISMISSED_KEY) === dismissKey || document.querySelector('.version-alert')) {
+    return;
+  }
+
+  const alert = document.createElement('section');
+  alert.className = 'version-alert';
+  alert.setAttribute('role', 'alert');
+  alert.innerHTML = `
+    <div class="version-alert__text">
+      <strong>웹앱 업데이트가 필요합니다.</strong>
+      <span>서버와 현재 웹앱 클라이언트 버전이 맞지 않습니다. 강력 새로고침을 해주세요.</span>
+    </div>
+    <div class="version-alert__actions">
+      <button class="ghost-button version-alert__dismiss" type="button">나중에</button>
+      <button class="version-alert__refresh" type="button">강력 새로고침</button>
+    </div>
+  `;
+  alert.querySelector('.version-alert__refresh')?.addEventListener('click', () => clearAppCacheAndReload());
+  alert.querySelector('.version-alert__dismiss')?.addEventListener('click', () => {
+    localStorage.setItem(VERSION_CHECK_DISMISSED_KEY, dismissKey);
+    alert.remove();
+  });
+  document.body.append(alert);
+}
+
+async function checkClientServerVersion() {
+  try {
+    const response = await fetch(`${settings.apiUrl}/v1/version`, {
+      cache: 'no-store',
+      headers: await apiHeaders(),
+    });
+    if (!response.ok) {
+      return;
+    }
+    const body = await response.json();
+    const serverBuildId = String(body?.build_id || '');
+    if (serverBuildId && serverBuildId !== CLIENT_BUILD_ID) {
+      showVersionMismatchAlert(serverBuildId);
+    }
+  } catch {
+    // Version checks are best-effort only.
+  }
 }
 
 function isNearBottom(threshold = 120) {
@@ -3366,6 +3414,8 @@ applySettingsToForm();
 renderHome();
 updateChatTitle();
 updateConversationSearchClearButton();
+checkClientServerVersion();
+window.setInterval(checkClientServerVersion, 10 * 60 * 1000);
 const initialConversationId = conversationIdFromPath();
 (async () => {
   const user = await loadCurrentUser();
