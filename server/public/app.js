@@ -88,6 +88,7 @@ const elements = {
   apiKeyInput: document.querySelector('#apiKeyInput'),
   deviceIdInput: document.querySelector('#deviceIdInput'),
   themeModeInput: document.querySelector('#themeModeInput'),
+  autoLocationOnHereInput: document.querySelector('#autoLocationOnHereInput'),
   fontSizeInput: document.querySelector('#fontSizeInput'),
   fontSizeValue: document.querySelector('#fontSizeValue'),
   saveSettingsButton: document.querySelector('#saveSettingsButton'),
@@ -145,6 +146,7 @@ function loadSettings() {
     notificationsEnabled: false,
     sessionNonce: '',
     lastActiveConversationId: '',
+    autoLocationOnHere: true,
   };
 
   try {
@@ -270,6 +272,9 @@ function applySettingsToForm() {
   }
   if (elements.themeModeInput) {
     elements.themeModeInput.value = settings.themeMode || 'dark';
+  }
+  if (elements.autoLocationOnHereInput) {
+    elements.autoLocationOnHereInput.checked = settings.autoLocationOnHere !== false;
   }
   updateNotificationButton();
   applyTheme(settings.themeMode || 'dark');
@@ -547,7 +552,8 @@ function readSettingsFromForm() {
   const deviceId = elements.deviceIdInput?.value.trim() || settings.deviceId || randomDeviceId();
   const themeMode = elements.themeModeInput?.value || settings.themeMode || 'dark';
   const fontSize = normalizeFontSize(elements.fontSizeInput?.value || settings.fontSize);
-  return { ...settings, apiUrl, apiKey, deviceId, themeMode, fontSize };
+  const autoLocationOnHere = elements.autoLocationOnHereInput ? elements.autoLocationOnHereInput.checked : settings.autoLocationOnHere !== false;
+  return { ...settings, apiUrl, apiKey, deviceId, themeMode, fontSize, autoLocationOnHere };
 }
 
 function setStatus(message) {
@@ -1748,7 +1754,7 @@ async function renderHistory(options = {}) {
   try {
     const history = await fetchHistory();
     if (history.length === 0) {
-      appendMessage('system', '📌 TIP: 채팅에 "여기"가 포함되거나, 현재위치 포함을 켜면 전송 시 GPS 좌표가 메시지에 붙습니다.', { persist: false });
+      appendMessage('system', '📌 TIP: 설정에서 자동 위치 첨부가 켜져 있으면 채팅에 "여기"가 포함될 때 현재 위치가 함께 전달됩니다. 핀 버튼으로도 이번 메시지에만 위치를 첨부할 수 있습니다.', { persist: false });
       return;
     }
 
@@ -3251,7 +3257,8 @@ async function handleSubmit(event) {
     const conversation = await ensureActiveConversation();
     const outgoingMessage = rawMessage || '첨부 파일을 확인하고 사용자의 의도에 맞게 분석해주세요.';
     const isSlashCommand = rawMessage.startsWith('/');
-    const shouldIncludeLocation = elements.includeLocationInput.checked || slashCommandUsesCurrentLocation(rawMessage) || (!isSlashCommand && rawMessage.includes('여기'));
+    const autoLocationOnHere = settings.autoLocationOnHere !== false;
+    const shouldIncludeLocation = elements.includeLocationInput.checked || slashCommandUsesCurrentLocation(rawMessage) || (autoLocationOnHere && !isSlashCommand && rawMessage.includes('여기'));
     let metadata;
     if (shouldIncludeLocation) {
       setStatus('현재 위치를 가져오는 중입니다...');
@@ -3688,6 +3695,11 @@ elements.saveSettingsButton?.addEventListener('click', () => {
 
 elements.themeModeInput.addEventListener('change', () => {
   applyTheme(elements.themeModeInput.value);
+});
+
+elements.autoLocationOnHereInput?.addEventListener('change', () => {
+  settings = { ...settings, autoLocationOnHere: elements.autoLocationOnHereInput.checked };
+  saveSettings(settings);
 });
 
 elements.fontSizeInput.addEventListener('input', () => {

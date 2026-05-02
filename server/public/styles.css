@@ -305,6 +305,25 @@ body.drawer-open .conversation-sidebar {
 
 label { display: grid; gap: 6px; color: var(--muted); font-size: 13px; }
 
+.settings-checkbox {
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  color: var(--text);
+}
+
+.settings-checkbox input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.settings-checkbox span {
+  min-width: 0;
+  line-height: 1.35;
+}
+
 .range-row {
   display: flex;
   align-items: center;
