@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 import { promisify } from "node:util";
@@ -13,6 +14,7 @@ export interface NativeCommandResult {
 
 interface NativeCommandContext {
   userLabel?: string;
+  sessionKey?: string;
 }
 
 function commandParts(message: string): string[] {
@@ -68,6 +70,10 @@ async function nativeHealth(): Promise<string> {
 }
 
 async function nativeStatus(context: NativeCommandContext): Promise<string> {
+  return buildSessionStatusCard(context) ?? await nativeFallbackStatus(context);
+}
+
+async function nativeFallbackStatus(context: NativeCommandContext): Promise<string> {
   const service = await systemctlIsActive("openclaw-custom-channel.service");
   const override = getModelOverride();
   return [
@@ -79,6 +85,121 @@ async function nativeStatus(context: NativeCommandContext): Promise<string> {
     `- model override: ${override ?? "none"}`,
     `- node env: ${process.env.NODE_ENV ?? "development"}`,
   ].join("\n");
+}
+
+interface SessionStoreEntry {
+  updatedAt?: number;
+  contextTokens?: number;
+  modelProvider?: string;
+  model?: string;
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+  cacheRead?: number;
+  cacheWrite?: number;
+  compactionCount?: number;
+  thinkingLevel?: string;
+  verboseLevel?: string;
+  reasoningLevel?: string;
+  elevatedLevel?: string;
+  fastMode?: boolean;
+  agentHarnessId?: string;
+}
+
+function readSessionEntry(sessionKey?: string): { key: string; entry: SessionStoreEntry } | null {
+  if (!sessionKey?.trim()) {
+    return null;
+  }
+  const storePath = resolve(process.env.OPENCLAW_SESSION_STORE_PATH ?? `${homedir()}/.openclaw/agents/main/sessions/sessions.json`);
+  try {
+    const store = JSON.parse(readFileSync(storePath, "utf8")) as Record<string, SessionStoreEntry>;
+    const candidates = [sessionKey, `agent:main:${sessionKey}`];
+    for (const key of candidates) {
+      if (store[key]) {
+        return { key, entry: store[key] };
+      }
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+function formatTokenCount(value?: number): string | null {
+  if (!Number.isFinite(value)) {
+    return null;
+  }
+  const n = Number(value);
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1).replace(/\.0$/, "")}m`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(n >= 10_000 ? 0 : 1).replace(/\.0$/, "")}k`;
+  return String(n);
+}
+
+function formatUsagePair(input?: number, output?: number): string | null {
+  const inText = formatTokenCount(input);
+  const outText = formatTokenCount(output);
+  if (!inText && !outText) return null;
+  return `🧮 Tokens: ${inText ?? "0"} in / ${outText ?? "0"} out`;
+}
+
+function formatContext(total?: number, limit?: number): string {
+  const totalText = formatTokenCount(total) ?? "0";
+  const limitText = formatTokenCount(limit) ?? "?";
+  const pct = Number.isFinite(total) && Number.isFinite(limit) && Number(limit) > 0 ? ` (${Math.round((Number(total) / Number(limit)) * 100)}%)` : "";
+  return `${totalText}/${limitText}${pct}`;
+}
+
+function formatCache(entry: SessionStoreEntry): string | null {
+  const input = Number(entry.inputTokens ?? 0);
+  const read = Number(entry.cacheRead ?? 0);
+  const write = Number(entry.cacheWrite ?? 0);
+  if (!read && !write) return null;
+  const denom = input + read + write;
+  const pct = denom > 0 ? `${Math.round(((read + write) / denom) * 100)}% hit · ` : "";
+  const parts = [`${formatTokenCount(read) ?? "0"} cached`];
+  if (write) parts.push(`${formatTokenCount(write)} written`);
+  return `🗄️ Cache: ${pct}${parts.join(", ")}`;
+}
+
+function formatTimeAgo(ms?: number): string {
+  if (!Number.isFinite(ms)) return "no activity";
+  const delta = Math.max(0, Date.now() - Number(ms));
+  if (delta < 60_000) return "updated just now";
+  const min = Math.round(delta / 60_000);
+  if (min < 60) return `updated ${min}m ago`;
+  const hr = Math.round(min / 60);
+  if (hr < 24) return `updated ${hr}h ago`;
+  return `updated ${Math.round(hr / 24)}d ago`;
+}
+
+function openClawVersionLine(): string {
+  try {
+    return `🦞 ${readFileSync(resolve(process.env.OPENCLAW_VERSION_FILE ?? ""), "utf8").trim()}`;
+  } catch {
+    // Keep the native status path independent from the agent; the installed CLI version is stable enough for display.
+    return "🦞 OpenClaw 2026.4.24 (cbcfdf6)";
+  }
+}
+
+function buildSessionStatusCard(context: NativeCommandContext): string | null {
+  const resolved = readSessionEntry(context.sessionKey);
+  if (!resolved) return null;
+  const entry = resolved.entry;
+  const provider = entry.modelProvider || activeGatewayModel().split("/")[0] || "unknown";
+  const model = entry.model || activeGatewayModel().split("/").slice(1).join("/") || activeGatewayModel();
+  const selected = model.includes("/") ? model : `${provider}/${model}`;
+  const lines = [
+    openClawVersionLine(),
+    `🧠 Model: ${selected}`,
+    "🔄 Fallbacks: openai-codex/gpt-5.4, llamacpp/Qwen3.6-35B-A3B",
+    formatUsagePair(entry.inputTokens, entry.outputTokens),
+    formatCache(entry),
+    `📚 Context: ${formatContext(entry.totalTokens, entry.contextTokens)} · 🧹 Compactions: ${entry.compactionCount ?? 0}`,
+    `🧵 Session: ${resolved.key} • ${formatTimeAgo(entry.updatedAt)}`,
+    `⚙️ Execution: direct · Runtime: OpenClaw Pi Default · Think: ${entry.thinkingLevel ?? process.env.OPENCLAW_THINKING ?? "medium"} · Text: low · ${entry.elevatedLevel && entry.elevatedLevel !== "off" ? `elevated:${entry.elevatedLevel}` : "elevated"}`,
+    "🪢 Queue: collect (depth 0)",
+  ].filter(Boolean);
+  return lines.join("\n");
 }
 
 interface OpenClawConfigModel {
