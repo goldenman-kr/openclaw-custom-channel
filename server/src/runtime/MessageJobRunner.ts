@@ -87,6 +87,25 @@ export class MessageJobRunner {
       });
     }
 
+    let streamedText = "";
+    let lastPersistedStreamText = "";
+    let lastStreamPersistAt = 0;
+    const persistStreamCheckpoint = (force = false) => {
+      if (!job.conversationId || !this.deps.shouldPersistMessage(payload.message) || !streamedText.trim()) {
+        return;
+      }
+      const now = Date.now();
+      if (!force && (now - lastStreamPersistAt < 2_000 || streamedText === lastPersistedStreamText)) {
+        return;
+      }
+      this.deps.conversationStore.updateMessage(job.id, {
+        role: "assistant",
+        text: streamedText,
+      });
+      lastPersistedStreamText = streamedText;
+      lastStreamPersistAt = now;
+    };
+
     const result = await handlePostMessage(
       {
         chatRuntime: this.deps.chatRuntime,
@@ -96,7 +115,11 @@ export class MessageJobRunner {
         authContext: job.authContext,
         runtimeWorkspace: job.runtimeWorkspace,
         runtimeCallbacks: {
-          onToken: (token) => this.deps.publishToken?.(job, token),
+          onToken: (token) => {
+            streamedText += token;
+            persistStreamCheckpoint();
+            this.deps.publishToken?.(job, token);
+          },
         },
         abortSignal: abortController.signal,
       },
@@ -104,6 +127,7 @@ export class MessageJobRunner {
       payload,
     );
 
+    persistStreamCheckpoint(true);
     this.abortControllers.delete(job.id);
     if (this.isCancelled(job)) {
       return;

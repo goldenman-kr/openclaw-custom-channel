@@ -66,6 +66,66 @@ test("streams OpenAI-compatible Gateway chunks as runtime tokens", async () => {
   }
 });
 
+
+test("extracts OpenClaw payload text from Gateway SSE chunks", async () => {
+  const server = await withServer(async (_req, res) => {
+    res.writeHead(200, {
+      "content-type": "text/event-stream; charset=utf-8",
+      "cache-control": "no-cache",
+    });
+    res.write('data: {"payloads":[{"text":"payload answer"}]}\n\n');
+    res.end("data: [DONE]\n\n");
+  });
+
+  try {
+    const tokens: string[] = [];
+    const client = new GatewayOpenAiOpenClawClient(server.baseUrl, undefined, "openclaw-test", 5_000);
+    const result = await client.sendMessage({
+      sessionId: "session-payload-test",
+      message: "hello",
+      callbacks: {
+        async onToken(token) {
+          tokens.push(token);
+        },
+      },
+    });
+
+    assert.equal(result.reply, "payload answer");
+    assert.deepEqual(tokens, ["payload answer"]);
+  } finally {
+    await server.close();
+  }
+});
+
+test("falls back to non-stream response when Gateway SSE has no visible text", async () => {
+  const requests: Array<Record<string, unknown>> = [];
+  const server = await withServer(async (req, res) => {
+    const body = await readJson(req);
+    requests.push(body);
+    if (body.stream === true) {
+      res.writeHead(200, { "content-type": "text/event-stream; charset=utf-8" });
+      res.end('data: {"choices":[{"delta":{"role":"assistant"}}]}\n\ndata: [DONE]\n\n');
+      return;
+    }
+
+    res.writeHead(200, { "content-type": "application/json" });
+    res.end(JSON.stringify({ choices: [{ message: { content: "non-stream answer" } }] }));
+  });
+
+  try {
+    const client = new GatewayOpenAiOpenClawClient(server.baseUrl, undefined, "openclaw-test", 5_000);
+    const result = await client.sendMessage({ sessionId: "session-nonstream-test", message: "hello" });
+
+    assert.equal(result.reply, "non-stream answer");
+    assert.equal(requests.length, 2);
+    assert.equal(requests[0]?.stream, true);
+    assert.equal(requests[1]?.stream, false);
+    assert.equal((result.raw as { usedNonStreamFallback?: boolean }).usedNonStreamFallback, true);
+  } finally {
+    await server.close();
+  }
+});
+
 test("passes runtime workspace metadata to Gateway requests", async () => {
   const requests: Array<{ headers: IncomingMessage["headers"]; body: Record<string, unknown> }> = [];
   const server = await withServer(async (req, res) => {

@@ -1,6 +1,8 @@
 const STORAGE_KEY = 'openclaw-web-channel-settings-v1';
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
 const COMPOSER_DRAFT_KEY_PREFIX = 'openclaw-web-channel-composer-draft-v1';
+const CLIENT_BUILD_ID = 'pwa-2026-05-02-002';
+const VERSION_CHECK_DISMISSED_KEY = 'openclaw-web-channel-version-dismissed-v1';
 const MAX_ATTACHMENTS = 3;
 const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
 const ALLOWED_ATTACHMENT_TYPES = new Set([
@@ -68,6 +70,8 @@ const elements = {
   chatTitle: document.querySelector('#chatTitle'),
   mobileDrawerBackdrop: document.querySelector('#mobileDrawerBackdrop'),
   newConversationButton: document.querySelector('#newConversationButton'),
+  sidebarOwnerTitle: document.querySelector('#sidebarOwnerTitle'),
+  sidebarConversationCount: document.querySelector('#sidebarConversationCount'),
   conversationList: document.querySelector('#conversationList'),
   conversationSearchInput: document.querySelector('#conversationSearchInput'),
   clearConversationSearchButton: document.querySelector('#clearConversationSearchButton'),
@@ -156,6 +160,7 @@ function saveSettings(settings) {
 
 let settings = loadSettings();
 let historyPollTimer = null;
+const streamingIdleTimers = new Map();
 let isSendingMessage = false;
 let selectedAttachments = [];
 let composerDragDepth = 0;
@@ -254,10 +259,18 @@ function applyDisplaySettings() {
 }
 
 function applySettingsToForm() {
-  elements.apiUrlInput.value = settings.apiUrl || window.location.origin;
-  elements.apiKeyInput.value = settings.apiKey || '';
-  elements.deviceIdInput.value = settings.deviceId || randomDeviceId();
-  elements.themeModeInput.value = settings.themeMode || 'dark';
+  if (elements.apiUrlInput) {
+    elements.apiUrlInput.value = settings.apiUrl || window.location.origin;
+  }
+  if (elements.apiKeyInput) {
+    elements.apiKeyInput.value = settings.apiKey || '';
+  }
+  if (elements.deviceIdInput) {
+    elements.deviceIdInput.value = settings.deviceId || randomDeviceId();
+  }
+  if (elements.themeModeInput) {
+    elements.themeModeInput.value = settings.themeMode || 'dark';
+  }
   updateNotificationButton();
   applyTheme(settings.themeMode || 'dark');
   applyDisplaySettings();
@@ -529,11 +542,11 @@ function assertValidApiKey(apiKey) {
 }
 
 function readSettingsFromForm() {
-  const apiUrl = elements.apiUrlInput.value.trim().replace(/\/+$/, '') || window.location.origin;
-  const apiKey = normalizeApiKey(elements.apiKeyInput.value);
-  const deviceId = elements.deviceIdInput.value.trim() || randomDeviceId();
-  const themeMode = elements.themeModeInput.value || 'dark';
-  const fontSize = normalizeFontSize(elements.fontSizeInput.value);
+  const apiUrl = elements.apiUrlInput?.value.trim().replace(/\/+$/, '') || window.location.origin;
+  const apiKey = elements.apiKeyInput ? normalizeApiKey(elements.apiKeyInput.value) : settings.apiKey;
+  const deviceId = elements.deviceIdInput?.value.trim() || settings.deviceId || randomDeviceId();
+  const themeMode = elements.themeModeInput?.value || settings.themeMode || 'dark';
+  const fontSize = normalizeFontSize(elements.fontSizeInput?.value || settings.fontSize);
   return { ...settings, apiUrl, apiKey, deviceId, themeMode, fontSize };
 }
 
@@ -560,6 +573,52 @@ function showToast(message, options = {}) {
     toast.addEventListener('transitionend', () => toast.remove(), { once: true });
     window.setTimeout(() => toast.remove(), 500);
   }, options.durationMs || 2400);
+}
+
+function showVersionMismatchAlert(serverBuildId) {
+  const dismissKey = `${CLIENT_BUILD_ID}:${serverBuildId}`;
+  if (localStorage.getItem(VERSION_CHECK_DISMISSED_KEY) === dismissKey || document.querySelector('.version-alert')) {
+    return;
+  }
+
+  const alert = document.createElement('section');
+  alert.className = 'version-alert';
+  alert.setAttribute('role', 'alert');
+  alert.innerHTML = `
+    <div class="version-alert__text">
+      <strong>웹앱 업데이트가 필요합니다.</strong>
+      <span>서버와 현재 웹앱 클라이언트 버전이 맞지 않습니다. 강력 새로고침을 해주세요.</span>
+    </div>
+    <div class="version-alert__actions">
+      <button class="ghost-button version-alert__dismiss" type="button">나중에</button>
+      <button class="version-alert__refresh" type="button">강력 새로고침</button>
+    </div>
+  `;
+  alert.querySelector('.version-alert__refresh')?.addEventListener('click', () => clearAppCacheAndReload());
+  alert.querySelector('.version-alert__dismiss')?.addEventListener('click', () => {
+    localStorage.setItem(VERSION_CHECK_DISMISSED_KEY, dismissKey);
+    alert.remove();
+  });
+  document.body.append(alert);
+}
+
+async function checkClientServerVersion() {
+  try {
+    const response = await fetch(`${settings.apiUrl}/v1/version`, {
+      cache: 'no-store',
+      headers: await apiHeaders(),
+    });
+    if (!response.ok) {
+      return;
+    }
+    const body = await response.json();
+    const serverBuildId = String(body?.build_id || '');
+    if (serverBuildId && serverBuildId !== CLIENT_BUILD_ID) {
+      showVersionMismatchAlert(serverBuildId);
+    }
+  } catch {
+    // Version checks are best-effort only.
+  }
 }
 
 function isNearBottom(threshold = 120) {
@@ -984,6 +1043,26 @@ function sortConversations(items) {
   return [...items].sort((first, second) => Number(Boolean(second.pinned)) - Number(Boolean(first.pinned)) || Date.parse(second.updated_at || second.created_at || '') - Date.parse(first.updated_at || first.created_at || ''));
 }
 
+function currentUserDisplayName() {
+  const name = authUser?.display_name || authUser?.displayName || authUser?.username || authUser?.id || '';
+  return String(name).trim() || '사용자';
+}
+
+function updateSidebarSummary() {
+  if (!elements.sidebarOwnerTitle || !elements.sidebarConversationCount) {
+    return;
+  }
+  if (!canUseApi()) {
+    elements.sidebarOwnerTitle.textContent = '대화';
+    elements.sidebarConversationCount.textContent = '로그인이 필요합니다';
+    return;
+  }
+  const ownerName = currentUserDisplayName();
+  const count = baseVisibleConversations().length;
+  elements.sidebarOwnerTitle.textContent = `${ownerName}님의 대화`;
+  elements.sidebarConversationCount.textContent = showingArchived ? `보관함 ${count}개` : `대화 ${count}개`;
+}
+
 function updateArchiveToggleButton() {
   if (!elements.archiveToggleButton) {
     return;
@@ -1062,6 +1141,7 @@ function goHome(options = {}) {
 }
 
 function renderConversationList() {
+  updateSidebarSummary();
   if (!elements.conversationList) {
     return;
   }
@@ -1672,9 +1752,7 @@ async function renderHistory(options = {}) {
     }
 
     for (const item of history) {
-      if (typeof item?.role === 'string' && typeof item?.text === 'string') {
-        appendMessage(item.role, item.text, { id: item.id, savedAt: item.savedAt, completedAt: item.completedAt, persist: false, autoScroll: false, suppressScrollButton: true, mediaRefs: mediaRefsFromHistoryAttachments(item.attachments), pending: isPendingHistoryMessage(item) });
-      }
+      renderHistoryItem(item);
     }
     if (scrollToLatest || shouldFollow) {
       scrollToBottom({ force: true });
@@ -1895,7 +1973,7 @@ function appendMarkdown(parent, text) {
 
     const heading = line.match(/^(#{1,3})\s+(.+)$/);
     const bullet = line.match(/^\s*[-*]\s+(.+)$/);
-    const numbered = line.match(/^\s*\d+[.)]\s+(.+)$/);
+    const numbered = line.match(/^\s*(\d+)[.)]\s+(.+)$/);
 
     if (heading) {
       list = null;
@@ -1908,12 +1986,19 @@ function appendMarkdown(parent, text) {
 
     if (bullet || numbered) {
       const listType = bullet ? 'ul' : 'ol';
+      const explicitNumber = numbered ? Number(numbered[1]) : null;
       if (!list || list.tagName.toLowerCase() !== listType) {
         list = document.createElement(listType);
+        if (listType === 'ol' && explicitNumber && explicitNumber > 1) {
+          list.setAttribute('start', String(explicitNumber));
+        }
         parent.append(list);
       }
       const item = document.createElement('li');
-      appendInlineMarkdown(item, bullet?.[1] || numbered?.[1] || '');
+      if (listType === 'ol' && explicitNumber && list.children.length > 0) {
+        item.value = explicitNumber;
+      }
+      appendInlineMarkdown(item, bullet?.[1] || numbered?.[2] || '');
       list.append(item);
       continue;
     }
@@ -1939,6 +2024,56 @@ function messageTextWithoutAttachmentPreview(node) {
   return clone.textContent || '';
 }
 
+
+function isRunningJobHistoryMessage(item) {
+  return typeof item?.id === 'string'
+    && item.id.startsWith('job_')
+    && item.role === 'assistant'
+    && !item.completedAt;
+}
+
+function isPlaceholderPendingText(text) {
+  const normalized = typeof text === 'string' ? text.trim() : '';
+  return normalized === '응답 대기 중입니다…' || normalized === '응답을 처리 중입니다…' || /^응답을 처리 중입니다\s*\(\d+초\)$/.test(normalized);
+}
+
+function renderHistoryItem(item) {
+  if (typeof item?.role !== 'string' || typeof item?.text !== 'string') {
+    return;
+  }
+
+  if (isRunningJobHistoryMessage(item) && !isPlaceholderPendingText(item.text)) {
+    appendMessage('assistant', item.text, {
+      id: `${item.id}:partial`,
+      savedAt: item.savedAt,
+      persist: false,
+      autoScroll: false,
+      suppressScrollButton: true,
+      mediaRefs: mediaRefsFromHistoryAttachments(item.attachments),
+    });
+    appendMessage('assistant', '응답을 처리 중입니다…', {
+      id: item.id,
+      savedAt: item.savedAt,
+      persist: false,
+      autoScroll: false,
+      suppressScrollButton: true,
+      pending: true,
+    });
+    return;
+  }
+
+  appendMessage(item.role, item.text, {
+    id: item.id,
+    savedAt: item.savedAt,
+    completedAt: item.completedAt,
+    persist: false,
+    autoScroll: false,
+    suppressScrollButton: true,
+    mediaRefs: mediaRefsFromHistoryAttachments(item.attachments),
+    pending: isPendingHistoryMessage(item),
+  });
+}
+
 function currentRenderedHistorySignature() {
   return [...elements.messages.querySelectorAll('.message')]
     .map((node) => `${[...node.classList].find((className) => className !== 'message') || ''}:${messageTextWithoutAttachmentPreview(node)}`)
@@ -1946,15 +2081,11 @@ function currentRenderedHistorySignature() {
 }
 
 function historySignature(history) {
-  return history.map((item) => `${item.id || ''}:${item.role}:${item.text}:${item.completedAt || ''}`).join('\n---\n');
+  return history.map((item) => `${item.id || ''}:${item.role}:${item.text}:${item.jobId || ''}:${item.completedAt || ''}`).join('\n---\n');
 }
 
 function isPendingHistoryMessage(item) {
-  if (typeof item?.id !== 'string' || !item.id.startsWith('job_') || item.role !== 'assistant') {
-    return false;
-  }
-  const text = typeof item.text === 'string' ? item.text.trim() : '';
-  return text === '응답 대기 중입니다…' || text === '응답을 처리 중입니다…' || /^응답을 처리 중입니다\s*\(\d+초\)$/.test(text);
+  return isRunningJobHistoryMessage(item) && isPlaceholderPendingText(item.text);
 }
 
 async function refreshHistoryIfChanged() {
@@ -1976,18 +2107,7 @@ async function refreshHistoryIfChanged() {
       const previousBottomOffset = elements.messages.scrollHeight - elements.messages.scrollTop;
       clearRenderedMessages();
       for (const item of history) {
-        if (typeof item?.role === 'string' && typeof item?.text === 'string') {
-          appendMessage(item.role, item.text, {
-            id: item.id,
-            persist: false,
-            autoScroll: false,
-            suppressScrollButton: true,
-            mediaRefs: mediaRefsFromHistoryAttachments(item.attachments),
-            pending: isPendingHistoryMessage(item),
-            savedAt: item.savedAt,
-            completedAt: item.completedAt,
-          });
-        }
+        renderHistoryItem(item);
       }
       if (shouldFollow) {
         scrollToBottom({ force: true });
@@ -2010,7 +2130,7 @@ function reconcilePendingJobWithHistory(history, conversationId = activeConversa
     return;
   }
   const matchingMessage = history.find((item) => item?.id === pendingJob.job_id);
-  if (!matchingMessage || isPendingHistoryMessage(matchingMessage)) {
+  if (!matchingMessage || isRunningJobHistoryMessage(matchingMessage)) {
     return;
   }
   clearPendingJob(conversationId);
@@ -2915,6 +3035,32 @@ function applyStreamingToken(jobId, token, conversationId = activeConversationId
 
   node._streamingText = `${node._streamingText || ''}${token}`;
   renderMessageNode(node, 'assistant', node._streamingText, { pending: true });
+  scheduleStreamingIdleCheckpoint(jobId, conversationId);
+}
+
+function scheduleStreamingIdleCheckpoint(jobId, conversationId = activeConversationId()) {
+  window.clearTimeout(streamingIdleTimers.get(jobId));
+  streamingIdleTimers.set(jobId, window.setTimeout(() => {
+    streamingIdleTimers.delete(jobId);
+    if (!isActiveConversation(conversationId)) {
+      return;
+    }
+    const node = elements.messages.querySelector(`[data-message-id="${jobId}"]`);
+    const text = node?._streamingText || '';
+    if (!node || !text.trim()) {
+      return;
+    }
+
+    let checkpoint = elements.messages.querySelector(`[data-message-id="${jobId}:partial"]`);
+    if (!checkpoint) {
+      checkpoint = document.createElement('article');
+      checkpoint.dataset.messageId = `${jobId}:partial`;
+      node.before(checkpoint);
+    }
+    renderMessageNode(checkpoint, 'assistant', text, { autoScroll: false, suppressScrollButton: true });
+    node._streamingText = '';
+    renderMessageNode(node, 'assistant', '응답을 처리 중입니다…', { pending: true, autoScroll: false, suppressScrollButton: true });
+  }, 10_000));
 }
 
 async function waitForJobViaSse(jobId, onTick = () => {}, conversationId = activeConversationId(), onToken = () => {}) {
@@ -3359,6 +3505,8 @@ applySettingsToForm();
 renderHome();
 updateChatTitle();
 updateConversationSearchClearButton();
+checkClientServerVersion();
+window.setInterval(checkClientServerVersion, 10 * 60 * 1000);
 const initialConversationId = conversationIdFromPath();
 (async () => {
   const user = await loadCurrentUser();

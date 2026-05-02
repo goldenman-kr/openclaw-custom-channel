@@ -39,6 +39,7 @@ export function chatMessageToHistoryDto(message: ChatMessageRecord) {
     role: message.role,
     text: message.text,
     savedAt: message.createdAt,
+    ...(message.jobId ? { jobId: message.jobId } : {}),
     ...(message.completedAt ? { completedAt: message.completedAt } : {}),
     ...(message.attachments && message.attachments.length > 0 ? { attachments: message.attachments } : {}),
   };

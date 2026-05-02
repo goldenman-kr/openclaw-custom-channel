@@ -20,21 +20,13 @@ export class GatewayOpenAiOpenClawClient implements OpenClawClient {
     }
     const timeout = setTimeout(() => abortController.abort(new Error("OpenClaw Gateway request timed out.")), this.timeoutMs);
     const streamed: string[] = [];
+    const rawStreamEvents: string[] = [];
 
     try {
       const response = await fetch(url, {
         method: "POST",
-        headers: this.headers(input),
-        body: JSON.stringify({
-          model: this.model,
-          stream: true,
-          messages: [
-            {
-              role: "user",
-              content: this.buildContent(input.message, input.attachments ?? [], input.metadata, input.runtimeWorkspace),
-            },
-          ],
-        }),
+        headers: this.headers(input, true),
+        body: JSON.stringify(this.requestBody(input, true)),
         signal: abortController.signal,
       });
 
@@ -50,16 +42,20 @@ export class GatewayOpenAiOpenClawClient implements OpenClawClient {
       const finalText = await this.readOpenAiSse(response.body, async (token) => {
         streamed.push(token);
         await input.callbacks?.onToken?.(token);
-      });
+      }, rawStreamEvents);
+      const streamReply = finalText || streamed.join("");
+      const fallbackReply = streamReply ? "" : await this.fetchNonStreamingReply(input, abortController.signal).catch(() => "");
 
       return {
-        reply: finalText || streamed.join("") || "응답 출력에 문제가 있습니다. 다시 답변을 요청해보세요. 이 오류가 반복되면 새 대화를 열어 세션을 다시 시작해주세요.",
+        reply: streamReply || fallbackReply || "응답 출력에 문제가 있습니다. 다시 답변을 요청해보세요. 이 오류가 반복되면 새 대화를 열어 세션을 다시 시작해주세요.",
         raw: {
           transport: "gateway-openai",
           endpoint: url.toString(),
           model: this.model,
           sessionId: input.sessionId,
           streamedChunks: streamed.length,
+          rawStreamEvents: rawStreamEvents.slice(-5),
+          usedNonStreamFallback: !streamReply && Boolean(fallbackReply),
         },
       };
     } finally {
@@ -68,10 +64,10 @@ export class GatewayOpenAiOpenClawClient implements OpenClawClient {
     }
   }
 
-  private headers(input: OpenClawClientInput): HeadersInit {
+  private headers(input: OpenClawClientInput, stream: boolean): HeadersInit {
     const headers: Record<string, string> = {
       "content-type": "application/json",
-      accept: "text/event-stream",
+      accept: stream ? "text/event-stream" : "application/json",
       "x-openclaw-session-key": input.sessionId,
       "x-openclaw-message-channel": "webchat",
     };
@@ -92,6 +88,41 @@ export class GatewayOpenAiOpenClawClient implements OpenClawClient {
       headers.authorization = `Bearer ${this.token}`;
     }
     return headers;
+  }
+
+  private requestBody(input: OpenClawClientInput, stream: boolean): Record<string, unknown> {
+    return {
+      model: this.model,
+      stream,
+      messages: [
+        {
+          role: "user",
+          content: this.buildContent(input.message, input.attachments ?? [], input.metadata, input.runtimeWorkspace),
+        },
+      ],
+    };
+  }
+
+  private async fetchNonStreamingReply(input: OpenClawClientInput, signal: AbortSignal): Promise<string> {
+    const url = new URL("/v1/chat/completions", this.baseUrl);
+    const response = await fetch(url, {
+      method: "POST",
+      headers: this.headers(input, false),
+      body: JSON.stringify(this.requestBody(input, false)),
+      signal,
+    });
+    if (!response.ok) {
+      return "";
+    }
+    const text = await response.text().catch(() => "");
+    if (!text.trim()) {
+      return "";
+    }
+    try {
+      return extractVisibleText(JSON.parse(text)) ?? "";
+    } catch {
+      return text.trim();
+    }
   }
 
   private buildContent(message: string, attachments: MessageAttachment[], metadata?: MessageRequestMetadata, runtimeWorkspace?: RuntimeWorkspaceScope): string | Array<Record<string, unknown>> {
@@ -187,7 +218,7 @@ export class GatewayOpenAiOpenClawClient implements OpenClawClient {
     }
   }
 
-  private async readOpenAiSse(body: ReadableStream<Uint8Array>, onToken: (token: string) => Promise<void>): Promise<string> {
+  private async readOpenAiSse(body: ReadableStream<Uint8Array>, onToken: (token: string) => Promise<void>, rawEvents: string[] = []): Promise<string> {
     const reader = body.getReader();
     const decoder = new TextDecoder();
     let buffer = "";
@@ -202,7 +233,7 @@ export class GatewayOpenAiOpenClawClient implements OpenClawClient {
       const lines = buffer.split(/\r?\n/);
       buffer = lines.pop() ?? "";
       for (const line of lines) {
-        const token = this.parseSseLine(line);
+        const token = this.parseSseLine(line, rawEvents);
         if (token) {
           finalText += token;
           await onToken(token);
@@ -212,7 +243,7 @@ export class GatewayOpenAiOpenClawClient implements OpenClawClient {
 
     buffer += decoder.decode();
     for (const line of buffer.split(/\r?\n/)) {
-      const token = this.parseSseLine(line);
+      const token = this.parseSseLine(line, rawEvents);
       if (token) {
         finalText += token;
         await onToken(token);
@@ -222,7 +253,7 @@ export class GatewayOpenAiOpenClawClient implements OpenClawClient {
     return finalText;
   }
 
-  private parseSseLine(line: string): string | null {
+  private parseSseLine(line: string, rawEvents: string[]): string | null {
     if (!line.startsWith("data:")) {
       return null;
     }
@@ -231,9 +262,13 @@ export class GatewayOpenAiOpenClawClient implements OpenClawClient {
       return null;
     }
 
+    rawEvents.push(data.slice(0, 2_000));
+    if (rawEvents.length > 20) {
+      rawEvents.splice(0, rawEvents.length - 20);
+    }
+
     try {
-      const parsed = JSON.parse(data) as OpenAiChatCompletionChunk;
-      return parsed.choices?.map((choice) => choice.delta?.content ?? "").join("") || null;
+      return extractVisibleText(JSON.parse(data)) ?? null;
     } catch {
       return null;
     }
@@ -243,7 +278,120 @@ export class GatewayOpenAiOpenClawClient implements OpenClawClient {
 interface OpenAiChatCompletionChunk {
   choices?: Array<{
     delta?: {
-      content?: string;
+      content?: string | Array<unknown>;
     };
+    message?: {
+      content?: string | Array<unknown>;
+    };
+    text?: string;
   }>;
+  payloads?: unknown[];
+  result?: unknown;
+  meta?: unknown;
+  text?: string;
+  reply?: string;
+  message?: string;
+  output?: string;
+  content?: string | Array<unknown>;
+}
+
+function extractVisibleText(value: unknown): string | null {
+  const parsed = asRecord(value) as OpenAiChatCompletionChunk | null;
+  if (!parsed) {
+    return typeof value === "string" && value.trim() ? value.trim() : null;
+  }
+
+  const choiceText = parsed.choices
+    ?.map((choice) => textFromContent(choice.delta?.content) ?? textFromContent(choice.message?.content) ?? asString(choice.text) ?? "")
+    .join("");
+  if (choiceText && choiceText.trim()) {
+    return choiceText;
+  }
+
+  const payloadText = payloadsText(parsed.payloads);
+  if (payloadText) {
+    return payloadText;
+  }
+
+  const result = asRecord(parsed.result);
+  const resultText = result ? extractVisibleText(result) : null;
+  if (resultText) {
+    return resultText;
+  }
+
+  const meta = asRecord(parsed.meta) ?? asRecord(result?.meta);
+  const finalAssistantRawText = asString(meta?.finalAssistantRawText);
+  if (finalAssistantRawText && containsMediaDirective(finalAssistantRawText)) {
+    return finalAssistantRawText;
+  }
+  const finalAssistantVisibleText = asString(meta?.finalAssistantVisibleText);
+  if (finalAssistantVisibleText) {
+    return finalAssistantVisibleText;
+  }
+  if (finalAssistantRawText) {
+    return finalAssistantRawText;
+  }
+
+  for (const key of ["reply", "message", "text", "output", "content"] as const) {
+    const text = textFromContent(parsed[key]);
+    if (text) {
+      return text;
+    }
+  }
+
+  return null;
+}
+
+function payloadsText(payloads: unknown[] | undefined): string | null {
+  const parts = payloads
+    ?.flatMap((payload) => {
+      const record = asRecord(payload);
+      if (!record) {
+        return [];
+      }
+      const text = asString(record.text);
+      const media = [record.mediaUrls, record.MediaUrls, record.MediaPaths]
+        .flatMap((entry) => (Array.isArray(entry) ? entry : []))
+        .filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0)
+        .map((entry) => `MEDIA:${entry.trim()}`);
+      const singles = [record.mediaUrl, record.MediaUrl, record.MediaPath]
+        .map(asString)
+        .filter((entry): entry is string => Boolean(entry))
+        .map((entry) => `MEDIA:${entry}`);
+      return [text, ...media, ...singles].filter((entry): entry is string => Boolean(entry));
+    })
+    .filter(Boolean) ?? [];
+  return parts.length > 0 ? parts.join("\n\n") : null;
+}
+
+function textFromContent(content: unknown): string | null {
+  if (typeof content === "string") {
+    return content.length > 0 ? content : null;
+  }
+  if (!Array.isArray(content)) {
+    return null;
+  }
+  const text = content
+    .map((part) => {
+      if (typeof part === "string") {
+        return part;
+      }
+      const record = asRecord(part);
+      return textFromContent(record?.text) ?? textFromContent(record?.content);
+    })
+    .filter(Boolean)
+    .join("");
+  return text.length > 0 ? text : null;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : null;
+}
+
+function asString(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function containsMediaDirective(text: string): boolean {
+  return /^\s*MEDIA:/m.test(text);
 }
