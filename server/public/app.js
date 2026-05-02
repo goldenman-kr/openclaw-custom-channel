@@ -163,6 +163,8 @@ function saveSettings(settings) {
 let settings = loadSettings();
 let historyPollTimer = null;
 const streamingIdleTimers = new Map();
+const streamingTextByJob = new Map();
+const MIN_STREAMING_CHECKPOINT_CHARS = 12;
 let isSendingMessage = false;
 let selectedAttachments = [];
 let composerDragDepth = 0;
@@ -3040,9 +3042,11 @@ function applyStreamingToken(jobId, token, conversationId = activeConversationId
     node = appendMessage('assistant', '', { id: jobId, persist: false, pending: true });
   }
 
-  const currentText = node._streamingText || (isPlaceholderPendingText(messageTextWithoutAttachmentPreview(node)) ? '' : messageTextWithoutAttachmentPreview(node));
-  node._streamingText = `${currentText}${token}`;
-  renderMessageNode(node, 'assistant', node._streamingText, { pending: true });
+  const currentText = streamingTextByJob.get(jobId) || node._streamingText || (isPlaceholderPendingText(messageTextWithoutAttachmentPreview(node)) ? '' : messageTextWithoutAttachmentPreview(node));
+  const nextText = `${currentText}${token}`;
+  streamingTextByJob.set(jobId, nextText);
+  node._streamingText = nextText;
+  renderMessageNode(node, 'assistant', nextText, { pending: true });
   scheduleStreamingIdleCheckpoint(jobId, conversationId);
 }
 
@@ -3051,7 +3055,7 @@ function streamingNodeText(node) {
     return '';
   }
   const visibleText = messageTextWithoutAttachmentPreview(node);
-  const bufferedText = typeof node._streamingText === 'string' ? node._streamingText : '';
+  const bufferedText = streamingTextByJob.get(node.dataset.messageId || '') || (typeof node._streamingText === 'string' ? node._streamingText : '');
   if (visibleText.length > bufferedText.length && !isPlaceholderPendingText(visibleText)) {
     return visibleText;
   }
@@ -3070,6 +3074,9 @@ function scheduleStreamingIdleCheckpoint(jobId, conversationId = activeConversat
     if (!node || !text.trim()) {
       return;
     }
+    if (text.trim().length < MIN_STREAMING_CHECKPOINT_CHARS) {
+      return;
+    }
 
     let checkpoint = elements.messages.querySelector(`[data-message-id="${jobId}:partial"]`);
     const checkpointText = checkpoint ? messageTextWithoutAttachmentPreview(checkpoint) : '';
@@ -3080,6 +3087,7 @@ function scheduleStreamingIdleCheckpoint(jobId, conversationId = activeConversat
       node.before(checkpoint);
     }
     renderMessageNode(checkpoint, 'assistant', combinedText, { autoScroll: false, suppressScrollButton: true });
+    streamingTextByJob.set(jobId, '');
     node._streamingText = '';
     renderMessageNode(node, 'assistant', '응답을 처리 중입니다…', { pending: true, autoScroll: false, suppressScrollButton: true });
   }, 10_000));
