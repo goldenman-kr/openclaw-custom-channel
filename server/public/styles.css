@@ -2086,3 +2086,29 @@ html[data-theme="light"] .version-alert__text strong { color: #92400e; }
 
   .version-alert__actions { justify-content: flex-end; }
 }
+
+@media (max-width: 899px) {
+  body.drawer-open .chat-panel,
+  body.floating-actions-open .chat-titlebar,
+  body.floating-actions-open .messages,
+  body.floating-actions-open .messages-scroll-indicator,
+  body.floating-actions-open .composer,
+  body.settings-open .chat-titlebar,
+  body.settings-open .messages,
+  body.settings-open .messages-scroll-indicator,
+  body.settings-open .composer,
+  body.settings-open .floating-action-menu {
+    filter: blur(3px);
+    transform: translateZ(0);
+    transition: filter 160ms ease;
+    pointer-events: none;
+    user-select: none;
+  }
+
+  body.floating-actions-open .floating-action-menu,
+  body.settings-open .settings-panel {
+    filter: none;
+    pointer-events: auto;
+    user-select: auto;
+  }
+}

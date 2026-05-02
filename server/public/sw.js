@@ -1,4 +1,4 @@
-const CACHE_NAME = 'openclaw-web-channel-v150';
+const CACHE_NAME = 'openclaw-web-channel-v151';
 const ASSETS = [
   '/',
   '/index.html',

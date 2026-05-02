@@ -1579,6 +1579,7 @@ async function startNewConversation() {
 
 function setFloatingActionsExpanded(expanded) {
   floatingActionsExpanded = expanded;
+  document.body.classList.toggle('floating-actions-open', expanded);
   elements.floatingActionPanel?.classList.toggle('hidden', !expanded);
   if (elements.floatingActionToggle) {
     elements.floatingActionToggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
@@ -3574,6 +3575,7 @@ function openSettingsPanel(options = {}) {
     return;
   }
   elements.settingsPanel.classList.remove('hidden');
+  document.body.classList.add('settings-open');
   if (options.pushHistory === false || settingsPanelHistoryActive || !window.history?.pushState) {
     return;
   }
@@ -3584,10 +3586,12 @@ function openSettingsPanel(options = {}) {
 function closeSettingsPanel(options = {}) {
   if (!elements.settingsPanel || elements.settingsPanel.classList.contains('hidden')) {
     settingsPanelHistoryActive = false;
+    document.body.classList.remove('settings-open');
     return;
   }
   persistSettingsFromForm({ silent: true });
   elements.settingsPanel.classList.add('hidden');
+  document.body.classList.remove('settings-open');
   if (options.syncHistory && settingsPanelHistoryActive && window.history?.back) {
     settingsPanelHistoryActive = false;
     window.history.back();
