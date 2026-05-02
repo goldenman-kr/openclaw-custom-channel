@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#05194f" />
+    <title>OpenClaw Mobile</title>
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" type="image/png" sizes="192x192" href="/assets/openclaw-app-icon-192.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/assets/openclaw-app-icon-180.png" />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <section id="loginScreen" class="login-screen hidden" aria-label="로그인">
+      <form id="loginForm" class="login-card">
+        <div class="login-brand">OpenClaw</div>
+        <h1>로그인</h1>
+        <label>
+          ID
+          <input id="loginUsernameInput" type="text" autocomplete="username" required />
+        </label>
+        <label>
+          Password
+          <input id="loginPasswordInput" type="password" autocomplete="current-password" required />
+        </label>
+        <button id="loginSubmitButton" type="submit">로그인</button>
+        <p id="loginStatusText" class="status-text"></p>
+      </form>
+    </section>
+
+    <main class="app-shell">
+      <div id="mobileDrawerBackdrop" class="drawer-backdrop" data-drawer-close></div>
+
+      <aside id="conversationSidebar" class="conversation-sidebar" aria-label="대화 목록">
+        <div class="sidebar-header">
+          <strong>OpenClaw</strong>
+          <button id="newConversationButton" class="ghost-button sidebar-new-button" type="button">새 대화</button>
+        </div>
+        <nav id="conversationList" class="conversation-list" aria-label="대화 목록"></nav>
+        <label class="conversation-search" aria-label="대화 검색">
+          <span class="conversation-search-icon" aria-hidden="true">⌕</span>
+          <input id="conversationSearchInput" type="search" placeholder="대화 검색" autocomplete="off" />
+          <button id="clearConversationSearchButton" class="clear-message-input-button conversation-search-clear hidden" type="button" aria-label="검색어 지우기">×</button>
+        </label>
+        <div class="sidebar-footer">
+          <button id="archiveToggleButton" class="ghost-button sidebar-archive-button" type="button">
+            <span class="sidebar-button-icon sidebar-button-icon--archive" aria-hidden="true"></span>
+            <span class="sidebar-button-label">보관함</span>
+          </button>
+          <button id="logoutButton" class="ghost-button sidebar-logout-button" type="button">로그아웃</button>
+          <button id="sidebarSettingsButton" class="ghost-button sidebar-settings-button" type="button">
+            <span class="sidebar-button-icon sidebar-button-icon--settings" aria-hidden="true"></span>
+            <span>설정</span>
+          </button>
+        </div>
+      </aside>
+
+      <section class="chat-panel" aria-label="채팅">
+        <header class="chat-titlebar">
+          <button id="mobileMenuButton" class="ghost-button mobile-menu-button" type="button" aria-label="대화 목록 열기" aria-expanded="false" aria-controls="conversationSidebar">☰</button>
+          <h1 id="chatTitle" class="chat-title">OpenClaw</h1>
+          <span class="chat-titlebar-spacer" aria-hidden="true"></span>
+        </header>
+        <div id="floatingActionMenu" class="floating-action-menu">
+          <div id="floatingActionPanel" class="floating-action-panel hidden" role="menu" aria-label="빠른 작업">
+            <button id="floatingSettingsButton" class="ghost-button floating-action-item" type="button" role="menuitem">
+              <span class="floating-action-text">
+                <span class="floating-action-title">
+                  <span class="floating-action-icon" aria-hidden="true">⚙️</span>
+                  <strong>설정</strong>
+                </span>
+                <small>API, 테마, 알림 등 앱 설정을 엽니다.</small>
+              </span>
+            </button>
+            <button id="floatingRefreshButton" class="ghost-button floating-action-item" type="button" role="menuitem">
+              <span class="floating-action-text">
+                <span class="floating-action-title">
+                  <span class="floating-action-icon" aria-hidden="true">↻</span>
+                  <strong>새로고침</strong>
+                </span>
+                <small>앱 화면과 대화 기록을 다시 불러옵니다.</small>
+              </span>
+            </button>
+            <button id="continueNewSessionButton" class="ghost-button floating-action-item" type="button" role="menuitem">
+              <span class="floating-action-text">
+                <span class="floating-action-title">
+                  <span class="floating-action-icon" aria-hidden="true">🆕</span>
+                  <strong>새 세션으로 이어가기</strong>
+                </span>
+                <small>최근 대화 맥락을 새 OpenClaw 세션에 전달하고 이어갑니다.</small>
+              </span>
+            </button>
+          </div>
+          <button id="floatingActionToggle" class="ghost-button floating-action-toggle" type="button" aria-label="빠른 작업 열기" aria-expanded="false" aria-controls="floatingActionPanel" title="빠른 작업"><span class="floating-action-toggle-icon" aria-hidden="true"></span></button>
+        </div>
+        <button id="scrollToLatestButton" class="ghost-button scroll-latest-button hidden" type="button" aria-label="최신 응답으로 이동" title="최신 응답으로 이동">↓</button>
+
+        <section id="settingsPanel" class="settings-panel hidden" aria-label="설정">
+          <label>
+            API URL
+            <input id="apiUrlInput" type="url" placeholder="비워두면 현재 서버 사용" />
+          </label>
+          <label>
+            API Key
+            <input id="apiKeyInput" type="password" placeholder="API Key" />
+          </label>
+          <label>
+            Device ID
+            <input id="deviceIdInput" type="text" placeholder="자동 생성" />
+          </label>
+          <label>
+            Theme
+            <select id="themeModeInput">
+              <option value="system">System</option>
+              <option value="dark">Dark</option>
+              <option value="light">Light</option>
+            </select>
+          </label>
+          <label>
+            글자 크기
+            <span class="range-row">
+              <input id="fontSizeInput" type="range" min="12" max="20" step="1" />
+              <output id="fontSizeValue" for="fontSizeInput">16px</output>
+            </span>
+          </label>
+          <div class="settings-actions">
+            <button id="refreshAppButton" class="ghost-button" type="button">새로고침</button>
+            <button id="clearCacheButton" class="ghost-button" type="button">강력 새로고침</button>
+            <button id="notificationButton" class="ghost-button" type="button">알림 허용</button>
+            <button id="resetPasswordButton" class="ghost-button" type="button">비밀번호 재설정</button>
+          </div>
+        </section>
+
+        <section id="messages" class="messages" aria-live="polite"></section>
+        <div id="messagesScrollIndicator" class="messages-scroll-indicator" aria-hidden="true"></div>
+
+        <div id="mediaViewer" class="media-viewer hidden" role="dialog" aria-modal="true" aria-label="이미지 보기">
+          <div class="media-viewer-backdrop" data-media-viewer-close></div>
+          <div class="media-viewer-panel">
+            <div class="media-viewer-actions">
+              <a id="mediaViewerDownload" class="ghost-button media-viewer-download" href="#" download>다운로드</a>
+              <button id="mediaViewerClose" class="ghost-button" type="button" aria-label="닫기">닫기</button>
+            </div>
+            <img id="mediaViewerImage" alt="첨부 이미지" />
+          </div>
+        </div>
+
+        <form id="messageForm" class="composer">
+          <input id="attachmentInput" class="hidden-file-input" type="file" multiple accept="*/*" />
+          <div id="attachmentTray" class="attachment-tray hidden" aria-live="polite"></div>
+          <div id="slashCommandPalette" class="slash-command-palette hidden" aria-label="슬래시 명령어" role="listbox"></div>
+          <div class="input-row">
+            <div class="composer-tools" aria-label="입력 도구">
+              <label class="location-toggle" title="현재위치 포함" aria-label="현재위치 포함">
+                <input id="includeLocationInput" type="checkbox" />
+                <span aria-hidden="true">📍</span>
+              </label>
+              <button id="attachButton" class="attach-button" type="button" aria-label="파일 첨부">＋</button>
+            </div>
+            <div class="message-input-wrap">
+              <textarea id="messageInput" rows="2" placeholder="메시지를 입력하세요"></textarea>
+              <button id="clearMessageInputButton" class="clear-message-input-button hidden" type="button" aria-label="입력 내용 지우기">×</button>
+            </div>
+            <button id="sendButton" type="submit">전송</button>
+          </div>
+          <p id="statusText" class="status-text"></p>
+        </form>
+      </section>
+    </main>
+
+    <dialog id="conversationRenameDialog" class="conversation-dialog">
+      <form method="dialog" class="conversation-dialog-panel">
+        <h2>대화 이름 변경</h2>
+        <label>
+          새 이름
+          <input id="conversationRenameInput" type="text" maxlength="120" autocomplete="off" />
+        </label>
+        <menu class="conversation-dialog-actions">
+          <button id="conversationRenameCancel" class="ghost-button" type="button" value="cancel">취소</button>
+          <button id="conversationRenameConfirm" type="button" value="confirm">변경</button>
+        </menu>
+      </form>
+    </dialog>
+
+    <dialog id="conversationDeleteDialog" class="conversation-dialog">
+      <form method="dialog" class="conversation-dialog-panel">
+        <h2>대화 삭제</h2>
+        <p id="conversationDeleteText" class="conversation-dialog-text">이 대화를 삭제할까요?</p>
+        <p class="conversation-dialog-warning">대화 내용과 연결된 OpenClaw 세션이 삭제됩니다. 이 작업은 되돌릴 수 없습니다.</p>
+        <menu class="conversation-dialog-actions">
+          <button id="conversationDeleteCancel" class="ghost-button" type="button" value="cancel">취소</button>
+          <button id="conversationDeleteConfirm" class="danger-button" type="button" value="confirm">삭제</button>
+        </menu>
+      </form>
+    </dialog>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

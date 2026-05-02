@@ -1,5 +1,6 @@
 import { AgentOpenClawClient } from "./AgentOpenClawClient.js";
 import { CliOpenClawClient } from "./CliOpenClawClient.js";
+import { GatewayOpenAiOpenClawClient } from "./GatewayOpenAiOpenClawClient.js";
 import { MockOpenClawClient } from "./MockOpenClawClient.js";
 import type { OpenClawClient } from "./OpenClawClient.js";
 
@@ -11,6 +12,10 @@ export function createOpenClawClient(): OpenClawClient {
 
   if (transport === "cli-message") {
     return new CliOpenClawClient();
+  }
+
+  if (transport === "gateway-openai") {
+    return new GatewayOpenAiOpenClawClient();
   }
 
   return new AgentOpenClawClient();

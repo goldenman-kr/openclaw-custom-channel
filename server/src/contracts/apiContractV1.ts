@@ -7,11 +7,52 @@ export const API_CONTRACT_V1 = {
   },
   allowedMimeTypes: {
     image: ["image/jpeg", "image/png", "image/webp"],
-    file: ["application/pdf", "text/plain", "application/zip"],
+    file: [
+      "application/pdf",
+      "text/plain",
+      "text/csv",
+      "application/csv",
+      "application/vnd.ms-excel",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "application/msword",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "application/vnd.ms-powerpoint",
+      "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+      "application/zip",
+    ],
   },
 } as const;
 
 export type AttachmentType = "image" | "file";
+
+const ATTACHMENT_MIME_BY_EXTENSION: Record<string, string> = {
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  png: "image/png",
+  webp: "image/webp",
+  pdf: "application/pdf",
+  txt: "text/plain",
+  csv: "text/csv",
+  xls: "application/vnd.ms-excel",
+  xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  doc: "application/msword",
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  ppt: "application/vnd.ms-powerpoint",
+  pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  zip: "application/zip",
+};
+
+function inferAttachmentMimeType(name: string, mimeType: string): string {
+  const allowed = [
+    ...API_CONTRACT_V1.allowedMimeTypes.image,
+    ...API_CONTRACT_V1.allowedMimeTypes.file,
+  ];
+  if ((allowed as readonly string[]).includes(mimeType)) {
+    return mimeType;
+  }
+  const extension = name.split(".").pop()?.toLowerCase() ?? "";
+  return ATTACHMENT_MIME_BY_EXTENSION[extension] ?? mimeType;
+}
 
 export interface MessageAttachment {
   type: AttachmentType;
@@ -20,15 +61,29 @@ export interface MessageAttachment {
   content_base64: string;
 }
 
+export interface MessageLocationMetadata {
+  latitude: number;
+  longitude: number;
+  accuracy?: number;
+  captured_at?: string;
+}
+
+export interface MessageRequestMetadata {
+  location?: MessageLocationMetadata;
+}
+
 export interface MessageRequestDto {
+  conversation_id?: string;
   message: string;
   attachments?: MessageAttachment[];
+  metadata?: MessageRequestMetadata;
 }
 
 export interface MessageResponseDto {
   reply: string;
   request_id: string;
   session_id: string;
+  conversation_id?: string;
 }
 
 export interface ErrorResponseDto {
@@ -45,10 +100,13 @@ export type ErrorCode =
   | "AUTH_MISSING_TOKEN"
   | "VALIDATION_MESSAGE_REQUIRED"
   | "VALIDATION_SLASH_WITH_ATTACHMENTS"
+  | "VALIDATION_NEW_COMMAND_BLOCKED"
   | "VALIDATION_ATTACHMENT_TYPE_NOT_ALLOWED"
   | "VALIDATION_ATTACHMENT_TOO_LARGE"
   | "VALIDATION_ATTACHMENT_TOTAL_TOO_LARGE"
   | "VALIDATION_ATTACHMENT_COUNT_EXCEEDED"
+  | "VALIDATION_CONVERSATION_ARCHIVED"
+  | "CONVERSATION_NOT_FOUND"
   | "UPSTREAM_OPENCLAW_UNAVAILABLE"
   | "UPSTREAM_OPENCLAW_TIMEOUT"
   | "INTERNAL_SERVER_ERROR";
@@ -109,7 +167,15 @@ export function validateMessageRequestDto(
     };
   }
 
+  const normalizedMessage = payload.message.trim();
   const attachments = payload.attachments ?? [];
+
+  if (normalizedMessage === "/new" || normalizedMessage.startsWith("/new ")) {
+    return {
+      code: "VALIDATION_NEW_COMMAND_BLOCKED",
+      message: "이 웹챗에서는 /new 대신 “새 대화 시작” 버튼을 사용해주세요.",
+    };
+  }
 
   if (payload.message.trimStart().startsWith("/") && attachments.length > 0) {
     return {
@@ -133,11 +199,13 @@ export function validateMessageRequestDto(
         ? API_CONTRACT_V1.allowedMimeTypes.image
         : API_CONTRACT_V1.allowedMimeTypes.file;
 
-    if (!allowedMimeTypesForType.includes(attachment.mime_type)) {
+    const normalizedMimeType = inferAttachmentMimeType(attachment.name, attachment.mime_type);
+
+    if (!allowedMimeTypesForType.includes(normalizedMimeType)) {
       return {
         code: "VALIDATION_ATTACHMENT_TYPE_NOT_ALLOWED",
         message: `mime type is not allowed for type=${attachment.type}.`,
-        details: { type: attachment.type, mime_type: attachment.mime_type },
+        details: { type: attachment.type, mime_type: attachment.mime_type, inferred_mime_type: normalizedMimeType },
       };
     }
 

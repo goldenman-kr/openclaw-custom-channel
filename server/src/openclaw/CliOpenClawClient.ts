@@ -51,6 +51,7 @@ export class CliOpenClawClient implements OpenClawClient {
         timeout: this.timeoutMs,
         maxBuffer: 10 * 1024 * 1024,
         env: process.env,
+        signal: input.abortSignal,
       });
 
       return {
