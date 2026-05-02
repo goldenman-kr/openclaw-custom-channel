@@ -1969,6 +1969,7 @@ async function refreshHistoryIfChanged() {
     }
 
     const history = await fetchHistory();
+    reconcilePendingJobWithHistory(history);
     lastHistoryVersion = meta.version || lastHistoryVersion;
     if (history.length > 0 && historySignature(history) !== currentRenderedHistorySignature()) {
       const shouldFollow = isNearBottom();
@@ -1999,6 +2000,27 @@ async function refreshHistoryIfChanged() {
     }
   } catch {
     // Polling is best-effort; explicit sends/connection tests surface errors.
+  }
+}
+
+
+function reconcilePendingJobWithHistory(history, conversationId = activeConversationId()) {
+  const pendingJob = loadPendingJob(conversationId);
+  if (!pendingJob?.job_id || !Array.isArray(history)) {
+    return;
+  }
+  const matchingMessage = history.find((item) => item?.id === pendingJob.job_id);
+  if (!matchingMessage || isPendingHistoryMessage(matchingMessage)) {
+    return;
+  }
+  clearPendingJob(conversationId);
+  if (isActiveConversation(conversationId)) {
+    setStatus('');
+    setSending(false);
+    const node = elements.messages.querySelector(`[data-message-id="${pendingJob.job_id}"]`);
+    if (node) {
+      node.classList.remove('pending');
+    }
   }
 }
 

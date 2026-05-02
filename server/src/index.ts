@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
+import { execFile } from "node:child_process";
 import { mkdir, realpath, writeFile } from "node:fs/promises";
+import { promisify } from "node:util";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { join, resolve } from "node:path";
 import {
@@ -24,10 +26,13 @@ import { resolveAllowedWorkspacePath } from "./security/workspaceScope.js";
 import { FileHistoryStore, type HistoryAttachment } from "./session/HistoryStore.js";
 import { AuthStore, publicUser, type WorkspaceScopeRecord } from "./session/AuthStore.js";
 import { InMemorySessionStore } from "./session/SessionStore.js";
+import { RestartFollowupStore, type RestartFollowupRecord } from "./session/RestartFollowupStore.js";
 import { SqliteChatStore, type ConversationRecord } from "./session/SqliteChatStore.js";
 
 const host = process.env.HOST ?? "0.0.0.0";
 const port = Number(process.env.PORT ?? 29999);
+const execFileAsync = promisify(execFile);
+
 const validApiKeys = new Set(
   (process.env.BRIDGE_API_KEYS ?? "dev-api-key")
     .split(",")
@@ -41,7 +46,7 @@ const sessionStore = new InMemorySessionStore();
 const historyDir = resolve(process.env.HISTORY_DIR ?? join(process.cwd(), "state", "history"));
 const historyStore = new FileHistoryStore(historyDir);
 const publicDir = resolve(process.env.PUBLIC_DIR ?? join(process.cwd(), "public"));
-const stateDir = resolve(process.cwd(), "state");
+const stateDir = resolve(process.env.CHANNEL_STATE_DIR ?? join(process.cwd(), "state"));
 const historyMediaDir = resolve(process.env.HISTORY_MEDIA_DIR ?? join(stateDir, "history-media"));
 const assistantGeneratedMediaDirs = (process.env.ASSISTANT_MEDIA_SCAN_DIRS ?? "/home/orbsian/.openclaw/media/outbound")
   .split(":")
@@ -51,6 +56,7 @@ const assistantGeneratedMediaDirs = (process.env.ASSISTANT_MEDIA_SCAN_DIRS ?? "/
 const chatDbPath = resolve(process.env.CHAT_DB_PATH ?? join(stateDir, "chat.sqlite"));
 const authStore = new AuthStore(chatDbPath);
 const chatStore = new SqliteChatStore(chatDbPath);
+const restartFollowupStore = new RestartFollowupStore(join(stateDir, "restart-followups"));
 configureInitialAdminUser();
 const openClawAgentId = process.env.OPENCLAW_AGENT ?? "main";
 const jobs = new Map<string, MessageJob>();
@@ -117,6 +123,89 @@ function sessionIdFromHeaders(request: IncomingMessage): string {
 
 function shouldPersistMessage(message: string): boolean {
   return message.trim() !== "연결 테스트입니다. OK만 답해주세요.";
+}
+
+
+async function processRestartFollowups(): Promise<void> {
+  const pending = await restartFollowupStore.listPending();
+  for (const record of pending) {
+    const delayMs = Math.max(0, Date.parse(record.checkAfter) - Date.now());
+    setTimeout(() => {
+      handleRestartFollowup(record).catch((error) => {
+        console.error(`Restart follow-up failed (${record.id}):`, error);
+      });
+    }, delayMs).unref?.();
+  }
+}
+
+async function handleRestartFollowup(record: RestartFollowupRecord): Promise<void> {
+  const conversation = chatStore.getConversation(record.conversationId);
+  if (!conversation) {
+    await restartFollowupStore.markDone(record.id);
+    return;
+  }
+
+  const status = await execFileAsync("systemctl", ["--user", "status", record.serviceName, "--no-pager", "-n", "12"], {
+    timeout: 10_000,
+    maxBuffer: 512 * 1024,
+  }).then((result) => ({ ok: true, text: `${result.stdout}\n${result.stderr}`.trim() })).catch((error) => ({
+    ok: false,
+    text: error instanceof Error ? error.message : String(error),
+  }));
+
+  const healthUrl = record.healthUrl ?? "http://127.0.0.1:29999/health";
+  const health = await fetch(healthUrl, { signal: AbortSignal.timeout(5_000) })
+    .then(async (response) => ({ ok: response.ok, text: await response.text() }))
+    .catch((error) => ({ ok: false, text: error instanceof Error ? error.message : String(error) }));
+
+  const now = new Date().toISOString();
+  const interruptedJobs = markPendingMessagesInterrupted(conversation.id, now);
+  const activeLine = status.text.split("\n").find((line) => line.trim().startsWith("Active:"))?.trim();
+  const startedLine = status.text.split("\n").find((line) => line.includes("Started OpenClaw Custom Web Channel"))?.trim();
+  const ok = status.ok && /Active:\s+active \(running\)/.test(status.text) && health.ok;
+  const text = [
+    ok ? "PWA 서비스 재시작 확인 완료: 정상입니다." : "PWA 서비스 재시작 확인 결과: 문제가 있을 수 있습니다.",
+    "",
+    `- 서비스: ${record.serviceName}`,
+    `- 상태: ${activeLine ?? (status.ok ? "status 확인됨" : "status 확인 실패")}`,
+    ...(startedLine ? [`- 재시작 로그: ${startedLine}`] : []),
+    `- /health: ${health.text || (health.ok ? "OK" : "응답 없음")}`,
+    ...(interruptedJobs > 0 ? ["", `참고: 재시작 중 끊긴 응답 ${interruptedJobs}개를 중단 처리했습니다.`] : []),
+  ].join("\n");
+
+  chatStore.addMessage({
+    conversationId: conversation.id,
+    role: "system",
+    text,
+    createdAt: new Date().toISOString(),
+  });
+  await restartFollowupStore.markDone(record.id);
+}
+
+
+function markPendingMessagesInterrupted(conversationId: string, now: string): number {
+  const pendingTexts = new Set(["응답 대기 중입니다…", "응답을 처리 중입니다…"]);
+  const messages = chatStore.listMessages(conversationId);
+  let interrupted = 0;
+  for (const message of messages) {
+    if (!message.jobId || !pendingTexts.has(message.text.trim())) {
+      continue;
+    }
+    const notice = "이전 응답은 PWA 서비스 재시작 중 연결이 끊겨 중단 처리했습니다. 필요한 경우 다시 요청해주세요.";
+    chatStore.updateMessage(message.id, {
+      role: "system",
+      text: notice,
+      jobId: null,
+      completedAt: now,
+    });
+    chatStore.updateJob(message.jobId, {
+      state: "cancelled",
+      error: "Interrupted by PWA service restart.",
+      now,
+    });
+    interrupted += 1;
+  }
+  return interrupted;
 }
 
 function makeErrorResponse(code: ErrorResponseDto["error"]["code"], message: string, details?: Record<string, unknown>): ErrorResponseDto {
@@ -556,4 +645,5 @@ const server = createServer(async (request, response) => {
 
 server.listen(port, host, () => {
   console.log(`Bridge server listening on http://${host}:${port}`);
+  processRestartFollowups().catch((error) => console.error("Failed to process restart follow-ups:", error));
 });

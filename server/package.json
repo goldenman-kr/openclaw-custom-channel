@@ -16,7 +16,8 @@
     "user:create": "tsx scripts/user-admin.ts create",
     "user:reset-password": "tsx scripts/user-admin.ts reset-password",
     "user:disable": "tsx scripts/user-admin.ts disable",
-    "user:enable": "tsx scripts/user-admin.ts enable"
+    "user:enable": "tsx scripts/user-admin.ts enable",
+    "restart-followup:schedule": "tsx scripts/schedule-restart-followup.ts"
   },
   "keywords": [],
   "author": "",
