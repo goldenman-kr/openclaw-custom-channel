@@ -42,6 +42,8 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 5_000;
 export class GatewayAgentEventSubscriber {
   private socket: unknown;
   private readonly pending = new Map<string, PendingRequest>();
+  private readyResolve?: () => void;
+  private readyReject?: (error: Error) => void;
   private stopped = false;
 
   constructor(private readonly options: GatewayAgentEventSubscriberOptions) {}
@@ -55,6 +57,7 @@ export class GatewayAgentEventSubscriber {
     const socket = new WebSocketCtor(this.wsUrl());
     this.socket = socket;
     await this.waitForOpen(socket);
+    await this.waitForReady();
   }
 
   stop(): void {
@@ -91,10 +94,26 @@ export class GatewayAgentEventSubscriber {
         this.handleRawMessage(this.readMessageData(event)).catch(() => {});
       });
       this.addEventListener(socket, "close", () => {
+        this.readyReject?.(new Error("Gateway WebSocket closed before subscriber became ready."));
         if (!this.stopped) {
           this.stop();
         }
       });
+    });
+  }
+
+  private waitForReady(): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error("Gateway WebSocket subscribe timed out.")), this.options.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS);
+      timeout.unref?.();
+      this.readyResolve = () => {
+        clearTimeout(timeout);
+        resolve();
+      };
+      this.readyReject = (error) => {
+        clearTimeout(timeout);
+        reject(error);
+      };
     });
   }
 
@@ -141,6 +160,7 @@ export class GatewayAgentEventSubscriber {
       }
       await this.connect(nonce);
       await this.request("sessions.subscribe", {});
+      this.readyResolve?.();
       return;
     }
 
@@ -158,7 +178,7 @@ export class GatewayAgentEventSubscriber {
       minProtocol: 3,
       maxProtocol: 3,
       client: {
-        id: "openclaw-custom-channel-pwa",
+        id: "gateway-client",
         displayName: "OpenClaw Custom Channel PWA",
         version: "1.0.0",
         platform: process.platform,
