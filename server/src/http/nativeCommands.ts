@@ -1,8 +1,9 @@
 import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { activeGatewayModel, getModelOverride, setModelOverride } from "../openclaw/modelOverride.js";
 
@@ -14,8 +15,28 @@ export interface NativeCommandResult {
 
 interface NativeCommandContext {
   userLabel?: string;
+  userRole?: string;
   sessionKey?: string;
 }
+
+interface OpenClawDirectStatusResult {
+  text?: string;
+}
+
+interface OpenClawDirectStatusModule {
+  resolveDirectStatusReplyForSession?: (params: {
+    sessionKey: string;
+    cfg: Record<string, unknown>;
+    channel: string;
+    senderIsOwner: boolean;
+    isAuthorizedSender: boolean;
+    senderId?: string;
+    isGroup: boolean;
+    defaultGroupActivation?: string;
+  }) => Promise<OpenClawDirectStatusResult | string | undefined>;
+}
+
+let openClawDirectStatusRuntimePromise: Promise<OpenClawDirectStatusModule | null> | null = null;
 
 function commandParts(message: string): string[] {
   return message.trim().split(/\s+/).filter(Boolean);
@@ -41,7 +62,7 @@ export async function executeNativeCommand(message: string, context: NativeComma
     case "/models":
       return { reply: await nativeModels() };
     case "/model":
-      return { reply: await nativeModel(parts.slice(1).join(" ")) };
+      return { reply: await nativeModel(parts.slice(1).join(" "), context) };
     default:
       return null;
   }
@@ -70,7 +91,53 @@ async function nativeHealth(): Promise<string> {
 }
 
 async function nativeStatus(context: NativeCommandContext): Promise<string> {
-  return buildSessionStatusCard(context) ?? await nativeFallbackStatus(context);
+  return await buildOpenClawRuntimeStatus(context) ?? await buildSessionStatusCard(context) ?? await nativeFallbackStatus(context);
+}
+
+async function importOpenClawDirectStatusRuntime(): Promise<OpenClawDirectStatusModule | null> {
+  openClawDirectStatusRuntimePromise ??= (async () => {
+    try {
+      const explicitPath = process.env.OPENCLAW_DIRECT_STATUS_RUNTIME_PATH?.trim();
+      if (explicitPath) {
+        return await import(pathToFileURL(resolve(explicitPath)).href) as OpenClawDirectStatusModule;
+      }
+      const distDir = openClawDistDir();
+      const file = readdirSync(distDir).find((name) => name.startsWith("command-status.runtime-") && name.endsWith(".js"));
+      if (!file) return null;
+      return await import(pathToFileURL(join(distDir, file)).href) as OpenClawDirectStatusModule;
+    } catch {
+      return null;
+    }
+  })();
+  return openClawDirectStatusRuntimePromise;
+}
+
+async function buildOpenClawRuntimeStatus(context: NativeCommandContext): Promise<string | null> {
+  const sessionKey = context.sessionKey?.trim();
+  if (!sessionKey) return null;
+  const timeoutMs = Number(process.env.NATIVE_STATUS_OPENCLAW_TIMEOUT_MS ?? 3_000);
+  try {
+    const statusRuntime = await importOpenClawDirectStatusRuntime();
+    const resolveDirectStatusReplyForSession = statusRuntime?.resolveDirectStatusReplyForSession;
+    if (!resolveDirectStatusReplyForSession) return null;
+    const result = await withTimeout(
+      resolveDirectStatusReplyForSession({
+        sessionKey,
+        cfg: {},
+        channel: "web",
+        senderIsOwner: context.userRole === "admin",
+        isAuthorizedSender: true,
+        senderId: context.userLabel,
+        isGroup: false,
+      }),
+      Math.max(500, timeoutMs),
+      undefined,
+    );
+    if (typeof result === "string") return result.trim() || null;
+    return result?.text?.trim() || null;
+  } catch {
+    return null;
+  }
 }
 
 async function nativeFallbackStatus(context: NativeCommandContext): Promise<string> {
@@ -181,17 +248,129 @@ function openClawVersionLine(): string {
   }
 }
 
-function buildSessionStatusCard(context: NativeCommandContext): string | null {
+interface ProviderUsageWindow {
+  label: string;
+  usedPercent: number;
+  resetAt?: number;
+}
+
+interface ProviderUsageEntry {
+  error?: string;
+  windows: ProviderUsageWindow[];
+}
+
+interface ProviderUsageModule {
+  loadProviderUsageSummary?: (opts: { timeoutMs?: number; providers?: string[]; agentDir?: string }) => Promise<{ providers: ProviderUsageEntry[] }>;
+  formatUsageWindowSummary?: (entry: ProviderUsageEntry, opts: { now?: number; maxWindows?: number; includeResets?: boolean }) => string | null;
+  resolveUsageProviderId?: (provider?: string) => string | undefined;
+  t?: (opts: { timeoutMs?: number; providers?: string[]; agentDir?: string }) => Promise<{ providers: ProviderUsageEntry[] }>;
+  i?: (entry: ProviderUsageEntry, opts: { now?: number; maxWindows?: number; includeResets?: boolean }) => string | null;
+  o?: (provider?: string) => string | undefined;
+}
+
+function openClawDistDir(): string {
+  return resolve(process.env.OPENCLAW_DIST_DIR ?? `${homedir()}/.npm-global/lib/node_modules/openclaw/dist`);
+}
+
+const PROVIDER_USAGE_TIMEOUT_MS = Number(process.env.NATIVE_STATUS_USAGE_TIMEOUT_MS ?? 1_500);
+const PROVIDER_USAGE_CACHE_TTL_MS = Number(process.env.NATIVE_STATUS_USAGE_CACHE_TTL_MS ?? 60_000);
+let providerUsageRuntimePromise: Promise<ProviderUsageModule | null> | null = null;
+const providerUsageLineCache = new Map<string, { expiresAt: number; line: string | null }>();
+const providerUsageLineInflight = new Set<string>();
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, fallback: T): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  return Promise.race([
+    promise,
+    new Promise<T>((resolve) => {
+      timer = setTimeout(() => resolve(fallback), timeoutMs);
+    }),
+  ]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
+}
+
+async function importProviderUsageRuntime(): Promise<ProviderUsageModule | null> {
+  providerUsageRuntimePromise ??= (async () => {
+    try {
+      const distDir = openClawDistDir();
+      const files = readdirSync(distDir).filter((name) => name.startsWith("provider-usage-") && name.endsWith(".js"));
+      for (const file of files) {
+        const module = await import(pathToFileURL(join(distDir, file)).href) as ProviderUsageModule;
+        if (module.loadProviderUsageSummary && module.formatUsageWindowSummary && module.resolveUsageProviderId) {
+          return module;
+        }
+      }
+      for (const file of files) {
+        const module = await import(pathToFileURL(join(distDir, file)).href) as ProviderUsageModule;
+        if (module.t?.name === "loadProviderUsageSummary" && module.i?.name === "formatUsageWindowSummary") {
+          const sharedFile = readdirSync(distDir).find((name) => name.startsWith("provider-usage.shared-") && name.endsWith(".js"));
+          const shared = sharedFile ? await import(pathToFileURL(join(distDir, sharedFile)).href) as ProviderUsageModule : null;
+          return { ...module, resolveUsageProviderId: shared?.o };
+        }
+      }
+    } catch {
+      return null;
+    }
+    return null;
+  })();
+  return providerUsageRuntimePromise;
+}
+
+async function refreshProviderUsageLine(provider: string | undefined, cacheKey: string): Promise<void> {
+  if (providerUsageLineInflight.has(cacheKey)) return;
+  providerUsageLineInflight.add(cacheKey);
+  try {
+    const line = await withTimeout((async () => {
+      const usage = await importProviderUsageRuntime();
+      const resolveUsageProviderId = usage?.resolveUsageProviderId ?? usage?.o;
+      const loadProviderUsageSummary = usage?.loadProviderUsageSummary ?? usage?.t;
+      const formatUsageWindowSummary = usage?.formatUsageWindowSummary ?? usage?.i;
+      const usageProvider = resolveUsageProviderId?.(provider);
+      if (!usageProvider || !loadProviderUsageSummary || !formatUsageWindowSummary) return null;
+
+      try {
+        const summary = await loadProviderUsageSummary({
+          timeoutMs: Math.max(500, PROVIDER_USAGE_TIMEOUT_MS - 250),
+          providers: [usageProvider],
+          agentDir: resolve(process.env.OPENCLAW_AGENT_DIR ?? `${homedir()}/.openclaw/agents/main`),
+        });
+        const entry = summary.providers[0];
+        if (!entry || entry.error || entry.windows.length === 0) return null;
+        const summaryLine = formatUsageWindowSummary(entry, { now: Date.now(), maxWindows: 2, includeResets: true });
+        return summaryLine ? `📊 Usage: ${summaryLine}` : null;
+      } catch {
+        return null;
+      }
+    })(), Math.max(250, PROVIDER_USAGE_TIMEOUT_MS), null);
+    providerUsageLineCache.set(cacheKey, { expiresAt: Date.now() + PROVIDER_USAGE_CACHE_TTL_MS, line });
+  } finally {
+    providerUsageLineInflight.delete(cacheKey);
+  }
+}
+
+async function formatProviderUsageLine(provider?: string): Promise<string | null> {
+  const cacheKey = provider || "default";
+  const cached = providerUsageLineCache.get(cacheKey);
+  if (!cached || cached.expiresAt <= Date.now()) {
+    void refreshProviderUsageLine(provider, cacheKey);
+  }
+  return cached?.line ?? null;
+}
+
+async function buildSessionStatusCard(context: NativeCommandContext): Promise<string | null> {
   const resolved = readSessionEntry(context.sessionKey);
   if (!resolved) return null;
   const entry = resolved.entry;
   const provider = entry.modelProvider || activeGatewayModel().split("/")[0] || "unknown";
   const model = entry.model || activeGatewayModel().split("/").slice(1).join("/") || activeGatewayModel();
   const selected = model.includes("/") ? model : `${provider}/${model}`;
+  const usageLine = await formatProviderUsageLine(provider);
   const lines = [
     openClawVersionLine(),
     `🧠 Model: ${selected}`,
     "🔄 Fallbacks: openai-codex/gpt-5.4, llamacpp/Qwen3.6-35B-A3B",
+    usageLine,
     formatUsagePair(entry.inputTokens, entry.outputTokens),
     formatCache(entry),
     `📚 Context: ${formatContext(entry.totalTokens, entry.contextTokens)} · 🧹 Compactions: ${entry.compactionCount ?? 0}`,
@@ -244,15 +423,23 @@ function isSafeModelName(model: string): boolean {
   return /^[A-Za-z0-9._~:+/-]+$/.test(model) && model.includes("/") && model.length <= 160;
 }
 
-async function nativeModel(arg: string): Promise<string> {
+async function nativeModel(arg: string, context: NativeCommandContext): Promise<string> {
   const requested = arg.trim();
   if (!requested) {
-    return [`현재 모델: ${activeGatewayModel()}`, "변경하려면 `/model provider/model` 형식으로 입력하세요.", "기본값으로 되돌리려면 `/model default`를 입력하세요."].join("\n");
+    return [
+      `현재 모델: ${activeGatewayModel()}`,
+      context.userRole === "admin" ? "변경하려면 `/model provider/model` 형식으로 입력하세요." : "모델 변경은 관리자만 할 수 있습니다.",
+      context.userRole === "admin" ? "기본값으로 되돌리려면 `/model default`를 입력하세요." : "",
+    ].filter(Boolean).join("\n");
+  }
+
+  if (context.userRole !== "admin") {
+    return "❌ 모델 변경은 관리자만 할 수 있습니다. 현재 모델 확인만 허용됩니다.";
   }
 
   if (["default", "reset", "clear"].includes(requested.toLowerCase())) {
     setModelOverride(null);
-    return `✅ 모델 override를 해제했습니다. 현재 모델: ${activeGatewayModel()}`;
+    return `✅ 전역 모델 override를 해제했습니다. 현재 모델: ${activeGatewayModel()}`;
   }
 
   if (!isSafeModelName(requested)) {
@@ -264,5 +451,5 @@ async function nativeModel(arg: string): Promise<string> {
     ? "\n\n⚠️ 설정 파일의 모델 목록에는 없는 이름입니다. 그래도 emergency override로 저장했습니다."
     : "";
   setModelOverride(requested);
-  return `✅ 모델을 변경했습니다.\n현재 모델: ${activeGatewayModel()}${warning}`;
+  return `✅ 전역 모델 override를 변경했습니다.\n현재 모델: ${activeGatewayModel()}${warning}`;
 }

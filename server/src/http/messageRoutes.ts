@@ -164,6 +164,7 @@ export async function handleMessageRoute(
     if (isNativeCommand(payload.message)) {
       const result = await executeNativeCommand(payload.message, {
         userLabel: auth?.user.displayName ?? auth?.user.username ?? auth?.user.id,
+        userRole: auth?.user.role,
         sessionKey: sessionId,
       });
       if (result) {

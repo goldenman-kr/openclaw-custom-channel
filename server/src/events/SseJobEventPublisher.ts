@@ -10,6 +10,12 @@ export interface JobTokenEventRecord {
   token: string;
 }
 
+export interface JobAgentEventRecord {
+  id: string;
+  stream?: string;
+  data?: Record<string, unknown>;
+}
+
 export interface SseJobEventPublisherDeps {
   corsHeaders: Record<string, string>;
   isAuthorized(request: IncomingMessage): boolean;
@@ -47,6 +53,10 @@ export class SseJobEventPublisher {
 
   publishToken(event: JobTokenEventRecord): void {
     this.publish(event.id, "token", event);
+  }
+
+  publishAgentEvent(event: JobAgentEventRecord): void {
+    this.publish(event.id, "agent", event);
   }
 
   serveJobEvents(request: IncomingMessage, response: ServerResponse, url: URL, jobId: string): void {

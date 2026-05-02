@@ -57,6 +57,15 @@ const assistantGeneratedMediaDirs = (process.env.ASSISTANT_MEDIA_SCAN_DIRS ?? "/
 const chatDbPath = resolve(process.env.CHAT_DB_PATH ?? join(stateDir, "chat.sqlite"));
 const authStore = new AuthStore(chatDbPath);
 const chatStore = new SqliteChatStore(chatDbPath);
+const staleJobCleanup = chatStore.cancelStaleJobs({
+  olderThanMs: Number(process.env.STALE_JOB_CLEANUP_AFTER_MS ?? 30 * 60 * 1000),
+  reason: "Cancelled stale job on PWA service startup.",
+});
+if (staleJobCleanup.jobs > 0) {
+  console.log(
+    `Cancelled stale message jobs on startup: jobs=${staleJobCleanup.jobs} messages=${staleJobCleanup.messages}`,
+  );
+}
 const restartFollowupStore = new RestartFollowupStore(join(stateDir, "restart-followups"));
 configureInitialAdminUser();
 const openClawAgentId = process.env.OPENCLAW_AGENT ?? "main";
@@ -486,6 +495,9 @@ const messageJobRunner = new MessageJobRunner({
   updateJob,
   publishToken(job, token) {
     jobEventPublisher.publishToken({ id: job.id, token });
+  },
+  publishAgentEvent(job, event) {
+    jobEventPublisher.publishAgentEvent({ id: job.id, stream: event.stream, data: event.data });
   },
   generatedMediaDirs: assistantGeneratedMediaDirs,
 });

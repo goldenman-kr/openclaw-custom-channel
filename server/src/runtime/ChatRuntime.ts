@@ -1,8 +1,17 @@
 import type { MessageAttachment, MessageRequestMetadata } from "../contracts/apiContractV1.js";
 import type { RuntimeWorkspaceScope } from "../openclaw/OpenClawClient.js";
 
+export interface ChatRuntimeAgentEvent {
+  stream?: string;
+  sessionKey?: string;
+  runId?: string;
+  data?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
 export interface ChatRuntimeCallbacks {
   onToken?(token: string): void | Promise<void>;
+  onAgentEvent?(event: ChatRuntimeAgentEvent): void | Promise<void>;
 }
 
 export interface ChatRuntimeInput {

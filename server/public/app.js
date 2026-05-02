@@ -3062,34 +3062,48 @@ function streamingNodeText(node) {
   return bufferedText;
 }
 
+function clearStreamingState(jobId) {
+  if (!jobId) {
+    return;
+  }
+  window.clearTimeout(streamingIdleTimers.get(jobId));
+  streamingIdleTimers.delete(jobId);
+  streamingTextByJob.delete(jobId);
+}
+
+function flushStreamingCheckpointNow(jobId, conversationId = activeConversationId()) {
+  window.clearTimeout(streamingIdleTimers.get(jobId));
+  streamingIdleTimers.delete(jobId);
+  if (!isActiveConversation(conversationId)) {
+    return;
+  }
+  const node = elements.messages.querySelector(`[data-message-id="${jobId}"]`);
+  const text = streamingNodeText(node);
+  if (!node || !text.trim()) {
+    return;
+  }
+  if (text.trim().length < MIN_STREAMING_CHECKPOINT_CHARS) {
+    return;
+  }
+
+  let checkpoint = elements.messages.querySelector(`[data-message-id="${jobId}:partial"]`);
+  const checkpointText = checkpoint ? messageTextWithoutAttachmentPreview(checkpoint) : '';
+  const combinedText = `${checkpointText}${text}`;
+  if (!checkpoint) {
+    checkpoint = document.createElement('article');
+    checkpoint.dataset.messageId = `${jobId}:partial`;
+    node.before(checkpoint);
+  }
+  renderMessageNode(checkpoint, 'assistant', combinedText, { autoScroll: false, suppressScrollButton: true });
+  streamingTextByJob.set(jobId, '');
+  node._streamingText = '';
+  renderMessageNode(node, 'assistant', '응답을 처리 중입니다…', { pending: true, autoScroll: false, suppressScrollButton: true });
+}
+
 function scheduleStreamingIdleCheckpoint(jobId, conversationId = activeConversationId()) {
   window.clearTimeout(streamingIdleTimers.get(jobId));
   streamingIdleTimers.set(jobId, window.setTimeout(() => {
-    streamingIdleTimers.delete(jobId);
-    if (!isActiveConversation(conversationId)) {
-      return;
-    }
-    const node = elements.messages.querySelector(`[data-message-id="${jobId}"]`);
-    const text = streamingNodeText(node);
-    if (!node || !text.trim()) {
-      return;
-    }
-    if (text.trim().length < MIN_STREAMING_CHECKPOINT_CHARS) {
-      return;
-    }
-
-    let checkpoint = elements.messages.querySelector(`[data-message-id="${jobId}:partial"]`);
-    const checkpointText = checkpoint ? messageTextWithoutAttachmentPreview(checkpoint) : '';
-    const combinedText = `${checkpointText}${text}`;
-    if (!checkpoint) {
-      checkpoint = document.createElement('article');
-      checkpoint.dataset.messageId = `${jobId}:partial`;
-      node.before(checkpoint);
-    }
-    renderMessageNode(checkpoint, 'assistant', combinedText, { autoScroll: false, suppressScrollButton: true });
-    streamingTextByJob.set(jobId, '');
-    node._streamingText = '';
-    renderMessageNode(node, 'assistant', '응답을 처리 중입니다…', { pending: true, autoScroll: false, suppressScrollButton: true });
+    flushStreamingCheckpointNow(jobId, conversationId);
   }, 10_000));
 }
 
@@ -3127,6 +3141,7 @@ async function waitForJobViaSse(jobId, onTick = () => {}, conversationId = activ
         buffer = buffer.slice(separatorIndex + (match ? match[0].length : 2));
         const message = parseSseBlock(block);
         if (message.event === 'expired') {
+          clearStreamingState(jobId);
           clearPendingJob(conversationId);
           return { id: jobId, state: 'expired' };
         }
@@ -3134,10 +3149,15 @@ async function waitForJobViaSse(jobId, onTick = () => {}, conversationId = activ
           onToken(String(message.data.token));
           continue;
         }
+        if (message.event === 'agent' && message.data?.stream === 'tool' && message.data?.data?.phase === 'start') {
+          flushStreamingCheckpointNow(jobId, conversationId);
+          continue;
+        }
         if (message.event === 'job' && message.data) {
           const job = message.data;
           onTick(job);
           if (isTerminalJobState(job.state)) {
+            clearStreamingState(jobId);
             clearPendingJob(conversationId);
             return job;
           }
@@ -3190,6 +3210,7 @@ async function waitForJob(jobId, onTick = () => {}, conversationId = activeConve
       }
       onTick(job);
       if (isTerminalJobState(job.state)) {
+        clearStreamingState(jobId);
         clearPendingJob(conversationId);
         return job;
       }
@@ -3197,10 +3218,12 @@ async function waitForJob(jobId, onTick = () => {}, conversationId = activeConve
       lastError = error;
       transientFailures += 1;
       if (await isJobResolvedInHistory(jobId, conversationId)) {
+        clearStreamingState(jobId);
         clearPendingJob(conversationId);
         return { id: jobId, state: 'completed' };
       }
       if (error?.status === 404) {
+        clearStreamingState(jobId);
         clearPendingJob(conversationId);
         return { id: jobId, state: 'expired' };
       }

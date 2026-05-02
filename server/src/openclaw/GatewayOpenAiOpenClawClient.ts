@@ -1,4 +1,5 @@
 import type { MessageAttachment, MessageRequestMetadata } from "../contracts/apiContractV1.js";
+import { GatewayAgentEventSubscriber } from "./GatewayAgentEventSubscriber.js";
 import { activeGatewayModel } from "./modelOverride.js";
 import type { OpenClawClient, OpenClawClientInput, OpenClawClientResult, RuntimeWorkspaceScope } from "./OpenClawClient.js";
 
@@ -22,6 +23,26 @@ export class GatewayOpenAiOpenClawClient implements OpenClawClient {
     const timeout = setTimeout(() => abortController.abort(new Error("OpenClaw Gateway request timed out.")), this.timeoutMs);
     const streamed: string[] = [];
     const rawStreamEvents: string[] = [];
+    const agentEventSubscriber = input.callbacks?.onAgentEvent
+      ? new GatewayAgentEventSubscriber({
+          baseUrl: this.baseUrl,
+          token: this.token,
+          sessionKey: input.sessionId,
+          onEvent: (event) => {
+            input.callbacks?.onAgentEvent?.(event);
+          },
+        })
+      : null;
+    let agentEventSubscriberReady = false;
+    if (agentEventSubscriber) {
+      await agentEventSubscriber.start()
+        .then(() => {
+          agentEventSubscriberReady = true;
+        })
+        .catch(() => {
+          agentEventSubscriberReady = false;
+        });
+    }
 
     try {
       const response = await fetch(url, {
@@ -57,9 +78,11 @@ export class GatewayOpenAiOpenClawClient implements OpenClawClient {
           streamedChunks: streamed.length,
           rawStreamEvents: rawStreamEvents.slice(-5),
           usedNonStreamFallback: !streamReply && Boolean(fallbackReply),
+          agentEventSubscriberReady,
         },
       };
     } finally {
+      agentEventSubscriber?.stop();
       clearTimeout(timeout);
       input.abortSignal?.removeEventListener("abort", onExternalAbort);
     }

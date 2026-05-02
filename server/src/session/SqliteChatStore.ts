@@ -72,6 +72,11 @@ export interface JobStore {
   updateJob(id: string, patch: { state?: JobState; error?: string | null; now?: string }): JobRecord | null;
 }
 
+export interface StaleJobCleanupResult {
+  jobs: number;
+  messages: number;
+}
+
 interface ConversationRow {
   id: string;
   owner_id: string;
@@ -334,6 +339,36 @@ export class SqliteChatStore implements ConversationStore, MessageStore, JobStor
       .prepare("UPDATE jobs SET state = @state, error = @error, updated_at = @updatedAt WHERE id = @id")
       .run({ id, state: patch.state ?? current.state, error: patch.error === undefined ? current.error ?? null : patch.error, updatedAt: now });
     return this.getJob(id);
+  }
+
+  cancelStaleJobs(input: { olderThanMs: number; now?: string; reason?: string }): StaleJobCleanupResult {
+    const now = input.now ?? new Date().toISOString();
+    const cutoff = new Date(Date.parse(now) - input.olderThanMs).toISOString();
+    const reason = input.reason ?? "Cancelled stale job on service startup.";
+    const pendingTexts = ["응답 대기 중입니다…", "응답을 처리 중입니다…"];
+    const cancel = this.db.transaction(() => {
+      const staleRows = this.db
+        .prepare("SELECT id FROM jobs WHERE state IN ('queued', 'running') AND created_at < ?")
+        .all(cutoff) as Array<{ id: string }>;
+      if (staleRows.length === 0) {
+        return { jobs: 0, messages: 0 };
+      }
+
+      const placeholders = staleRows.map(() => "?").join(",");
+      const ids = staleRows.map((row) => row.id);
+      const jobs = this.db
+        .prepare(`UPDATE jobs SET state = 'cancelled', error = ?, updated_at = ? WHERE id IN (${placeholders})`)
+        .run(reason, now, ...ids).changes;
+      const messages = this.db
+        .prepare(
+          `UPDATE messages
+           SET role = 'system', text = '요청이 취소되었습니다.', completed_at = COALESCE(completed_at, ?)
+           WHERE job_id IN (${placeholders}) AND text IN (?, ?)`,
+        )
+        .run(now, ...ids, pendingTexts[0], pendingTexts[1]).changes;
+      return { jobs, messages };
+    });
+    return cancel();
   }
 
   isAttachmentPathVisibleToOwner(path: string, ownerId: string): boolean {
