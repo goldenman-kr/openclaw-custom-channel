@@ -1895,7 +1895,7 @@ function appendMarkdown(parent, text) {
 
     const heading = line.match(/^(#{1,3})\s+(.+)$/);
     const bullet = line.match(/^\s*[-*]\s+(.+)$/);
-    const numbered = line.match(/^\s*\d+[.)]\s+(.+)$/);
+    const numbered = line.match(/^\s*(\d+)[.)]\s+(.+)$/);
 
     if (heading) {
       list = null;
@@ -1908,12 +1908,19 @@ function appendMarkdown(parent, text) {
 
     if (bullet || numbered) {
       const listType = bullet ? 'ul' : 'ol';
+      const explicitNumber = numbered ? Number(numbered[1]) : null;
       if (!list || list.tagName.toLowerCase() !== listType) {
         list = document.createElement(listType);
+        if (listType === 'ol' && explicitNumber && explicitNumber > 1) {
+          list.setAttribute('start', String(explicitNumber));
+        }
         parent.append(list);
       }
       const item = document.createElement('li');
-      appendInlineMarkdown(item, bullet?.[1] || numbered?.[1] || '');
+      if (listType === 'ol' && explicitNumber && list.children.length > 0) {
+        item.value = explicitNumber;
+      }
+      appendInlineMarkdown(item, bullet?.[1] || numbered?.[2] || '');
       list.append(item);
       continue;
     }
