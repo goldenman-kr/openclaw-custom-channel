@@ -1369,3 +1369,72 @@ PLAN 13.13의 10번(OpenClaw runtime cwd/workspace 제한 가능성 검증 및 �
 - `RuntimeWorkspaceScope`에 username/displayName/identityFile을 추가했다.
 - `AgentOpenClawClient`/`GatewayOpenAiOpenClawClient` 모두 runtime metadata에 현재 webchat 사용자 identity와 identity file 경로를 포함한다.
 - Gateway 요청 header에도 runtime user id/username/identity file 정보를 추가했다.
+
+## 2026-05-01 owner visibility adjustment
+
+- Admin role users no longer get implicit cross-user conversation visibility in normal chat APIs.
+- `isConversationVisibleToAuth()` now allows access only when `conversation.ownerId === auth.user.id`.
+- This prevents an admin such as Eddy from seeing, opening, patching, deleting, or polling jobs for another user's conversation through the normal conversation API path.
+- Cross-user administration should be implemented later as a separate explicit admin surface, not mixed into the ordinary chat list/API.
+- Verification:
+  - `node --check server/public/app.js`
+  - `git diff --check`
+  - `npm run typecheck`
+  - `npm test` (29/29)
+
+## 2026-05-02 settings back behavior
+
+- Settings panel now pushes a lightweight browser history entry when opened.
+- Browser/Android back while settings is open closes the settings panel instead of navigating away.
+- Other settings close paths keep history state in sync.
+- PWA service worker cache bumped.
+- Verification:
+  - `node --check server/public/app.js`
+  - `git diff --check`
+  - `npm run typecheck`
+  - `npm test` (29/29)
+  - `npm run build`
+
+## 2026-05-02 sidebar footer button alignment
+
+- Conversation sidebar footer now uses three equal-width columns for archive/logout/settings.
+- Footer buttons share width, min-height, padding, and border-radius.
+- PWA service worker cache bumped.
+- Verification:
+  - `node --check server/public/app.js`
+  - `git diff --check`
+  - `npm run typecheck`
+  - `npm test` (29/29)
+  - `npm run build`
+
+## 2026-05-02 settings panel simplification
+
+- Removed visible settings save button; settings now auto-save when the settings panel closes.
+- Removed connection test and new conversation buttons from the settings panel.
+- Renamed cache refresh button to `강력 새로고침`.
+- Added current-user password reset action in settings backed by `POST /v1/auth/password`.
+- PWA service worker cache bumped.
+- Verification:
+  - `node --check server/public/app.js`
+  - `git diff --check`
+  - `npm run typecheck`
+  - `npm test` (29/29)
+  - `npm run build`
+
+## 2026-05-02 user management CLI
+
+- Added `server/scripts/user-admin.ts` for manual user administration.
+- Added npm scripts:
+  - `npm run user:list`
+  - `npm run user:create -- <username> [--display-name <name>] [--role user|admin] [--password <password>]`
+  - `npm run user:reset-password -- <username> [--password <password>]`
+  - `npm run user:disable -- <username>`
+  - `npm run user:enable -- <username>`
+- Create/reset generate and print a strong one-time password when `--password` is omitted.
+- Smoke-tested the commands and removed the temporary test user from the real DB afterward.
+- Verification:
+  - `npm run user:list`
+  - `git diff --check`
+  - `npm run typecheck`
+  - `npm test` (29/29)
+  - `npm run build`
