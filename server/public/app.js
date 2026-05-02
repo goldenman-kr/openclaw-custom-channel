@@ -158,6 +158,7 @@ function saveSettings(settings) {
 
 let settings = loadSettings();
 let historyPollTimer = null;
+const streamingIdleTimers = new Map();
 let isSendingMessage = false;
 let selectedAttachments = [];
 let composerDragDepth = 0;
@@ -1720,9 +1721,7 @@ async function renderHistory(options = {}) {
     }
 
     for (const item of history) {
-      if (typeof item?.role === 'string' && typeof item?.text === 'string') {
-        appendMessage(item.role, item.text, { id: item.id, savedAt: item.savedAt, completedAt: item.completedAt, persist: false, autoScroll: false, suppressScrollButton: true, mediaRefs: mediaRefsFromHistoryAttachments(item.attachments), pending: isPendingHistoryMessage(item) });
-      }
+      renderHistoryItem(item);
     }
     if (scrollToLatest || shouldFollow) {
       scrollToBottom({ force: true });
@@ -1994,6 +1993,56 @@ function messageTextWithoutAttachmentPreview(node) {
   return clone.textContent || '';
 }
 
+
+function isRunningJobHistoryMessage(item) {
+  return typeof item?.id === 'string'
+    && item.id.startsWith('job_')
+    && item.role === 'assistant'
+    && !item.completedAt;
+}
+
+function isPlaceholderPendingText(text) {
+  const normalized = typeof text === 'string' ? text.trim() : '';
+  return normalized === '응답 대기 중입니다…' || normalized === '응답을 처리 중입니다…' || /^응답을 처리 중입니다\s*\(\d+초\)$/.test(normalized);
+}
+
+function renderHistoryItem(item) {
+  if (typeof item?.role !== 'string' || typeof item?.text !== 'string') {
+    return;
+  }
+
+  if (isRunningJobHistoryMessage(item) && !isPlaceholderPendingText(item.text)) {
+    appendMessage('assistant', item.text, {
+      id: `${item.id}:partial`,
+      savedAt: item.savedAt,
+      persist: false,
+      autoScroll: false,
+      suppressScrollButton: true,
+      mediaRefs: mediaRefsFromHistoryAttachments(item.attachments),
+    });
+    appendMessage('assistant', '응답을 처리 중입니다…', {
+      id: item.id,
+      savedAt: item.savedAt,
+      persist: false,
+      autoScroll: false,
+      suppressScrollButton: true,
+      pending: true,
+    });
+    return;
+  }
+
+  appendMessage(item.role, item.text, {
+    id: item.id,
+    savedAt: item.savedAt,
+    completedAt: item.completedAt,
+    persist: false,
+    autoScroll: false,
+    suppressScrollButton: true,
+    mediaRefs: mediaRefsFromHistoryAttachments(item.attachments),
+    pending: isPendingHistoryMessage(item),
+  });
+}
+
 function currentRenderedHistorySignature() {
   return [...elements.messages.querySelectorAll('.message')]
     .map((node) => `${[...node.classList].find((className) => className !== 'message') || ''}:${messageTextWithoutAttachmentPreview(node)}`)
@@ -2001,15 +2050,11 @@ function currentRenderedHistorySignature() {
 }
 
 function historySignature(history) {
-  return history.map((item) => `${item.id || ''}:${item.role}:${item.text}:${item.completedAt || ''}`).join('\n---\n');
+  return history.map((item) => `${item.id || ''}:${item.role}:${item.text}:${item.jobId || ''}:${item.completedAt || ''}`).join('\n---\n');
 }
 
 function isPendingHistoryMessage(item) {
-  if (typeof item?.id !== 'string' || !item.id.startsWith('job_') || item.role !== 'assistant') {
-    return false;
-  }
-  const text = typeof item.text === 'string' ? item.text.trim() : '';
-  return text === '응답 대기 중입니다…' || text === '응답을 처리 중입니다…' || /^응답을 처리 중입니다\s*\(\d+초\)$/.test(text);
+  return isRunningJobHistoryMessage(item) && isPlaceholderPendingText(item.text);
 }
 
 async function refreshHistoryIfChanged() {
@@ -2031,18 +2076,7 @@ async function refreshHistoryIfChanged() {
       const previousBottomOffset = elements.messages.scrollHeight - elements.messages.scrollTop;
       clearRenderedMessages();
       for (const item of history) {
-        if (typeof item?.role === 'string' && typeof item?.text === 'string') {
-          appendMessage(item.role, item.text, {
-            id: item.id,
-            persist: false,
-            autoScroll: false,
-            suppressScrollButton: true,
-            mediaRefs: mediaRefsFromHistoryAttachments(item.attachments),
-            pending: isPendingHistoryMessage(item),
-            savedAt: item.savedAt,
-            completedAt: item.completedAt,
-          });
-        }
+        renderHistoryItem(item);
       }
       if (shouldFollow) {
         scrollToBottom({ force: true });
@@ -2065,7 +2099,7 @@ function reconcilePendingJobWithHistory(history, conversationId = activeConversa
     return;
   }
   const matchingMessage = history.find((item) => item?.id === pendingJob.job_id);
-  if (!matchingMessage || isPendingHistoryMessage(matchingMessage)) {
+  if (!matchingMessage || isRunningJobHistoryMessage(matchingMessage)) {
     return;
   }
   clearPendingJob(conversationId);
@@ -2970,6 +3004,32 @@ function applyStreamingToken(jobId, token, conversationId = activeConversationId
 
   node._streamingText = `${node._streamingText || ''}${token}`;
   renderMessageNode(node, 'assistant', node._streamingText, { pending: true });
+  scheduleStreamingIdleCheckpoint(jobId, conversationId);
+}
+
+function scheduleStreamingIdleCheckpoint(jobId, conversationId = activeConversationId()) {
+  window.clearTimeout(streamingIdleTimers.get(jobId));
+  streamingIdleTimers.set(jobId, window.setTimeout(() => {
+    streamingIdleTimers.delete(jobId);
+    if (!isActiveConversation(conversationId)) {
+      return;
+    }
+    const node = elements.messages.querySelector(`[data-message-id="${jobId}"]`);
+    const text = node?._streamingText || '';
+    if (!node || !text.trim()) {
+      return;
+    }
+
+    let checkpoint = elements.messages.querySelector(`[data-message-id="${jobId}:partial"]`);
+    if (!checkpoint) {
+      checkpoint = document.createElement('article');
+      checkpoint.dataset.messageId = `${jobId}:partial`;
+      node.before(checkpoint);
+    }
+    renderMessageNode(checkpoint, 'assistant', text, { autoScroll: false, suppressScrollButton: true });
+    node._streamingText = '';
+    renderMessageNode(node, 'assistant', '응답을 처리 중입니다…', { pending: true, autoScroll: false, suppressScrollButton: true });
+  }, 10_000));
 }
 
 async function waitForJobViaSse(jobId, onTick = () => {}, conversationId = activeConversationId(), onToken = () => {}) {
