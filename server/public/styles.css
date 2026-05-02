@@ -1220,20 +1220,23 @@ html[data-theme="light"] .toast--success {
 
 .sidebar-footer {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   align-items: stretch;
 }
 
 .sidebar-new-button,
 .sidebar-archive-button,
-.sidebar-settings-button {
+.sidebar-settings-button,
+.sidebar-logout-button {
+  min-height: 38px;
   padding: 8px 10px;
   border-radius: 10px;
   white-space: nowrap;
 }
 
 .sidebar-archive-button,
-.sidebar-settings-button {
+.sidebar-settings-button,
+.sidebar-logout-button {
   width: 100%;
   display: inline-flex;
   align-items: center;
@@ -1445,13 +1448,18 @@ html[data-theme="light"] .toast--success {
   }
 
   .sidebar-new-button,
-  .sidebar-settings-button {
+  .sidebar-archive-button,
+  .sidebar-settings-button,
+  .sidebar-logout-button {
+    min-height: 38px;
     padding: 8px 10px;
     border-radius: 10px;
     white-space: nowrap;
   }
 
-  .sidebar-settings-button {
+  .sidebar-archive-button,
+  .sidebar-settings-button,
+  .sidebar-logout-button {
     width: 100%;
   }
 
@@ -1981,8 +1989,4 @@ body.auth-required .app-shell {
   filter: blur(3px);
   pointer-events: none;
   user-select: none;
-}
-
-.sidebar-logout-button {
-  width: 100%;
 }

@@ -88,6 +88,7 @@ const elements = {
   fontSizeValue: document.querySelector('#fontSizeValue'),
   saveSettingsButton: document.querySelector('#saveSettingsButton'),
   healthCheckButton: document.querySelector('#healthCheckButton'),
+  resetPasswordButton: document.querySelector('#resetPasswordButton'),
   refreshAppButton: document.querySelector('#refreshAppButton'),
   clearCacheButton: document.querySelector('#clearCacheButton'),
   notificationButton: document.querySelector('#notificationButton'),
@@ -190,6 +191,7 @@ let conversationContentMatches = new Set();
 let conversationSearchTimer = null;
 let conversationSearchRunId = 0;
 const conversationSearchCache = new Map();
+let settingsPanelHistoryActive = false;
 let authUser = null;
 
 function conversationIdFromPath(pathname = window.location.pathname) {
@@ -694,7 +696,7 @@ function handleDrawerSwipeEnd(event) {
   if (deltaX > 0) {
     openMobileDrawer();
   } else {
-    elements.settingsPanel.classList.remove('hidden');
+    openSettingsPanel();
   }
 }
 
@@ -1025,7 +1027,7 @@ function renderHome() {
     settingsButton.textContent = '설정 열기';
     settingsButton.addEventListener('click', (event) => {
       event.stopPropagation();
-      elements.settingsPanel.classList.remove('hidden');
+      openSettingsPanel();
     });
     home.append(title, description, settingsButton);
   } else {
@@ -1546,7 +1548,7 @@ async function continueInNewSession() {
   }
   if (!canUseApi()) {
     appendMessage('system', '로그인 후 대화를 시작할 수 있습니다.', { persist: false });
-    elements.settingsPanel.classList.remove('hidden');
+    openSettingsPanel();
     return;
   }
 
@@ -3045,7 +3047,7 @@ async function handleSubmit(event) {
 
   if (!canUseApi()) {
     appendMessage('system', '로그인 후 대화를 시작할 수 있습니다.');
-    elements.settingsPanel.classList.remove('hidden');
+    openSettingsPanel();
     return;
   }
   if (!activeConversation?.id) {
@@ -3177,6 +3179,39 @@ async function clearAppCacheAndReload() {
     appendMessage('system', `캐시 삭제 실패: ${error instanceof Error ? error.message : String(error)}`, { persist: false });
   }
   window.location.reload();
+}
+
+async function resetPassword() {
+  const currentPassword = window.prompt('현재 비밀번호를 입력하세요.');
+  if (currentPassword === null) {
+    return;
+  }
+  const newPassword = window.prompt('새 비밀번호를 입력하세요. 8자 이상이어야 합니다.');
+  if (newPassword === null) {
+    return;
+  }
+  const confirmPassword = window.prompt('새 비밀번호를 한 번 더 입력하세요.');
+  if (confirmPassword === null) {
+    return;
+  }
+  if (newPassword !== confirmPassword) {
+    appendMessage('system', '새 비밀번호가 서로 일치하지 않습니다.', { persist: false });
+    return;
+  }
+  try {
+    const response = await apiFetch('/v1/auth/password', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+    });
+    const body = await response.json().catch(() => null);
+    if (!response.ok) {
+      throw new Error(body?.error?.message || `비밀번호 재설정 실패: HTTP ${response.status}`);
+    }
+    showToast('비밀번호를 변경했습니다.', { kind: 'success' });
+  } catch (error) {
+    appendMessage('system', error instanceof Error ? error.message : String(error), { persist: false });
+  }
 }
 
 async function healthCheck() {
@@ -3325,8 +3360,63 @@ const initialConversationId = conversationIdFromPath();
 })().catch((error) => appendMessage('system', error instanceof Error ? error.message : String(error), { persist: false }));
 startHistoryPolling();
 
+function persistSettingsFromForm(options = {}) {
+  const previousApiKey = settings.apiKey;
+  try {
+    settings = readSettingsFromForm();
+    assertValidApiKey(settings.apiKey);
+  } catch (error) {
+    if (!options.silent) {
+      appendMessage('system', error instanceof Error ? error.message : String(error), { persist: false });
+    }
+    return false;
+  }
+  saveSettings(settings);
+  applySettingsToForm();
+  if (previousApiKey !== settings.apiKey) {
+    conversations = [];
+    lastHistoryVersion = null;
+    refreshConversations().catch(() => {});
+    if (activeConversation) {
+      refreshHistory({ force: true, preserveScroll: true }).catch(() => {});
+    }
+  }
+  return true;
+}
+
+function openSettingsPanel(options = {}) {
+  if (!elements.settingsPanel || !elements.settingsPanel.classList.contains('hidden')) {
+    return;
+  }
+  elements.settingsPanel.classList.remove('hidden');
+  if (options.pushHistory === false || settingsPanelHistoryActive || !window.history?.pushState) {
+    return;
+  }
+  window.history.pushState({ ...(window.history.state || {}), settingsPanelOpen: true }, '', window.location.href);
+  settingsPanelHistoryActive = true;
+}
+
+function closeSettingsPanel(options = {}) {
+  if (!elements.settingsPanel || elements.settingsPanel.classList.contains('hidden')) {
+    settingsPanelHistoryActive = false;
+    return;
+  }
+  persistSettingsFromForm({ silent: true });
+  elements.settingsPanel.classList.add('hidden');
+  if (options.syncHistory && settingsPanelHistoryActive && window.history?.back) {
+    settingsPanelHistoryActive = false;
+    window.history.back();
+    return;
+  }
+  settingsPanelHistoryActive = false;
+}
+
 function toggleSettingsPanel() {
-  elements.settingsPanel.classList.toggle('hidden');
+  if (elements.settingsPanel.classList.contains('hidden')) {
+    openSettingsPanel();
+  } else {
+    closeSettingsPanel({ syncHistory: true });
+  }
 }
 
 elements.settingsButton?.addEventListener('click', toggleSettingsPanel);
@@ -3359,7 +3449,7 @@ document.addEventListener('click', (event) => {
   ) {
     return;
   }
-  elements.settingsPanel.classList.add('hidden');
+  closeSettingsPanel({ syncHistory: true });
 });
 
 
@@ -3400,27 +3490,11 @@ elements.loginForm?.addEventListener('submit', async (event) => {
 
 elements.logoutButton?.addEventListener('click', logout);
 
-elements.saveSettingsButton.addEventListener('click', () => {
-  const previousApiKey = settings.apiKey;
-  settings = readSettingsFromForm();
-  try {
-    assertValidApiKey(settings.apiKey);
-  } catch (error) {
-    appendMessage('system', error instanceof Error ? error.message : String(error), { persist: false });
-    return;
+elements.saveSettingsButton?.addEventListener('click', () => {
+  if (persistSettingsFromForm()) {
+    showToast('설정을 저장했습니다.', { kind: 'success' });
+    closeSettingsPanel({ syncHistory: true });
   }
-  saveSettings(settings);
-  applySettingsToForm();
-  if (previousApiKey !== settings.apiKey) {
-    conversations = [];
-    lastHistoryVersion = null;
-    refreshConversations().catch(() => {});
-    if (activeConversation) {
-      refreshHistory({ force: true, preserveScroll: true }).catch(() => {});
-    }
-  }
-  showToast('설정을 저장했습니다.', { kind: 'success' });
-  elements.settingsPanel.classList.add('hidden');
 });
 
 elements.themeModeInput.addEventListener('change', () => {
@@ -3467,7 +3541,7 @@ elements.clearConversationSearchButton?.addEventListener('click', () => {
   scheduleConversationSearch();
 });
 
-elements.clearHistoryButton.addEventListener('click', async () => {
+elements.clearHistoryButton?.addEventListener('click', async () => {
   if (!window.confirm('새 대화를 시작합니다. 기존 대화는 서버에 보존됩니다.')) {
     return;
   }
@@ -3479,13 +3553,13 @@ elements.clearHistoryButton.addEventListener('click', async () => {
   }
 });
 
-elements.healthCheckButton.addEventListener('click', healthCheck);
+elements.healthCheckButton?.addEventListener('click', healthCheck);
 elements.refreshAppButton.addEventListener('click', () => window.location.reload());
 elements.floatingActionToggle?.addEventListener('click', toggleFloatingActions);
 elements.floatingSettingsButton?.addEventListener('click', (event) => {
   event.stopPropagation();
   setFloatingActionsExpanded(false);
-  elements.settingsPanel.classList.remove('hidden');
+  openSettingsPanel();
 });
 elements.floatingRefreshButton?.addEventListener('click', () => window.location.reload());
 elements.continueNewSessionButton?.addEventListener('click', continueInNewSession);
@@ -3499,6 +3573,7 @@ elements.messages.addEventListener('scroll', () => {
   }
 });
 elements.clearCacheButton.addEventListener('click', clearAppCacheAndReload);
+elements.resetPasswordButton?.addEventListener('click', resetPassword);
 elements.notificationButton.addEventListener('click', enableNotifications);
 elements.mediaViewerDownload.addEventListener('click', downloadCurrentMedia);
 elements.mediaViewerClose.addEventListener('click', closeMediaViewer);
@@ -3514,6 +3589,10 @@ elements.mediaViewer.addEventListener('click', (event) => {
   }
 });
 window.addEventListener('popstate', () => {
+  if (!elements.settingsPanel.classList.contains('hidden')) {
+    closeSettingsPanel({ syncHistory: false });
+    return;
+  }
   if (mediaViewerHistoryActive && !elements.mediaViewer.classList.contains('hidden')) {
     closeMediaViewer({ syncHistory: false });
     return;

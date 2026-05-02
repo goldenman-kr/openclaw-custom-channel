@@ -214,7 +214,9 @@ function isAuthorized(request: IncomingMessage): boolean {
 }
 
 function isConversationVisibleToAuth(conversation: ConversationRecord, auth: AuthContext): boolean {
-  return conversation.ownerId === auth.user.id || auth.user.role === "admin";
+  // Even admins should not see/delete another user's conversations in the normal chat UI/API.
+  // Cross-user administration should be a separate explicit admin surface later.
+  return conversation.ownerId === auth.user.id;
 }
 
 function normalizeMediaPath(rawPath: string): string {

@@ -57,6 +57,36 @@ export async function handleAuthRoute(
     return true;
   }
 
+
+
+  if (request.method === "POST" && url.pathname === "/v1/auth/password") {
+    const auth = deps.getAuthContext(request);
+    if (!auth || auth.source !== "cookie") {
+      deps.sendJson(response, 401, deps.makeErrorResponse("AUTH_INVALID_TOKEN", "Login is required."));
+      return true;
+    }
+    const payload = await deps.readJsonBody(request);
+    const currentPassword = typeof (payload as { current_password?: unknown })?.current_password === "string" ? (payload as { current_password: string }).current_password : "";
+    const newPassword = typeof (payload as { new_password?: unknown })?.new_password === "string" ? (payload as { new_password: string }).new_password : "";
+    if (!currentPassword || !newPassword) {
+      deps.sendJson(response, 400, deps.makeErrorResponse("VALIDATION_MESSAGE_REQUIRED", "Current and new password are required."));
+      return true;
+    }
+    const verified = deps.authStore.verifyPassword(auth.user.username, currentPassword);
+    if (!verified) {
+      deps.sendJson(response, 401, deps.makeErrorResponse("AUTH_INVALID_TOKEN", "Current password is invalid."));
+      return true;
+    }
+    try {
+      deps.authStore.resetPassword(auth.user.username, newPassword);
+    } catch (error) {
+      deps.sendJson(response, 400, deps.makeErrorResponse("VALIDATION_MESSAGE_REQUIRED", error instanceof Error ? error.message : String(error)));
+      return true;
+    }
+    deps.sendJson(response, 200, { ok: true });
+    return true;
+  }
+
   if (request.method === "GET" && url.pathname === "/v1/auth/me") {
     const auth = deps.getAuthContext(request);
     if (!auth) {
