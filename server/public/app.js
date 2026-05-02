@@ -3033,9 +3033,22 @@ function applyStreamingToken(jobId, token, conversationId = activeConversationId
     node = appendMessage('assistant', '', { id: jobId, persist: false, pending: true });
   }
 
-  node._streamingText = `${node._streamingText || ''}${token}`;
+  const currentText = node._streamingText || (isPlaceholderPendingText(messageTextWithoutAttachmentPreview(node)) ? '' : messageTextWithoutAttachmentPreview(node));
+  node._streamingText = `${currentText}${token}`;
   renderMessageNode(node, 'assistant', node._streamingText, { pending: true });
   scheduleStreamingIdleCheckpoint(jobId, conversationId);
+}
+
+function streamingNodeText(node) {
+  if (!node) {
+    return '';
+  }
+  const visibleText = messageTextWithoutAttachmentPreview(node);
+  const bufferedText = typeof node._streamingText === 'string' ? node._streamingText : '';
+  if (visibleText.length > bufferedText.length && !isPlaceholderPendingText(visibleText)) {
+    return visibleText;
+  }
+  return bufferedText;
 }
 
 function scheduleStreamingIdleCheckpoint(jobId, conversationId = activeConversationId()) {
@@ -3046,18 +3059,20 @@ function scheduleStreamingIdleCheckpoint(jobId, conversationId = activeConversat
       return;
     }
     const node = elements.messages.querySelector(`[data-message-id="${jobId}"]`);
-    const text = node?._streamingText || '';
+    const text = streamingNodeText(node);
     if (!node || !text.trim()) {
       return;
     }
 
     let checkpoint = elements.messages.querySelector(`[data-message-id="${jobId}:partial"]`);
+    const checkpointText = checkpoint ? messageTextWithoutAttachmentPreview(checkpoint) : '';
+    const combinedText = `${checkpointText}${text}`;
     if (!checkpoint) {
       checkpoint = document.createElement('article');
       checkpoint.dataset.messageId = `${jobId}:partial`;
       node.before(checkpoint);
     }
-    renderMessageNode(checkpoint, 'assistant', text, { autoScroll: false, suppressScrollButton: true });
+    renderMessageNode(checkpoint, 'assistant', combinedText, { autoScroll: false, suppressScrollButton: true });
     node._streamingText = '';
     renderMessageNode(node, 'assistant', '응답을 처리 중입니다…', { pending: true, autoScroll: false, suppressScrollButton: true });
   }, 10_000));
