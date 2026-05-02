@@ -33,7 +33,10 @@
 
       <aside id="conversationSidebar" class="conversation-sidebar" aria-label="대화 목록">
         <div class="sidebar-header">
-          <strong>OpenClaw</strong>
+          <div class="sidebar-title-block" aria-live="polite">
+            <strong id="sidebarOwnerTitle">대화</strong>
+            <span id="sidebarConversationCount">대화 0개</span>
+          </div>
           <button id="newConversationButton" class="ghost-button sidebar-new-button" type="button">새 대화</button>
         </div>
         <nav id="conversationList" class="conversation-list" aria-label="대화 목록"></nav>
@@ -99,14 +102,6 @@
           <label>
             API URL
             <input id="apiUrlInput" type="url" placeholder="비워두면 현재 서버 사용" />
-          </label>
-          <label>
-            API Key
-            <input id="apiKeyInput" type="password" placeholder="API Key" />
-          </label>
-          <label>
-            Device ID
-            <input id="deviceIdInput" type="text" placeholder="자동 생성" />
           </label>
           <label>
             Theme

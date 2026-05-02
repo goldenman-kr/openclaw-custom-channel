@@ -1224,6 +1224,27 @@ html[data-theme="light"] .toast--success {
   align-items: stretch;
 }
 
+.sidebar-title-block {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.sidebar-title-block strong {
+  overflow: hidden;
+  font-size: 1.05rem;
+  line-height: 1.15;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar-title-block span {
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+}
+
 .sidebar-new-button,
 .sidebar-archive-button,
 .sidebar-settings-button,
@@ -1443,7 +1464,7 @@ html[data-theme="light"] .toast--success {
     gap: 10px;
   }
 
-  .sidebar-header strong {
+  .sidebar-title-block strong {
     font-size: 1.05rem;
   }
 

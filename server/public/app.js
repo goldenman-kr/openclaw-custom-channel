@@ -70,6 +70,8 @@ const elements = {
   chatTitle: document.querySelector('#chatTitle'),
   mobileDrawerBackdrop: document.querySelector('#mobileDrawerBackdrop'),
   newConversationButton: document.querySelector('#newConversationButton'),
+  sidebarOwnerTitle: document.querySelector('#sidebarOwnerTitle'),
+  sidebarConversationCount: document.querySelector('#sidebarConversationCount'),
   conversationList: document.querySelector('#conversationList'),
   conversationSearchInput: document.querySelector('#conversationSearchInput'),
   clearConversationSearchButton: document.querySelector('#clearConversationSearchButton'),
@@ -257,10 +259,18 @@ function applyDisplaySettings() {
 }
 
 function applySettingsToForm() {
-  elements.apiUrlInput.value = settings.apiUrl || window.location.origin;
-  elements.apiKeyInput.value = settings.apiKey || '';
-  elements.deviceIdInput.value = settings.deviceId || randomDeviceId();
-  elements.themeModeInput.value = settings.themeMode || 'dark';
+  if (elements.apiUrlInput) {
+    elements.apiUrlInput.value = settings.apiUrl || window.location.origin;
+  }
+  if (elements.apiKeyInput) {
+    elements.apiKeyInput.value = settings.apiKey || '';
+  }
+  if (elements.deviceIdInput) {
+    elements.deviceIdInput.value = settings.deviceId || randomDeviceId();
+  }
+  if (elements.themeModeInput) {
+    elements.themeModeInput.value = settings.themeMode || 'dark';
+  }
   updateNotificationButton();
   applyTheme(settings.themeMode || 'dark');
   applyDisplaySettings();
@@ -532,11 +542,11 @@ function assertValidApiKey(apiKey) {
 }
 
 function readSettingsFromForm() {
-  const apiUrl = elements.apiUrlInput.value.trim().replace(/\/+$/, '') || window.location.origin;
-  const apiKey = normalizeApiKey(elements.apiKeyInput.value);
-  const deviceId = elements.deviceIdInput.value.trim() || randomDeviceId();
-  const themeMode = elements.themeModeInput.value || 'dark';
-  const fontSize = normalizeFontSize(elements.fontSizeInput.value);
+  const apiUrl = elements.apiUrlInput?.value.trim().replace(/\/+$/, '') || window.location.origin;
+  const apiKey = elements.apiKeyInput ? normalizeApiKey(elements.apiKeyInput.value) : settings.apiKey;
+  const deviceId = elements.deviceIdInput?.value.trim() || settings.deviceId || randomDeviceId();
+  const themeMode = elements.themeModeInput?.value || settings.themeMode || 'dark';
+  const fontSize = normalizeFontSize(elements.fontSizeInput?.value || settings.fontSize);
   return { ...settings, apiUrl, apiKey, deviceId, themeMode, fontSize };
 }
 
@@ -1033,6 +1043,26 @@ function sortConversations(items) {
   return [...items].sort((first, second) => Number(Boolean(second.pinned)) - Number(Boolean(first.pinned)) || Date.parse(second.updated_at || second.created_at || '') - Date.parse(first.updated_at || first.created_at || ''));
 }
 
+function currentUserDisplayName() {
+  const name = authUser?.display_name || authUser?.displayName || authUser?.username || authUser?.id || '';
+  return String(name).trim() || '사용자';
+}
+
+function updateSidebarSummary() {
+  if (!elements.sidebarOwnerTitle || !elements.sidebarConversationCount) {
+    return;
+  }
+  if (!canUseApi()) {
+    elements.sidebarOwnerTitle.textContent = '대화';
+    elements.sidebarConversationCount.textContent = '로그인이 필요합니다';
+    return;
+  }
+  const ownerName = currentUserDisplayName();
+  const count = baseVisibleConversations().length;
+  elements.sidebarOwnerTitle.textContent = `${ownerName}님의 대화`;
+  elements.sidebarConversationCount.textContent = showingArchived ? `보관함 ${count}개` : `대화 ${count}개`;
+}
+
 function updateArchiveToggleButton() {
   if (!elements.archiveToggleButton) {
     return;
@@ -1111,6 +1141,7 @@ function goHome(options = {}) {
 }
 
 function renderConversationList() {
+  updateSidebarSummary();
   if (!elements.conversationList) {
     return;
   }
