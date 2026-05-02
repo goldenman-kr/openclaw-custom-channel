@@ -1,4 +1,5 @@
 import type { MessageAttachment, MessageRequestMetadata } from "../contracts/apiContractV1.js";
+import { activeGatewayModel } from "./modelOverride.js";
 import type { OpenClawClient, OpenClawClientInput, OpenClawClientResult, RuntimeWorkspaceScope } from "./OpenClawClient.js";
 
 export class GatewayOpenAiOpenClawClient implements OpenClawClient {
@@ -51,7 +52,7 @@ export class GatewayOpenAiOpenClawClient implements OpenClawClient {
         raw: {
           transport: "gateway-openai",
           endpoint: url.toString(),
-          model: this.model,
+          model: this.activeModel(),
           sessionId: input.sessionId,
           streamedChunks: streamed.length,
           rawStreamEvents: rawStreamEvents.slice(-5),
@@ -62,6 +63,10 @@ export class GatewayOpenAiOpenClawClient implements OpenClawClient {
       clearTimeout(timeout);
       input.abortSignal?.removeEventListener("abort", onExternalAbort);
     }
+  }
+
+  private activeModel(): string {
+    return activeGatewayModel(this.model);
   }
 
   private headers(input: OpenClawClientInput, stream: boolean): HeadersInit {
@@ -92,7 +97,7 @@ export class GatewayOpenAiOpenClawClient implements OpenClawClient {
 
   private requestBody(input: OpenClawClientInput, stream: boolean): Record<string, unknown> {
     return {
-      model: this.model,
+      model: this.activeModel(),
       stream,
       messages: [
         {

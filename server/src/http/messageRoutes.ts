@@ -8,6 +8,7 @@ import {
   type MessageRequestDto,
 } from "../contracts/apiContractV1.js";
 import { handlePostMessage } from "./messageHandler.js";
+import { executeNativeCommand, isNativeCommand } from "./nativeCommands.js";
 import type { RuntimeWorkspaceScope } from "../openclaw/OpenClawClient.js";
 import type { ChatRuntime } from "../runtime/ChatRuntime.js";
 import type { MessageJob } from "../runtime/MessageJob.js";
@@ -158,6 +159,42 @@ export async function handleMessageRoute(
       await deps.persistConversationUserMessage(conversation, payload);
     } else {
       await deps.persistUserHistory(sessionId, payload);
+    }
+
+    if (isNativeCommand(payload.message)) {
+      const result = await executeNativeCommand(payload.message, {
+        userLabel: auth?.user.displayName ?? auth?.user.username ?? auth?.user.id,
+      });
+      if (result) {
+        const savedAt = new Date().toISOString();
+        if (deps.shouldPersistMessage(payload.message)) {
+          if (conversation) {
+            deps.conversationStore.addMessage({
+              id: `msg_${randomUUID()}`,
+              conversationId: conversation.id,
+              role: "assistant",
+              text: result.reply,
+              createdAt: savedAt,
+            });
+          } else {
+            await deps.historyStore.append(sessionId, [
+              {
+                id: `msg_${randomUUID()}`,
+                role: "assistant",
+                text: result.reply,
+                savedAt,
+              },
+            ]);
+          }
+        }
+        deps.sendJson(response, 200, {
+          reply: result.reply,
+          request_id: "req_native",
+          session_id: sessionId,
+          ...(conversation ? { conversation_id: conversation.id } : {}),
+        });
+        return true;
+      }
     }
 
     const now = new Date().toISOString();
