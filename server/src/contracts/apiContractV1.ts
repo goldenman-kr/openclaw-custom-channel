@@ -6,7 +6,7 @@ export const API_CONTRACT_V1 = {
     maxTotalAttachmentBytes: 10 * 1024 * 1024,
   },
   allowedMimeTypes: {
-    image: ["image/jpeg", "image/png", "image/webp"],
+    image: ["image/jpeg", "image/png", "image/webp", "image/svg+xml"],
     file: [
       "application/pdf",
       "text/plain",
@@ -30,6 +30,7 @@ const ATTACHMENT_MIME_BY_EXTENSION: Record<string, string> = {
   jpeg: "image/jpeg",
   png: "image/png",
   webp: "image/webp",
+  svg: "image/svg+xml",
   pdf: "application/pdf",
   txt: "text/plain",
   csv: "text/csv",
@@ -106,6 +107,7 @@ export type ErrorCode =
   | "VALIDATION_ATTACHMENT_TOTAL_TOO_LARGE"
   | "VALIDATION_ATTACHMENT_COUNT_EXCEEDED"
   | "VALIDATION_CONVERSATION_ARCHIVED"
+  | "VALIDATION_MODEL_INVALID"
   | "CONVERSATION_NOT_FOUND"
   | "UPSTREAM_OPENCLAW_UNAVAILABLE"
   | "UPSTREAM_OPENCLAW_TIMEOUT"

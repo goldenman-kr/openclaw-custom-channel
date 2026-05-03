@@ -156,7 +156,7 @@ export class GatewayOpenAiOpenClawClient implements OpenClawClient {
   private buildContent(message: string, attachments: MessageAttachment[], metadata?: MessageRequestMetadata, runtimeWorkspace?: RuntimeWorkspaceScope): string | Array<Record<string, unknown>> {
     const text = this.buildText(message, attachments, metadata, runtimeWorkspace);
     const imageParts = attachments
-      .filter((attachment) => attachment.type === "image" && attachment.content_base64)
+      .filter((attachment) => this.isInlineVisionAttachment(attachment))
       .map((attachment) => ({
         type: "image_url",
         image_url: {
@@ -188,15 +188,15 @@ export class GatewayOpenAiOpenClawClient implements OpenClawClient {
       );
     }
 
-    const nonImageAttachments = attachments.filter((attachment) => attachment.type !== "image");
-    if (nonImageAttachments.length > 0) {
+    const textAttachments = attachments.filter((attachment) => !this.isInlineVisionAttachment(attachment));
+    if (textAttachments.length > 0) {
       sections.push(
-        `첨부 파일이 제공되었습니다. 아래 파일 metadata와, 텍스트로 추출 가능한 파일은 원문을 함께 제공합니다.\n${nonImageAttachments
+        `첨부 파일이 제공되었습니다. 아래 파일 metadata와, 텍스트로 추출 가능한 파일은 원문을 함께 제공합니다.\n${textAttachments
           .map((attachment) => `- ${attachment.name} (${attachment.mime_type}, ${attachment.type})`)
           .join("\n")}`,
       );
 
-      for (const attachment of nonImageAttachments) {
+      for (const attachment of textAttachments) {
         const text = this.extractTextAttachment(attachment);
         if (text) {
           sections.push(
@@ -207,6 +207,10 @@ export class GatewayOpenAiOpenClawClient implements OpenClawClient {
     }
 
     return sections.join("\n\n");
+  }
+
+  private isInlineVisionAttachment(attachment: MessageAttachment): boolean {
+    return attachment.type === "image" && attachment.mime_type !== "image/svg+xml" && Boolean(attachment.content_base64);
   }
 
   private runtimeWorkspaceText(scope: RuntimeWorkspaceScope): string {
@@ -227,9 +231,9 @@ export class GatewayOpenAiOpenClawClient implements OpenClawClient {
   }
 
   private extractTextAttachment(attachment: MessageAttachment): string | null {
-    const textMimeTypes = new Set(["text/plain", "text/csv", "application/csv"]);
+    const textMimeTypes = new Set(["text/plain", "text/csv", "application/csv", "image/svg+xml"]);
     const lowerName = attachment.name.toLowerCase();
-    const looksText = textMimeTypes.has(attachment.mime_type) || lowerName.endsWith(".txt") || lowerName.endsWith(".csv");
+    const looksText = textMimeTypes.has(attachment.mime_type) || lowerName.endsWith(".txt") || lowerName.endsWith(".csv") || lowerName.endsWith(".svg");
     if (!looksText || !attachment.content_base64) {
       return null;
     }

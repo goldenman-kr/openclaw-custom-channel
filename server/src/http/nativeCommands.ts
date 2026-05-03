@@ -13,7 +13,7 @@ export interface NativeCommandResult {
   reply: string;
 }
 
-interface NativeCommandContext {
+export interface NativeCommandContext {
   userLabel?: string;
   userRole?: string;
   sessionKey?: string;
@@ -397,7 +397,12 @@ interface OpenClawConfigProvider {
 interface OpenClawConfig {
   models?: { providers?: Record<string, OpenClawConfigProvider> };
   model?: { primary?: string; fallbacks?: string[] };
-  agents?: { defaults?: { model?: { primary?: string; fallbacks?: string[] } } };
+  agents?: {
+    defaults?: {
+      models?: Record<string, unknown>;
+      model?: { primary?: string; fallbacks?: string[] };
+    };
+  };
 }
 
 async function loadOpenClawConfig(): Promise<OpenClawConfig> {
@@ -408,17 +413,23 @@ async function loadOpenClawConfig(): Promise<OpenClawConfig> {
 
 async function loadConfiguredModels(): Promise<string[]> {
   const config = await loadOpenClawConfig();
-  const providers = config.models?.providers ?? {};
-  const names: string[] = [];
-  for (const [providerId, provider] of Object.entries(providers)) {
-    for (const model of provider.models ?? []) {
-      const modelId = model.id ?? model.name ?? model.label;
-      if (modelId) {
-        names.push(`${providerId}/${modelId}`);
-      }
-    }
+  const defaultModels = config.agents?.defaults?.models ?? {};
+  const names = Object.keys(defaultModels)
+    .map((name) => String(name).trim())
+    .filter(Boolean);
+
+  if (names.length > 0) {
+    return [...new Set(names)].sort();
   }
-  return [...new Set(names)].sort();
+
+  const fallbackNames = [
+    config.agents?.defaults?.model?.primary,
+    ...(config.agents?.defaults?.model?.fallbacks ?? []),
+    config.model?.primary,
+    ...(config.model?.fallbacks ?? []),
+  ].map((name) => String(name || '').trim()).filter(Boolean);
+
+  return [...new Set(fallbackNames)].sort();
 }
 
 async function defaultConfiguredModel(): Promise<string> {
@@ -446,12 +457,45 @@ async function resolveSessionSelectedModel(sessionKey?: string, entry?: SessionS
   return await defaultConfiguredModel().catch(() => "openai-codex/gpt-5.4");
 }
 
+export interface NativeModelMenuEntry {
+  ref: string;
+  label: string;
+  selected: boolean;
+}
+
+export interface NativeModelMenuState {
+  currentModel: string;
+  gatewayModel: string;
+  canChange: boolean;
+  models: NativeModelMenuEntry[];
+}
+
+function modelLabel(modelRef: string): string {
+  const slash = modelRef.indexOf("/");
+  return slash >= 0 ? modelRef.slice(slash + 1) : modelRef;
+}
+
+export async function getNativeModelMenu(context: NativeCommandContext): Promise<NativeModelMenuState> {
+  const currentModel = await resolveSessionSelectedModel(context.sessionKey);
+  const configuredModels = await loadConfiguredModels().catch(() => [] as string[]);
+  const refs = [...new Set([...(configuredModels.length > 0 ? configuredModels : []), currentModel].filter(Boolean))];
+  return {
+    currentModel,
+    gatewayModel: activeGatewayModel(),
+    canChange: context.userRole === "admin",
+    models: refs.map((ref) => ({
+      ref,
+      label: modelLabel(ref),
+      selected: ref === currentModel,
+    })),
+  };
+}
+
 async function nativeModels(context: NativeCommandContext): Promise<string> {
   try {
-    const models = await loadConfiguredModels();
-    const active = await resolveSessionSelectedModel(context.sessionKey);
-    const list = models.length > 0 ? models.map((model) => `${model === active ? "*" : "-"} ${model}`).join("\n") : "(설정된 모델 목록을 찾지 못했습니다.)";
-    return [`🧠 사용 가능 모델`, `현재 채팅 모델: ${active}`, `Gateway routing: ${activeGatewayModel()}`, "", list, "", "변경: `/model provider/model`", "기본값 복귀: `/model default`"].join("\n");
+    const menu = await getNativeModelMenu(context);
+    const list = menu.models.length > 0 ? menu.models.map((model) => `${model.selected ? "*" : "-"} ${model.ref}`).join("\n") : "(설정된 모델 목록을 찾지 못했습니다.)";
+    return [`🧠 사용 가능 모델`, `현재 채팅 모델: ${menu.currentModel}`, `Gateway routing: ${menu.gatewayModel}`, "", list, "", "변경: `/model provider/model`", "기본값 복귀: `/model default`"].join("\n");
   } catch (error) {
     return [`🧠 사용 가능 모델`, `현재 채팅 모델: ${await resolveSessionSelectedModel(context.sessionKey)}`, `Gateway routing: ${activeGatewayModel()}`, "", `모델 목록을 읽지 못했습니다: ${error instanceof Error ? error.message : String(error)}`, "", "변경: `/model provider/model`"].join("\n");
   }
@@ -459,6 +503,46 @@ async function nativeModels(context: NativeCommandContext): Promise<string> {
 
 function isSafeModelName(model: string): boolean {
   return /^[A-Za-z0-9._~:+/-]+$/.test(model) && model.includes("/") && model.length <= 160;
+}
+
+export interface ApplyNativeModelSelectionResult {
+  currentModel: string;
+  warning?: string;
+  reset: boolean;
+}
+
+export async function applyNativeModelSelection(requestedModel: string, context: NativeCommandContext): Promise<ApplyNativeModelSelectionResult> {
+  const requested = requestedModel.trim();
+  if (context.userRole !== "admin") {
+    throw new Error("❌ 모델 변경은 관리자만 할 수 있습니다. 현재 채팅 모델 확인만 허용됩니다.");
+  }
+
+  if (!context.sessionKey?.trim()) {
+    throw new Error("❌ 현재 채팅의 세션 키를 확인할 수 없어 모델을 변경할 수 없습니다.");
+  }
+
+  if (["default", "reset", "clear"].includes(requested.toLowerCase())) {
+    setSessionModelOverride(context.sessionKey, null);
+    return {
+      currentModel: await resolveSessionSelectedModel(context.sessionKey),
+      reset: true,
+    };
+  }
+
+  if (!isSafeModelName(requested)) {
+    throw new Error("❌ 모델명은 `provider/model` 형식이어야 합니다. 예: `/model openai-codex/gpt-5.5`");
+  }
+
+  const configuredModels: string[] = await loadConfiguredModels().catch(() => [] as string[]);
+  const warning = configuredModels.length > 0 && !configuredModels.includes(requested)
+    ? "⚠️ 설정 파일의 모델 목록에는 없는 이름입니다. 그래도 현재 채팅 override로 저장했습니다."
+    : "";
+  setSessionModelOverride(context.sessionKey, requested);
+  return {
+    currentModel: await resolveSessionSelectedModel(context.sessionKey),
+    warning,
+    reset: false,
+  };
 }
 
 async function nativeModel(arg: string, context: NativeCommandContext): Promise<string> {
@@ -473,27 +557,13 @@ async function nativeModel(arg: string, context: NativeCommandContext): Promise<
     ].filter(Boolean).join("\n");
   }
 
-  if (context.userRole !== "admin") {
-    return "❌ 모델 변경은 관리자만 할 수 있습니다. 현재 채팅 모델 확인만 허용됩니다.";
+  try {
+    const result = await applyNativeModelSelection(requested, context);
+    if (result.reset) {
+      return `✅ 현재 채팅의 모델 override를 해제했습니다.\n현재 채팅 모델: ${result.currentModel}`;
+    }
+    return `✅ 현재 채팅의 모델 override를 변경했습니다.\n현재 채팅 모델: ${result.currentModel}${result.warning ? `\n\n${result.warning}` : ""}`;
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
   }
-
-  if (!context.sessionKey?.trim()) {
-    return "❌ 현재 채팅의 세션 키를 확인할 수 없어 모델을 변경할 수 없습니다.";
-  }
-
-  if (["default", "reset", "clear"].includes(requested.toLowerCase())) {
-    setSessionModelOverride(context.sessionKey, null);
-    return `✅ 현재 채팅의 모델 override를 해제했습니다.\n현재 채팅 모델: ${await resolveSessionSelectedModel(context.sessionKey)}`;
-  }
-
-  if (!isSafeModelName(requested)) {
-    return "❌ 모델명은 `provider/model` 형식이어야 합니다. 예: `/model openai-codex/gpt-5.5`";
-  }
-
-  const configuredModels: string[] = await loadConfiguredModels().catch(() => [] as string[]);
-  const warning = configuredModels.length > 0 && !configuredModels.includes(requested)
-    ? "\n\n⚠️ 설정 파일의 모델 목록에는 없는 이름입니다. 그래도 현재 채팅 override로 저장했습니다."
-    : "";
-  setSessionModelOverride(context.sessionKey, requested);
-  return `✅ 현재 채팅의 모델 override를 변경했습니다.\n현재 채팅 모델: ${await resolveSessionSelectedModel(context.sessionKey)}${warning}`;
 }

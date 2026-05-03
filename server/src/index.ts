@@ -11,10 +11,11 @@ import {
 } from "./contracts/apiContractV1.js";
 import { SseJobEventPublisher, type JobEventRecord } from "./events/SseJobEventPublisher.js";
 import { AUTH_COOKIE_NAME, handleAuthRoute, parseCookies, type AuthContext } from "./http/authRoutes.js";
-import { handleConversationRoute } from "./http/conversationRoutes.js";
+import { conversationIdFromPath, handleConversationRoute } from "./http/conversationRoutes.js";
 import { handleHistoryRoute } from "./http/historyRoutes.js";
 import { handleJobRoute } from "./http/jobRoutes.js";
 import { handleMessageRoute } from "./http/messageRoutes.js";
+import { applyNativeModelSelection, getNativeModelMenu } from "./http/nativeCommands.js";
 import { handleMediaRoute, handleStaticRoute } from "./http/staticRoutes.js";
 import { createOpenClawClient } from "./openclaw/createOpenClawClient.js";
 import type { RuntimeWorkspaceScope } from "./openclaw/OpenClawClient.js";
@@ -31,7 +32,7 @@ import { SqliteChatStore, type ConversationRecord } from "./session/SqliteChatSt
 
 const host = process.env.HOST ?? "0.0.0.0";
 const port = Number(process.env.PORT ?? 29999);
-const clientBuildId = "pwa-2026-05-02-003";
+const clientBuildId = "pwa-2026-05-03-002";
 const execFileAsync = promisify(execFile);
 
 const validApiKeys = new Set(
@@ -626,6 +627,47 @@ const server = createServer(async (request, response) => {
     readJsonBody,
     sessionIdFromRequest: sessionIdFromHeaders,
   })) {
+    return;
+  }
+
+  const conversationModelId = conversationIdFromPath(url.pathname, "/model");
+  if (conversationModelId && ["GET", "PATCH"].includes(request.method ?? "")) {
+    if (!isAuthorized(request)) {
+      sendJson(response, 401, makeErrorResponse("AUTH_INVALID_TOKEN", "API key is invalid."));
+      return;
+    }
+    const auth = getAuthContext(request);
+    const conversation = chatStore.getConversation(conversationModelId);
+    if (!auth || !conversation || !isConversationVisibleToAuth(conversation, auth)) {
+      sendJson(response, 404, makeErrorResponse("CONVERSATION_NOT_FOUND", "Conversation not found.", { conversation_id: conversationModelId }));
+      return;
+    }
+
+    const modelContext = {
+      userLabel: auth.user.displayName ?? auth.user.username ?? auth.user.id,
+      userRole: auth.user.role,
+      sessionKey: conversation.openclawSessionId,
+    };
+
+    if (request.method === "GET") {
+      sendJson(response, 200, await getNativeModelMenu(modelContext));
+      return;
+    }
+
+    const payload = await readJsonBody(request).catch(() => ({}));
+    const requestedModel = typeof (payload as { model?: unknown }).model === "string" ? (payload as { model: string }).model : "";
+    try {
+      const result = await applyNativeModelSelection(requestedModel, modelContext);
+      sendJson(response, 200, {
+        ok: true,
+        current_model: result.currentModel,
+        ...(result.warning ? { warning: result.warning } : {}),
+        reset: result.reset,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      sendJson(response, message.includes("관리자만") ? 403 : 400, makeErrorResponse(message.includes("관리자만") ? "AUTH_INVALID_TOKEN" : "VALIDATION_MODEL_INVALID", message));
+    }
     return;
   }
 

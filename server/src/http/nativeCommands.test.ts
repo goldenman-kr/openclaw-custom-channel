@@ -33,7 +33,7 @@ writeFileSync(process.env.OPENCLAW_SESSION_STORE_PATH, JSON.stringify({
   },
 }, null, 2));
 
-const { executeNativeCommand } = await import("./nativeCommands.js");
+const { executeNativeCommand, getNativeModelMenu, applyNativeModelSelection } = await import("./nativeCommands.js");
 
 test("/model changes are admin-only", async () => {
   const denied = await executeNativeCommand("/model llamacpp/Qwen3.6-35B-A3B", { userRole: "user", sessionKey: "web-conv_test" });
@@ -43,6 +43,14 @@ test("/model changes are admin-only", async () => {
   assert.match(current?.reply ?? "", /현재 채팅 모델: openai-codex\/gpt-5\.5/);
   assert.match(current?.reply ?? "", /Gateway routing: openclaw/);
   assert.match(current?.reply ?? "", /모델 변경은 관리자만 할 수 있습니다/);
+});
+
+test("model menu hides provider in labels and marks current selection", async () => {
+  const menu = await getNativeModelMenu({ userRole: "admin", sessionKey: "web-conv_test" });
+  assert.equal(menu.currentModel, "openai-codex/gpt-5.5");
+  assert.equal(menu.canChange, true);
+  assert.deepEqual(menu.models.map((entry) => entry.label), ["gpt-5.4", "gpt-5.5"]);
+  assert.equal(menu.models.find((entry) => entry.ref === "openai-codex/gpt-5.5")?.selected, true);
 });
 
 test("/model admin response updates current chat session only", async () => {
@@ -57,4 +65,12 @@ test("/model admin response updates current chat session only", async () => {
   const reset = await executeNativeCommand("/model default", { userRole: "admin", sessionKey: "web-conv_test" });
   assert.match(reset?.reply ?? "", /현재 채팅의 모델 override를 해제했습니다/);
   assert.match(reset?.reply ?? "", /openai-codex\/gpt-5\.5/);
+});
+
+test("applyNativeModelSelection enforces admin and updates selected model", async () => {
+  await assert.rejects(() => applyNativeModelSelection("openai-codex/gpt-5.4", { userRole: "user", sessionKey: "web-conv_test" }), /관리자만/);
+
+  const result = await applyNativeModelSelection("openai-codex/gpt-5.4", { userRole: "admin", sessionKey: "web-conv_test" });
+  assert.equal(result.currentModel, "openai-codex/gpt-5.4");
+  assert.equal(result.reset, false);
 });

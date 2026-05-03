@@ -126,6 +126,39 @@ test("falls back to non-stream response when Gateway SSE has no visible text", a
   }
 });
 
+test("sends SVG image attachments as text instead of image_url parts", async () => {
+  const requests: Array<{ body: Record<string, unknown> }> = [];
+  const server = await withServer(async (req, res) => {
+    requests.push({ body: await readJson(req) });
+    res.writeHead(200, { "content-type": "text/event-stream; charset=utf-8" });
+    res.end('data: {"choices":[{"delta":{"content":"ok"}}]}\n\ndata: [DONE]\n\n');
+  });
+
+  try {
+    const client = new GatewayOpenAiOpenClawClient(server.baseUrl, undefined, "openclaw-test", 5_000);
+    await client.sendMessage({
+      sessionId: "session-svg-test",
+      message: "describe this",
+      attachments: [
+        {
+          type: "image",
+          name: "icon.svg",
+          mime_type: "image/svg+xml",
+          content_base64: Buffer.from('<svg viewBox="0 0 10 10"><circle cx="5" cy="5" r="4" /></svg>').toString("base64"),
+        },
+      ],
+    });
+
+    const messages = requests[0]?.body.messages as Array<{ content: unknown }>;
+    assert.equal(typeof messages[0]?.content, "string");
+    assert.match(messages[0]?.content as string, /icon\.svg \(image\/svg\+xml, image\)/);
+    assert.match(messages[0]?.content as string, /<svg viewBox=/);
+    assert.doesNotMatch(JSON.stringify(messages[0]?.content), /image_url/);
+  } finally {
+    await server.close();
+  }
+});
+
 test("passes runtime workspace metadata to Gateway requests", async () => {
   const requests: Array<{ headers: IncomingMessage["headers"]; body: Record<string, unknown> }> = [];
   const server = await withServer(async (req, res) => {

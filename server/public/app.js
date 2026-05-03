@@ -1,7 +1,7 @@
 const STORAGE_KEY = 'openclaw-web-channel-settings-v1';
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
 const COMPOSER_DRAFT_KEY_PREFIX = 'openclaw-web-channel-composer-draft-v1';
-const CLIENT_BUILD_ID = 'pwa-2026-05-02-003';
+const CLIENT_BUILD_ID = 'pwa-2026-05-03-002';
 const VERSION_CHECK_DISMISSED_KEY = 'openclaw-web-channel-version-dismissed-v1';
 const MAX_ATTACHMENTS = 3;
 const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
@@ -9,6 +9,7 @@ const ALLOWED_ATTACHMENT_TYPES = new Set([
   'image/jpeg',
   'image/png',
   'image/webp',
+  'image/svg+xml',
   'application/pdf',
   'text/plain',
   'text/csv',
@@ -27,6 +28,7 @@ const ATTACHMENT_MIME_BY_EXTENSION = new Map([
   ['jpeg', 'image/jpeg'],
   ['png', 'image/png'],
   ['webp', 'image/webp'],
+  ['svg', 'image/svg+xml'],
   ['pdf', 'application/pdf'],
   ['txt', 'text/plain'],
   ['csv', 'text/csv'],
@@ -67,6 +69,10 @@ const elements = {
   sidebarSettingsButton: document.querySelector('#sidebarSettingsButton'),
   archiveToggleButton: document.querySelector('#archiveToggleButton'),
   mobileMenuButton: document.querySelector('#mobileMenuButton'),
+  modelPickerButton: document.querySelector('#modelPickerButton'),
+  modelPickerPanel: document.querySelector('#modelPickerPanel'),
+  modelPickerStatus: document.querySelector('#modelPickerStatus'),
+  modelPickerList: document.querySelector('#modelPickerList'),
   chatTitle: document.querySelector('#chatTitle'),
   mobileDrawerBackdrop: document.querySelector('#mobileDrawerBackdrop'),
   newConversationButton: document.querySelector('#newConversationButton'),
@@ -162,6 +168,9 @@ function saveSettings(settings) {
 
 let settings = loadSettings();
 let historyPollTimer = null;
+let modelPickerExpanded = false;
+let modelPickerLoading = false;
+let modelPickerState = null;
 const streamingIdleTimers = new Map();
 const streamingTextByJob = new Map();
 const MIN_STREAMING_CHECKPOINT_CHARS = 12;
@@ -940,6 +949,7 @@ function updateChatTitle() {
     return;
   }
   elements.chatTitle.textContent = activeConversation?.id ? conversationTitle(activeConversation) : 'OpenClaw';
+  updateModelPickerButtonState();
 }
 
 function formatConversationDate(value) {
@@ -1090,6 +1100,7 @@ function updateComposerAvailability() {
   elements.includeLocationInput.disabled = disabled;
   elements.attachButton.disabled = disabled;
   elements.sendButton.disabled = disabled;
+  updateModelPickerButtonState();
   elements.sendButton.textContent = isSendingMessage ? '전송 중' : '전송';
   if (archived) {
     elements.messageInput.placeholder = '보관된 대화입니다. 대화를 이어가려면 아카이브를 해제하세요.';
@@ -1134,6 +1145,8 @@ function renderHome() {
 
 function goHome(options = {}) {
   saveComposerDraft();
+  setModelPickerExpanded(false);
+  modelPickerState = null;
   activeConversation = null;
   settings.lastActiveConversationId = '';
   saveSettings(settings);
@@ -1286,6 +1299,8 @@ async function selectConversation(conversationId, options = {}) {
   if (!conversation) {
     return false;
   }
+  setModelPickerExpanded(false);
+  modelPickerState = null;
   activeConversation = conversation;
   updateChatTitle();
   settings.lastActiveConversationId = conversation.id;
@@ -1569,6 +1584,8 @@ async function startNewConversation() {
   saveComposerDraft();
   showingArchived = false;
   updateArchiveToggleButton();
+  setModelPickerExpanded(false);
+  modelPickerState = null;
   activeConversation = await createConversation('새 대화');
   updateChatTitle();
   settings.lastActiveConversationId = activeConversation.id;
@@ -1599,6 +1616,150 @@ function setFloatingActionsExpanded(expanded) {
 
 function toggleFloatingActions() {
   setFloatingActionsExpanded(!floatingActionsExpanded);
+}
+
+function updateModelPickerButtonState() {
+  if (!elements.modelPickerButton) {
+    return;
+  }
+  const hasConversation = Boolean(activeConversation?.id);
+  elements.modelPickerButton.disabled = !hasConversation;
+  elements.modelPickerButton.setAttribute('aria-expanded', modelPickerExpanded ? 'true' : 'false');
+  elements.modelPickerButton.title = hasConversation ? 'AI 모델 선택' : '대화를 먼저 선택하세요';
+}
+
+function renderModelPicker() {
+  if (!elements.modelPickerPanel || !elements.modelPickerStatus || !elements.modelPickerList) {
+    return;
+  }
+  elements.modelPickerPanel.classList.toggle('hidden', !modelPickerExpanded);
+  elements.modelPickerButton?.setAttribute('aria-expanded', modelPickerExpanded ? 'true' : 'false');
+  elements.modelPickerList.replaceChildren();
+
+  if (!modelPickerExpanded) {
+    return;
+  }
+
+  const canChange = Boolean(modelPickerState?.canChange);
+  const models = Array.isArray(modelPickerState?.models) ? modelPickerState.models : [];
+  elements.modelPickerStatus.textContent = modelPickerLoading
+    ? '모델 목록을 불러오는 중입니다…'
+    : (!activeConversation?.id
+      ? '대화를 먼저 선택하세요.'
+      : (canChange ? '이 대화에서 사용할 모델을 선택하세요.' : '현재 모델만 확인할 수 있습니다.'));
+  elements.modelPickerStatus.classList.toggle('hidden', !modelPickerLoading && models.length > 0);
+
+  for (const model of models) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = `model-picker-item${model.selected ? ' is-selected' : ''}`;
+    button.setAttribute('role', 'menuitemradio');
+    button.setAttribute('aria-checked', model.selected ? 'true' : 'false');
+    button.disabled = !canChange || modelPickerLoading;
+    button.dataset.modelRef = model.ref;
+
+    const check = document.createElement('span');
+    check.className = 'model-picker-check';
+    check.textContent = model.selected ? '✓' : '';
+
+    const label = document.createElement('span');
+    label.className = 'model-picker-item-label';
+    label.textContent = model.label;
+
+    button.append(check, label);
+    button.addEventListener('click', () => {
+      applyConversationModel(model.ref).catch((error) => {
+        showToast(error instanceof Error ? error.message : String(error), { kind: 'error', durationMs: 3200 });
+      });
+    });
+    elements.modelPickerList.append(button);
+  }
+}
+
+function setModelPickerExpanded(expanded) {
+  modelPickerExpanded = Boolean(expanded);
+  if (!modelPickerExpanded) {
+    modelPickerLoading = false;
+  }
+  renderModelPicker();
+}
+
+async function fetchConversationModelMenu(conversationId) {
+  const response = await apiFetch(`/v1/conversations/${encodeURIComponent(conversationId)}/model`, {
+    headers: await apiHeaders(),
+  });
+  const body = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error(body?.error?.message || `모델 목록을 불러오지 못했습니다: HTTP ${response.status}`);
+  }
+  return body;
+}
+
+async function patchConversationModel(conversationId, model) {
+  const response = await apiFetch(`/v1/conversations/${encodeURIComponent(conversationId)}/model`, {
+    method: 'PATCH',
+    headers: await apiHeaders({ 'content-type': 'application/json' }),
+    body: JSON.stringify({ model }),
+  });
+  const body = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error(body?.error?.message || `모델 변경을 실패했습니다: HTTP ${response.status}`);
+  }
+  return body;
+}
+
+async function openModelPicker() {
+  if (!activeConversation?.id || modelPickerLoading) {
+    return;
+  }
+  modelPickerExpanded = true;
+  modelPickerLoading = true;
+  modelPickerState = null;
+  renderModelPicker();
+  try {
+    modelPickerState = await fetchConversationModelMenu(activeConversation.id);
+  } finally {
+    modelPickerLoading = false;
+    renderModelPicker();
+  }
+}
+
+async function applyConversationModel(modelRef) {
+  if (!activeConversation?.id || modelPickerLoading) {
+    return;
+  }
+  if (modelPickerState?.models?.find((entry) => entry.ref === modelRef)?.selected) {
+    setModelPickerExpanded(false);
+    return;
+  }
+  modelPickerLoading = true;
+  renderModelPicker();
+  try {
+    const result = await patchConversationModel(activeConversation.id, modelRef);
+    showToast(`모델을 ${String(result.current_model || modelRef).split('/').pop()}로 변경했습니다.`, { kind: 'success' });
+    if (result.warning) {
+      showToast(result.warning, { kind: 'info', durationMs: 3200 });
+    }
+    modelPickerState = null;
+    setModelPickerExpanded(false);
+  } finally {
+    modelPickerLoading = false;
+    renderModelPicker();
+  }
+}
+
+async function toggleModelPicker() {
+  if (modelPickerExpanded) {
+    setModelPickerExpanded(false);
+    return;
+  }
+  try {
+    await openModelPicker();
+  } catch (error) {
+    modelPickerLoading = false;
+    setModelPickerExpanded(false);
+    showToast(error instanceof Error ? error.message : String(error), { kind: 'error', durationMs: 3200 });
+  }
 }
 
 function compactHistoryText(text, maxLength = 700) {
@@ -1781,7 +1942,7 @@ async function renderHistory(options = {}) {
 }
 
 function appendInlineMarkdown(parent, text) {
-  const pattern = /(\*\*([^*\n]+)\*\*)|(\*([^*\n]+)\*)|(_([^_\n]+)_)|(`([^`\n]+)`)|(\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\))|(https?:\/\/[^\s<)]+)/g;
+  const pattern = /((?<![\p{L}\p{N}])\*\*([^*\n]+)\*\*(?![\p{L}\p{N}.]))|((?<![\p{L}\p{N}])\*([^*\n]+)\*(?![\p{L}\p{N}.]))|((?<![\p{L}\p{N}])_([^_\n]+)_(?![\p{L}\p{N}.]))|(`([^`\n]+)`)|(\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\))|(https?:\/\/[^\s<)]+)/gu;
   let lastIndex = 0;
   let match;
 
@@ -3833,6 +3994,10 @@ elements.sidebarSettingsButton?.addEventListener('click', () => {
   closeMobileDrawer();
 });
 elements.mobileMenuButton?.addEventListener('click', toggleMobileDrawer);
+elements.modelPickerButton?.addEventListener('click', (event) => {
+  event.stopPropagation();
+  toggleModelPicker();
+});
 elements.mobileDrawerBackdrop?.addEventListener('click', closeMobileDrawer);
 elements.chatPanel?.addEventListener('touchstart', handleDrawerSwipeStart, { passive: true });
 elements.chatPanel?.addEventListener('touchend', handleDrawerSwipeEnd, { passive: true });
@@ -3845,6 +4010,9 @@ document.addEventListener('click', (event) => {
   }
   if (floatingActionsExpanded && !target?.closest?.('#floatingActionMenu')) {
     setFloatingActionsExpanded(false);
+  }
+  if (modelPickerExpanded && !target?.closest?.('.chat-titlebar-actions')) {
+    setModelPickerExpanded(false);
   }
   if (elements.settingsPanel.classList.contains('hidden')) {
     return;
@@ -4031,10 +4199,15 @@ document.addEventListener('keydown', (event) => {
     setFloatingActionsExpanded(false);
     return;
   }
+  if (event.key === 'Escape' && modelPickerExpanded) {
+    setModelPickerExpanded(false);
+    return;
+  }
   if (event.key === 'Escape' && document.body.classList.contains('drawer-open')) {
     closeMobileDrawer();
   }
 });
+renderModelPicker();
 elements.attachButton.addEventListener('click', () => elements.attachmentInput.click());
 elements.clearMessageInputButton?.addEventListener('click', () => {
   elements.messageInput.focus();
@@ -4098,6 +4271,6 @@ elements.messageInput.addEventListener('keydown', (event) => {
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js?v=pwa-2026-05-02-003').catch(() => {});
+    navigator.serviceWorker.register('/sw.js?v=pwa-2026-05-03-002').catch(() => {});
   });
 }
