@@ -31,7 +31,7 @@ import { SqliteChatStore, type ConversationRecord } from "./session/SqliteChatSt
 
 const host = process.env.HOST ?? "0.0.0.0";
 const port = Number(process.env.PORT ?? 29999);
-const clientBuildId = "pwa-2026-05-02-002";
+const clientBuildId = "pwa-2026-05-02-003";
 const execFileAsync = promisify(execFile);
 
 const validApiKeys = new Set(

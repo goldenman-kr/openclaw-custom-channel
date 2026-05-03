@@ -1,7 +1,7 @@
 const STORAGE_KEY = 'openclaw-web-channel-settings-v1';
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
 const COMPOSER_DRAFT_KEY_PREFIX = 'openclaw-web-channel-composer-draft-v1';
-const CLIENT_BUILD_ID = 'pwa-2026-05-02-002';
+const CLIENT_BUILD_ID = 'pwa-2026-05-02-003';
 const VERSION_CHECK_DISMISSED_KEY = 'openclaw-web-channel-version-dismissed-v1';
 const MAX_ATTACHMENTS = 3;
 const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
@@ -1077,7 +1077,7 @@ function updateArchiveToggleButton() {
   }
   const label = elements.archiveToggleButton.querySelector('.sidebar-button-label');
   if (label) {
-    label.textContent = showingArchived ? '보관함 나가기' : '보관함';
+    label.textContent = showingArchived ? '나가기' : '보관함';
   }
   elements.archiveToggleButton.setAttribute('aria-pressed', showingArchived ? 'true' : 'false');
 }
@@ -1266,6 +1266,7 @@ async function refreshConversations() {
     return conversations;
   }
   conversations = sortConversations(await fetchConversations());
+  await pruneStoredPendingJobs(conversations).catch(() => {});
   conversationSearchCache.clear();
   renderConversationList();
   scheduleConversationSearch();
@@ -1686,7 +1687,7 @@ async function continueInNewSession() {
         applyStreamingToken(response.job_id, token, conversationId);
       });
       if (isActiveConversation(conversationId)) {
-        await refreshHistoryIfChanged();
+        await renderHistory({ scrollToLatest: true });
       }
       if (job.state === 'failed') {
         setStatus(job.error || '새 세션 초기화 응답이 실패했습니다.');
@@ -1902,37 +1903,57 @@ function appendMarkdownTable(parent, headerCells, separatorLine, bodyRows) {
   parent.append(wrapper);
 }
 
-function appendCodeBlock(parent, codeText, language = '') {
+function appendCodeBlock(parent, codeText, language = '', options = {}) {
+  const { showHeader = true, showCopyButton = true } = options;
   const wrapper = document.createElement('div');
-  wrapper.className = 'code-block';
+  wrapper.className = `code-block${showHeader ? '' : ' compact'}`;
 
-  const header = document.createElement('div');
-  header.className = 'code-block-header';
-  const label = document.createElement('span');
-  label.textContent = language || 'code';
-  const button = document.createElement('button');
-  button.type = 'button';
-  button.className = 'code-copy-button';
-  button.textContent = '복사';
-  button.addEventListener('click', async () => {
-    const originalText = button.textContent;
-    try {
-      await copyTextToClipboard(codeText);
-      button.textContent = '복사됨';
-      window.setTimeout(() => { button.textContent = originalText; }, 1200);
-    } catch {
-      button.textContent = '실패';
-      window.setTimeout(() => { button.textContent = originalText; }, 1200);
+  if (showHeader) {
+    const header = document.createElement('div');
+    header.className = 'code-block-header';
+    const label = document.createElement('span');
+    label.textContent = language || 'code';
+    header.append(label);
+
+    if (showCopyButton) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'code-copy-button';
+      button.textContent = '복사';
+      button.addEventListener('click', async () => {
+        const originalText = button.textContent;
+        try {
+          await copyTextToClipboard(codeText);
+          button.textContent = '복사됨';
+          window.setTimeout(() => { button.textContent = originalText; }, 1200);
+        } catch {
+          button.textContent = '실패';
+          window.setTimeout(() => { button.textContent = originalText; }, 1200);
+        }
+      });
+      header.append(button);
     }
-  });
-  header.append(label, button);
+
+    wrapper.append(header);
+  }
 
   const pre = document.createElement('pre');
   const code = document.createElement('code');
   code.textContent = codeText;
   pre.append(code);
-  wrapper.append(header, pre);
+  wrapper.append(pre);
   parent.append(wrapper);
+}
+
+function appendBlockquote(parent, lines) {
+  const quote = document.createElement('blockquote');
+  appendMarkdown(quote, lines.join('\n'));
+  parent.append(quote);
+}
+
+function countLeadingSpaces(text) {
+  const match = String(text || '').match(/^\s*/);
+  return match ? match[0].length : 0;
 }
 
 function appendMarkdown(parent, text) {
@@ -1944,6 +1965,12 @@ function appendMarkdown(parent, text) {
 
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index];
+    const singleLineFence = line.match(/^```([^`\n]+)```\s*$/);
+    if (singleLineFence) {
+      list = null;
+      appendCodeBlock(parent, singleLineFence[1], '', { showHeader: false, showCopyButton: false });
+      continue;
+    }
     const fence = line.match(/^```\s*([^`]*)\s*$/);
     if (fence) {
       list = null;
@@ -1983,6 +2010,38 @@ function appendMarkdown(parent, text) {
     const heading = line.match(/^(#{1,3})\s+(.+)$/);
     const bullet = line.match(/^\s*[-*]\s+(.+)$/);
     const numbered = line.match(/^\s*(\d+)[.)]\s+(.+)$/);
+    const quote = line.match(/^>\s?(.*)$/);
+    const horizontalRule = line.match(/^\s{0,3}((\*\s*){3,}|(-\s*){3,}|(_\s*){3,})\s*$/);
+
+    if (horizontalRule) {
+      list = null;
+      parent.append(document.createElement('hr'));
+      continue;
+    }
+
+    if (quote) {
+      list = null;
+      const quoteLines = [quote[1]];
+      while (index + 1 < lines.length) {
+        const nextLine = lines[index + 1];
+        if (!nextLine.trim()) {
+          break;
+        }
+        const nextQuote = nextLine.match(/^>\s?(.*)$/);
+        if (nextQuote) {
+          quoteLines.push(nextQuote[1]);
+          index += 1;
+          continue;
+        }
+        if (/^```\s*([^`]*)\s*$/.test(nextLine) || /^(#{1,3})\s+(.+)$/.test(nextLine) || /^\s*[-*]\s+(.+)$/.test(nextLine) || /^\s*(\d+)[.)]\s+(.+)$/.test(nextLine) || (isMarkdownTableRow(nextLine) && isMarkdownTableSeparator(lines[index + 2] || ''))) {
+          break;
+        }
+        quoteLines.push(nextLine);
+        index += 1;
+      }
+      appendBlockquote(parent, quoteLines);
+      continue;
+    }
 
     if (heading) {
       list = null;
@@ -2009,6 +2068,42 @@ function appendMarkdown(parent, text) {
       }
       appendInlineMarkdown(item, bullet?.[1] || numbered?.[2] || '');
       list.append(item);
+
+      while (index + 1 < lines.length) {
+        const nextLine = lines[index + 1];
+        if (!nextLine.trim()) {
+          index += 1;
+          continue;
+        }
+
+        const indent = countLeadingSpaces(nextLine);
+        const nestedFence = indent >= 2 ? nextLine.match(/^\s*```\s*([^`]*)\s*$/) : null;
+        if (nestedFence) {
+          const codeIndent = indent;
+          const codeLanguage = nestedFence[1]?.trim() || '';
+          const codeLines = [];
+          index += 1;
+          while (index + 1 < lines.length) {
+            const codeLine = lines[index + 1];
+            if (!codeLine.trim()) {
+              codeLines.push('');
+              index += 1;
+              continue;
+            }
+            const codeLineIndent = countLeadingSpaces(codeLine);
+            if (codeLineIndent >= codeIndent && codeLine.slice(codeIndent).match(/^```\s*$/)) {
+              index += 1;
+              break;
+            }
+            codeLines.push(codeLineIndent >= codeIndent ? codeLine.slice(codeIndent) : codeLine);
+            index += 1;
+          }
+          appendCodeBlock(item, codeLines.join('\n'), codeLanguage);
+          continue;
+        }
+
+        break;
+      }
       continue;
     }
 
@@ -2038,7 +2133,8 @@ function isRunningJobHistoryMessage(item) {
   return typeof item?.id === 'string'
     && item.id.startsWith('job_')
     && item.role === 'assistant'
-    && !item.completedAt;
+    && !item.completedAt
+    && (isPlaceholderPendingText(item.text) || item.jobState === 'queued' || item.jobState === 'running');
 }
 
 function isPlaceholderPendingText(text) {
@@ -2139,7 +2235,19 @@ function reconcilePendingJobWithHistory(history, conversationId = activeConversa
     return;
   }
   const matchingMessage = history.find((item) => item?.id === pendingJob.job_id);
-  if (!matchingMessage || isRunningJobHistoryMessage(matchingMessage)) {
+  if (!matchingMessage) {
+    clearPendingJob(conversationId);
+    if (isActiveConversation(conversationId)) {
+      setStatus('');
+      setSending(false);
+      const node = elements.messages.querySelector(`[data-message-id="${pendingJob.job_id}"]`);
+      if (node) {
+        node.remove();
+      }
+    }
+    return;
+  }
+  if (isRunningJobHistoryMessage(matchingMessage)) {
     return;
   }
   clearPendingJob(conversationId);
@@ -2670,9 +2778,19 @@ function appendCancelJobAction(node, role, text, options = {}) {
       showToast('응답을 중지했습니다.', { kind: 'success' });
       setStatus('');
     } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      if (error?.status === 404 || detail.includes('Job not found or already finished.')) {
+        clearPendingJob(conversationId);
+        node.remove();
+        await refreshHistoryIfChanged().catch(() => {});
+        await refreshConversations().catch(() => {});
+        showToast('이미 끝난 작업이라 남아 있던 처리중 표시를 정리했습니다.', { kind: 'success' });
+        setStatus('');
+        return;
+      }
       button.disabled = false;
       button.setAttribute('aria-label', '이 응답 작업 중지');
-      appendMessage('system', error instanceof Error ? error.message : String(error), { persist: false });
+      appendMessage('system', detail, { persist: false });
       setStatus('');
     }
   });
@@ -2935,6 +3053,47 @@ function clearPendingJob(conversationId = activeConversationId()) {
   }
 }
 
+function pendingJobStoragePrefix() {
+  return `${PENDING_JOB_KEY}:${settings.apiUrl}:${authUser?.id || settings.apiKey || 'anonymous'}:`;
+}
+
+async function pruneStoredPendingJobs(conversationList = conversations) {
+  const prefix = pendingJobStoragePrefix();
+  const knownConversationIds = new Set((conversationList || []).map((conversation) => conversation?.id).filter(Boolean));
+  const keys = [];
+  for (let index = 0; index < localStorage.length; index += 1) {
+    const key = localStorage.key(index);
+    if (key?.startsWith(prefix)) {
+      keys.push(key);
+    }
+  }
+
+  for (const key of keys) {
+    const conversationId = key.slice(prefix.length);
+    let pendingJob = null;
+    try {
+      pendingJob = JSON.parse(localStorage.getItem(key) || 'null');
+    } catch {
+      localStorage.removeItem(key);
+      continue;
+    }
+    if (!conversationId || !pendingJob?.job_id || (knownConversationIds.size > 0 && !knownConversationIds.has(conversationId))) {
+      localStorage.removeItem(key);
+      continue;
+    }
+    try {
+      const job = await fetchJob(pendingJob.job_id, conversationId);
+      if (isTerminalJobState(job.state)) {
+        localStorage.removeItem(key);
+      }
+    } catch (error) {
+      if (error?.status === 404) {
+        localStorage.removeItem(key);
+      }
+    }
+  }
+}
+
 async function fetchConversationHistory(conversationId) {
   const response = await apiFetch('/v1/history', {
     params: { conversation_id: conversationId },
@@ -2992,7 +3151,16 @@ async function cancelActiveJob() {
     showToast('응답을 중지했습니다.', { kind: 'success' });
     setStatus('');
   } catch (error) {
-    appendMessage('system', error instanceof Error ? error.message : String(error), { persist: false });
+    const detail = error instanceof Error ? error.message : String(error);
+    if (error?.status === 404 || detail.includes('Job not found or already finished.')) {
+      clearPendingJob(conversationId);
+      await refreshHistoryIfChanged().catch(() => {});
+      await refreshConversations().catch(() => {});
+      showToast('이미 끝난 작업이라 남아 있던 처리중 표시를 정리했습니다.', { kind: 'success' });
+      setStatus('');
+      return true;
+    }
+    appendMessage('system', detail, { persist: false });
     setStatus('');
   } finally {
     setSending(false);
@@ -3071,6 +3239,19 @@ function clearStreamingState(jobId) {
   streamingTextByJob.delete(jobId);
 }
 
+function nextPartialSegmentId(jobId) {
+  const nodes = [...elements.messages.querySelectorAll(`[data-message-id^="${jobId}:partial:"]`)];
+  let maxIndex = 0;
+  for (const node of nodes) {
+    const rawId = node.dataset.messageId || '';
+    const index = Number(rawId.split(':').pop());
+    if (Number.isFinite(index)) {
+      maxIndex = Math.max(maxIndex, index);
+    }
+  }
+  return `${jobId}:partial:${maxIndex + 1}`;
+}
+
 function flushStreamingCheckpointNow(jobId, conversationId = activeConversationId()) {
   window.clearTimeout(streamingIdleTimers.get(jobId));
   streamingIdleTimers.delete(jobId);
@@ -3079,22 +3260,24 @@ function flushStreamingCheckpointNow(jobId, conversationId = activeConversationI
   }
   const node = elements.messages.querySelector(`[data-message-id="${jobId}"]`);
   const text = streamingNodeText(node);
-  if (!node || !text.trim()) {
+  if (!node) {
+    return;
+  }
+  if (!text.trim()) {
+    renderMessageNode(node, 'assistant', '응답을 처리 중입니다…', { pending: true, autoScroll: false, suppressScrollButton: true });
     return;
   }
   if (text.trim().length < MIN_STREAMING_CHECKPOINT_CHARS) {
+    streamingTextByJob.set(jobId, '');
+    node._streamingText = '';
+    renderMessageNode(node, 'assistant', '응답을 처리 중입니다…', { pending: true, autoScroll: false, suppressScrollButton: true });
     return;
   }
 
-  let checkpoint = elements.messages.querySelector(`[data-message-id="${jobId}:partial"]`);
-  const checkpointText = checkpoint ? messageTextWithoutAttachmentPreview(checkpoint) : '';
-  const combinedText = `${checkpointText}${text}`;
-  if (!checkpoint) {
-    checkpoint = document.createElement('article');
-    checkpoint.dataset.messageId = `${jobId}:partial`;
-    node.before(checkpoint);
-  }
-  renderMessageNode(checkpoint, 'assistant', combinedText, { autoScroll: false, suppressScrollButton: true });
+  const checkpoint = document.createElement('article');
+  checkpoint.dataset.messageId = nextPartialSegmentId(jobId);
+  node.before(checkpoint);
+  renderMessageNode(checkpoint, 'assistant', text, { autoScroll: false, suppressScrollButton: true });
   streamingTextByJob.set(jobId, '');
   node._streamingText = '';
   renderMessageNode(node, 'assistant', '응답을 처리 중입니다…', { pending: true, autoScroll: false, suppressScrollButton: true });
@@ -3102,9 +3285,7 @@ function flushStreamingCheckpointNow(jobId, conversationId = activeConversationI
 
 function scheduleStreamingIdleCheckpoint(jobId, conversationId = activeConversationId()) {
   window.clearTimeout(streamingIdleTimers.get(jobId));
-  streamingIdleTimers.set(jobId, window.setTimeout(() => {
-    flushStreamingCheckpointNow(jobId, conversationId);
-  }, 10_000));
+  streamingIdleTimers.delete(jobId);
 }
 
 async function waitForJobViaSse(jobId, onTick = () => {}, conversationId = activeConversationId(), onToken = () => {}) {
@@ -3337,7 +3518,7 @@ async function handleSubmit(event) {
           applyStreamingToken(response.job_id, token, conversationId);
         });
         if (isActiveConversation(conversationId)) {
-          await refreshHistoryIfChanged();
+          await renderHistory({ scrollToLatest: true });
         }
         await refreshConversations().catch(() => {});
         if (job.state === 'failed') {
@@ -3917,6 +4098,6 @@ elements.messageInput.addEventListener('keydown', (event) => {
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js').catch(() => {});
+    navigator.serviceWorker.register('/sw.js?v=pwa-2026-05-02-003').catch(() => {});
   });
 }

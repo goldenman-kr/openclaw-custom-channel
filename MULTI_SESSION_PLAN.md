@@ -35,7 +35,7 @@
   - 사용자별 conversation/history/session 격리
 - 멀티유저 구현 시 모든 conversation/history/message/job API는 인증된 사용자 identity를 기준으로 필터링해야 한다.
 - 안정성/보안을 제대로 보려면 작은 SaaS 백엔드처럼 권한 모델, 감사로그, 삭제/초기화 제한, 세션/workspace 격리를 별도 설계한다.
-- 따라서 현재 브랜치에서는 구현하지 않고, 향후 확장 요구가 명확해질 때 별도 계획으로 분리한다.
+- 초기 multi-session 범위에서는 분리해 두었으나, 이후 13장에서 별도 구현 트랙으로 확장했다.
 
 ## 2. OpenClaw 기술 구조 검토
 
@@ -233,25 +233,11 @@ body: { message, attachments, metadata }
 
 ### 5.4 기존 history 마이그레이션
 
-현재 history 파일 위치 예:
+상태: **불필요**
 
-```text
-server/state/history/mobile-web-api-key-<hash>.json
-```
-
-마이그레이션 절차:
-
-1. SQLite DB 초기화 시 `app_meta`에서 migration marker 확인
-2. 기존 history 파일이 있으면 `이전 대화` conversation 생성
-3. 기존 messages를 해당 conversation으로 import
-4. `openclawSessionId`는 기존 session id를 그대로 사용하거나, 새로 만들되 맥락 연속성이 필요한 경우 기존 ID 유지
-5. migration marker 기록
-6. 원본 파일은 삭제하지 말고 백업/보존
-
-권장:
-
-- 기존 단일 history는 `이전 대화`로 보존
-- OpenClaw 세션 맥락도 유지하려면 기존 `mobile-web-api-key-...` session id를 `openclawSessionId`로 사용
+- 초기에는 단일 history JSON을 새 conversation 구조로 자동 import하는 업그레이드 절차를 고려했다.
+- 하지만 현재 운영 기준에서는 기존 history 자동 이관 필요성이 없어졌으므로 본 PLAN 범위에서는 제외한다.
+- 따라서 자동 migration 구현은 요구하지 않으며, 필요 시에만 별도 수동 정리 작업으로 다룬다.
 
 ### 5.5 API Key 역할 정리
 
@@ -427,12 +413,22 @@ GET /v1/jobs/:id/events
 
 ### 7.4 추천
 
+상태:
+- **완료**: polling + SSE 기반 job 상태/최종 응답 이벤트
+- **완료**: token-level streaming 고도화
+- **미구현/후속 검토**: WebSocket 기반 실시간 sync
+
 - 1차: 현재 polling 유지
 - 2차: SSE로 job 상태와 최종 응답 이벤트 제공
-- 3차: OpenClaw에서 token stream 접근이 가능해질 때 token-level streaming 검토
+- 3차: OpenClaw에서 token stream 접근이 가능해질 때 token-level streaming 검토 → **완료로 간주**
 - WebSocket은 멀티유저/협업/실시간 sync가 필요해질 때 재검토
 
 ### 7.5 향후 확장 메모 — 응답 생성 취소/중단
+
+상태: **부분 완료**
+
+- 기본 cancel/중지 UX와 job cancelled 처리, pending placeholder 마무리, Gateway abort 연동 경로는 구현되어 있다.
+- 다만 `취소 요청됨/중단 완료` 세분 UX와 transport별 정책 정교화까지 모두 끝난 상태로 보기는 어렵다.
 
 사용자가 질의를 보낸 뒤 모델이 답변을 생성 중일 때 “취소/중지”할 수 있는 기능은 향후 검토한다.
 
@@ -452,7 +448,7 @@ GET /v1/jobs/:id/events
 - provider/Gateway가 이미 받은 요청을 완전히 중단하지 못할 수도 있으므로, UX에는 “취소 요청됨/중단됨” 상태를 구분할 수 있게 한다.
 - 취소 후 같은 conversation에서 다음 메시지를 보낼 수 있어야 하며, 이전 job의 늦은 결과가 history에 덮어쓰이지 않도록 job id 검증이 필요하다.
 
-현재 브랜치에서는 구현하지 않고 plan에만 남긴다.
+현재 브랜치에서는 기본 취소/중단 경로를 구현했고, 추가 정교화 항목만 plan에 남긴다.
 
 ## 8. 검증 계획
 
@@ -490,16 +486,20 @@ GET /v1/jobs/:id/events
 
 ## 9. 권장 구현 단계
 
-1. SQLite store 및 migration 기반 추가
-2. Conversation API 추가
-3. 기존 `/v1/history`를 conversation 기반으로 내부 연결
-4. `/v1/message`에 `conversation_id` 지원
-5. 기존 단일 UI에서 active conversation만 먼저 붙이기
-6. 데스크톱 sidebar 추가
-7. 모바일 drawer/menu 추가
-8. 새 대화 시작을 conversation 생성 방식으로 변경
-9. legacy history/localStorage 의존 제거
-10. SSE streaming PoC 검토
+상태 요약:
+- **완료**: 1~10
+- **완료로 간주**: 13장 multi-user 확장
+
+1. SQLite store 및 migration 기반 추가 — **완료**
+2. Conversation API 추가 — **완료**
+3. 기존 `/v1/history`를 conversation 기반으로 내부 연결 — **완료**
+4. `/v1/message`에 `conversation_id` 지원 — **완료**
+5. 기존 단일 UI에서 active conversation만 먼저 붙이기 — **완료**
+6. 데스크톱 sidebar 추가 — **완료**
+7. 모바일 drawer/menu 추가 — **완료**
+8. 새 대화 시작을 conversation 생성 방식으로 변경 — **완료**
+9. legacy history/localStorage 의존 제거 — **완료**
+10. SSE streaming PoC 검토 — **완료**
 
 ## 10. 리스크와 주의사항
 
@@ -556,6 +556,8 @@ SQLite/Conversation API를 만들 때부터 store와 runtime 인터페이스를 
 현재 단계의 목표는 “Web/PWA 구현을 방해하지 않는 얇은 인터페이스 경계”를 만드는 것이다.
 
 ## 13. 구현 계획 — 다중 유저 지원
+
+상태: **완료**
 
 현재 `multi-user` 브랜치의 목표는 기존 관리자 1인용 Web/PWA 다중 대화 구조를 **소규모 다중 유저 구조**로 확장하는 것이다. 다중 유저는 단순 API Key 추가가 아니라 인증, 데이터 owner 검증, 파일 접근 sandbox를 포함하는 보안 경계로 구현한다.
 

@@ -58,6 +58,7 @@ export interface MessageStore {
     attachments?: HistoryAttachment[];
   }): ChatMessageRecord;
   updateMessage(id: string, patch: { role?: ConversationRole; text?: string; jobId?: string | null; createdAt?: string; completedAt?: string | null; attachments?: HistoryAttachment[] }): ChatMessageRecord | null;
+  deleteMessage(id: string): boolean;
   listMessages(conversationId: string, input?: { limit?: number }): ChatMessageRecord[];
   clearMessages(conversationId: string, input?: { now?: string }): number;
 }
@@ -275,6 +276,21 @@ export class SqliteChatStore implements ConversationStore, MessageStore, JobStor
     update();
     const row = this.db.prepare("SELECT * FROM messages WHERE id = ?").get(id) as MessageRow | undefined;
     return row ? mapMessage(row, this.attachmentsFor([id]).get(id) ?? []) : null;
+  }
+
+  deleteMessage(id: string): boolean {
+    const current = this.db.prepare("SELECT * FROM messages WHERE id = ?").get(id) as MessageRow | undefined;
+    if (!current) {
+      return false;
+    }
+    const now = new Date().toISOString();
+    const remove = this.db.transaction(() => {
+      this.db.prepare("DELETE FROM attachments WHERE message_id = ?").run(id);
+      const result = this.db.prepare("DELETE FROM messages WHERE id = ?").run(id);
+      this.db.prepare("UPDATE conversations SET updated_at = ? WHERE id = ?").run(now, current.conversation_id);
+      return result.changes > 0;
+    });
+    return remove();
   }
 
   clearMessages(conversationId: string, input: { now?: string } = {}): number {

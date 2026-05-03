@@ -34,6 +34,9 @@ function unusedConversationStore(): ConversationStore & MessageStore & JobStore 
     updateMessage() {
       return null;
     },
+    deleteMessage() {
+      return false;
+    },
     listMessages() {
       return [];
     },

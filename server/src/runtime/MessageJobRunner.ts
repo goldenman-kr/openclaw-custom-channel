@@ -23,7 +23,7 @@ export interface MessageJobRunnerDeps {
   generatedMediaDirs?: string[];
 }
 
-const STREAMING_IDLE_CHECKPOINT_MS = Number(process.env.STREAMING_IDLE_CHECKPOINT_MS ?? 10_000);
+const STREAMING_IDLE_CHECKPOINT_MS = Number(process.env.STREAMING_IDLE_CHECKPOINT_MS ?? 0);
 const MIN_STREAMING_CHECKPOINT_CHARS = Number(process.env.MIN_STREAMING_CHECKPOINT_CHARS ?? 12);
 
 export class MessageJobRunner {
@@ -96,7 +96,7 @@ export class MessageJobRunner {
     let lastPersistedStreamText = "";
     let lastStreamPersistAt = 0;
     let streamIdleTimer: NodeJS.Timeout | undefined;
-    const partialMessageId = `${job.id}:partial`;
+    let partialSegmentIndex = 0;
     const clearStreamIdleTimer = () => {
       if (streamIdleTimer) {
         clearTimeout(streamIdleTimer);
@@ -104,6 +104,9 @@ export class MessageJobRunner {
       }
     };
     const persistStreamCheckpoint = (force = false) => {
+      if (!force && STREAMING_IDLE_CHECKPOINT_MS <= 0) {
+        return;
+      }
       if (!job.conversationId || !this.deps.shouldPersistMessage(payload.message) || !streamSegmentText.trim()) {
         return;
       }
@@ -125,32 +128,31 @@ export class MessageJobRunner {
       if (!job.conversationId || !this.deps.shouldPersistMessage(payload.message) || this.isCancelled(job)) {
         return;
       }
-      if (streamSegmentText.trim().length < MIN_STREAMING_CHECKPOINT_CHARS) {
+      const segmentText = streamSegmentText.trim();
+      if (segmentText.length < MIN_STREAMING_CHECKPOINT_CHARS) {
         return;
       }
-      const combinedText = `${persistedPartialText}${streamSegmentText}`;
-      const now = new Date().toISOString();
-      const updated = this.deps.conversationStore.updateMessage(partialMessageId, {
+      partialSegmentIndex += 1;
+      const partialMessageId = `${job.id}:partial:${partialSegmentIndex}`;
+      const nowMs = Date.now();
+      const now = new Date(nowMs).toISOString();
+      const placeholderCreatedAt = new Date(nowMs + 1_000).toISOString();
+      this.deps.conversationStore.addMessage({
+        id: partialMessageId,
+        conversationId: job.conversationId,
         role: "assistant",
-        text: combinedText,
+        text: streamSegmentText,
+        createdAt: now,
         completedAt: now,
       });
-      if (!updated) {
-        this.deps.conversationStore.addMessage({
-          id: partialMessageId,
-          conversationId: job.conversationId,
-          role: "assistant",
-          text: combinedText,
-          createdAt: job.createdAt,
-          completedAt: now,
-        });
-      }
-      persistedPartialText = combinedText;
+      persistedPartialText = `${persistedPartialText}${streamSegmentText}`;
       streamSegmentText = "";
       lastPersistedStreamText = "";
       this.deps.conversationStore.updateMessage(job.id, {
         role: "assistant",
         text: "응답을 처리 중입니다…",
+        createdAt: placeholderCreatedAt,
+        completedAt: null,
       });
     };
     const persistBoundaryPartialMessage = () => {
@@ -158,6 +160,9 @@ export class MessageJobRunner {
       persistIdlePartialMessage(false);
     };
     const scheduleIdlePartialMessage = () => {
+      if (STREAMING_IDLE_CHECKPOINT_MS <= 0) {
+        return;
+      }
       clearStreamIdleTimer();
       streamIdleTimer = setTimeout(persistIdlePartialMessage, STREAMING_IDLE_CHECKPOINT_MS);
       streamIdleTimer.unref?.();
@@ -205,22 +210,28 @@ export class MessageJobRunner {
     if (result.statusCode >= 200 && result.statusCode < 300 && "reply" in result.body) {
       if (this.deps.shouldPersistMessage(payload.message)) {
         const fullText = await appendRecentGeneratedMediaRefs(sanitizeAssistantReply(result.body.reply), job.createdAt, this.deps.generatedMediaDirs);
-        const text = persistedPartialText && fullText.startsWith(persistedPartialText)
-          ? fullText.slice(persistedPartialText.length).trimStart() || fullText
+        const remainingText = persistedPartialText && fullText.startsWith(persistedPartialText)
+          ? fullText.slice(persistedPartialText.length).trimStart()
           : fullText;
+        const text = remainingText || fullText;
         const attachments = mergeAttachments(
           await attachmentsFromMediaRefs(text),
           await attachmentsFromFileMentions(`${payload.message}\n${fullText}`),
         );
         const savedAt = new Date().toISOString();
+        const shouldRemoveTerminalPlaceholder = Boolean(persistedPartialText) && !remainingText && attachments.length === 0;
         if (job.conversationId) {
-          this.deps.conversationStore.updateMessage(job.id, {
-            role: "assistant",
-            text,
-            createdAt: savedAt,
-            completedAt: savedAt,
-            attachments,
-          });
+          if (shouldRemoveTerminalPlaceholder) {
+            this.deps.conversationStore.deleteMessage(job.id);
+          } else {
+            this.deps.conversationStore.updateMessage(job.id, {
+              role: "assistant",
+              text,
+              createdAt: savedAt,
+              completedAt: savedAt,
+              attachments,
+            });
+          }
         } else {
           await this.deps.historyStore.replaceById(job.sessionId, job.id, {
             role: "assistant",

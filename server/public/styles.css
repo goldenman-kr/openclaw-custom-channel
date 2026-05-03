@@ -450,6 +450,15 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); }
 .message p + ul,
 .message p + ol,
 .message p + .markdown-table-wrapper,
+.message p + blockquote,
+.message p + hr,
+.message blockquote + p,
+.message blockquote + ul,
+.message blockquote + ol,
+.message hr + p,
+.message hr + ul,
+.message hr + ol,
+.message hr + blockquote,
 .markdown-table-wrapper + p { margin-top: 0.45rem; }
 
 .message h3,
@@ -467,6 +476,33 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); }
 }
 
 .message li + li { margin-top: 0.18rem; }
+
+.message li > .code-block,
+.message li > blockquote,
+.message li > p {
+  margin-top: 0.35rem;
+}
+
+.message hr {
+  margin: 0.55rem 0;
+  border: 0;
+  border-top: 1px solid rgba(148, 163, 184, 0.32);
+}
+
+.message blockquote {
+  margin: 0.3rem 0 0;
+  padding: 0.2rem 0 0.2rem 0.85rem;
+  border-left: 3px solid rgba(125, 211, 252, 0.6);
+  color: rgba(226, 232, 240, 0.92);
+}
+
+.message blockquote > :first-child {
+  margin-top: 0;
+}
+
+.message blockquote > :last-child {
+  margin-bottom: 0;
+}
 
 .message code {
   padding: 0.08rem 0.28rem;
@@ -543,6 +579,10 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); }
   overflow-x: auto;
   padding: 10px;
   white-space: pre;
+}
+
+.code-block.compact pre {
+  padding: 9px 10px;
 }
 
 .code-block pre code {
@@ -748,7 +788,7 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); }
 
 .message.user {
   align-self: flex-end;
-  background: linear-gradient(135deg, var(--user), #2563eb);
+  background: linear-gradient(135deg, #0369a1, #1e40af);
   border-bottom-right-radius: 6px;
 }
 
