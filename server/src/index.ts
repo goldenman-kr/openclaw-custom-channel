@@ -50,7 +50,7 @@ const historyStore = new FileHistoryStore(historyDir);
 const publicDir = resolve(process.env.PUBLIC_DIR ?? join(process.cwd(), "public"));
 const stateDir = resolve(process.env.CHANNEL_STATE_DIR ?? join(process.cwd(), "state"));
 const historyMediaDir = resolve(process.env.HISTORY_MEDIA_DIR ?? join(stateDir, "history-media"));
-const assistantGeneratedMediaDirs = (process.env.ASSISTANT_MEDIA_SCAN_DIRS ?? "/home/orbsian/.openclaw/media/outbound")
+const assistantGeneratedMediaDirs = (process.env.ASSISTANT_MEDIA_SCAN_DIRS ?? "/home/orbsian/.openclaw/media")
   .split(":")
   .map((dir) => dir.trim())
   .filter(Boolean)

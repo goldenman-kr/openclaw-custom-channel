@@ -310,10 +310,14 @@ async function recentFilesInDir(dir: string, sinceMs: number): Promise<string[]>
     const entries = await readdir(dir, { withFileTypes: true });
     const files: string[] = [];
     for (const entry of entries) {
+      const filePath = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        files.push(...await recentFilesInDir(filePath, sinceMs));
+        continue;
+      }
       if (!entry.isFile()) {
         continue;
       }
-      const filePath = join(dir, entry.name);
       const fileStat = await stat(filePath);
       if (fileStat.mtimeMs >= sinceMs && fileStat.size > 0) {
         files.push(filePath);

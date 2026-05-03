@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -150,9 +150,11 @@ test("preserves all payload text and media refs from embedded agent JSON", async
 
 test("appends recent generated media files when streaming omits media payload", async () => {
   const mediaDir = await mkdtemp(join(tmpdir(), "openclaw-generated-media-"));
+  const nestedMediaDir = join(mediaDir, "tool-image-generation");
+  await mkdir(nestedMediaDir);
   const runtime: ChatRuntime = {
     async sendMessage() {
-      await writeFile(join(mediaDir, "chart.png"), "png");
+      await writeFile(join(nestedMediaDir, "chart.png"), "png");
       return { reply: "차트를 만들었습니다." };
     },
   };
@@ -192,7 +194,7 @@ test("appends recent generated media files when streaming omits media payload", 
   await waitUntil(() => job.state === "completed");
   assert.equal(
     (await historyStore.list(job.sessionId))[0]?.text,
-    `차트를 만들었습니다.\n\nMEDIA:${join(mediaDir, "chart.png")}`,
+    `차트를 만들었습니다.\n\nMEDIA:${join(nestedMediaDir, "chart.png")}`,
   );
 });
 
