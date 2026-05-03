@@ -77,11 +77,20 @@ function getSingleHeader(headers: IncomingHttpHeaders, name: string): string | u
 }
 
 function isTimeoutError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  const cause = error instanceof Error ? error.cause : undefined;
+  const causeMessage = cause instanceof Error ? cause.message : String(cause ?? "");
+  const causeCode = typeof cause === "object" && cause !== null && "code" in cause ? String((cause as { code?: unknown }).code ?? "") : "";
+  const combined = `${message}\n${causeMessage}\n${causeCode}`.toLowerCase();
+
   return (
-    typeof error === "object" &&
-    error !== null &&
-    "signal" in error &&
-    (error as { signal?: unknown }).signal === "SIGTERM"
+    combined.includes("timed out") ||
+    combined.includes("timeout") ||
+    combined.includes("und_err_body_timeout") ||
+    (typeof error === "object" &&
+      error !== null &&
+      "signal" in error &&
+      (error as { signal?: unknown }).signal === "SIGTERM")
   );
 }
 
@@ -169,7 +178,7 @@ export async function handlePostMessage(
       return errorResponse({
         requestId,
         code: "UPSTREAM_OPENCLAW_TIMEOUT",
-        message: "OpenClaw request timed out.",
+        message: "작업 처리에 시간이 오래 걸려 요청 시간이 초과되었습니다. 같은 요청을 다시 보내면 재시도할 수 있습니다.",
       });
     }
 

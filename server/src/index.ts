@@ -32,7 +32,9 @@ import { SqliteChatStore, type ConversationRecord } from "./session/SqliteChatSt
 
 const host = process.env.HOST ?? "0.0.0.0";
 const port = Number(process.env.PORT ?? 29999);
-const clientBuildId = "pwa-2026-05-03-002";
+const serverRuntimeVersion = "pwa-server-2026-05-03-001";
+const apiContractVersion = 1;
+const minClientApiVersion = 1;
 const execFileAsync = promisify(execFile);
 
 const validApiKeys = new Set(
@@ -541,7 +543,8 @@ const server = createServer(async (request, response) => {
     sendJson(response, 200, {
       status: "ok",
       transport: process.env.OPENCLAW_TRANSPORT ?? "cli",
-      build_id: clientBuildId,
+      build_id: serverRuntimeVersion,
+      server_runtime_version: serverRuntimeVersion,
     });
     return;
   }
@@ -549,7 +552,10 @@ const server = createServer(async (request, response) => {
   if (request.method === "GET" && url.pathname === "/v1/version") {
     response.setHeader("cache-control", "no-store");
     sendJson(response, 200, {
-      build_id: clientBuildId,
+      build_id: serverRuntimeVersion,
+      server_runtime_version: serverRuntimeVersion,
+      api_contract_version: apiContractVersion,
+      min_client_api_version: minClientApiVersion,
       app: "openclaw-custom-channel",
       transport: process.env.OPENCLAW_TRANSPORT ?? "cli",
     });

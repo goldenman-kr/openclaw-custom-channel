@@ -1,3 +1,7 @@
+import { randomUUID } from "node:crypto";
+import { mkdir, writeFile } from "node:fs/promises";
+import { basename, join, resolve } from "node:path";
+import { Agent } from "undici";
 import type { MessageAttachment, MessageRequestMetadata } from "../contracts/apiContractV1.js";
 import { GatewayAgentEventSubscriber } from "./GatewayAgentEventSubscriber.js";
 import { activeGatewayModel } from "./modelOverride.js";
@@ -9,9 +13,16 @@ export class GatewayOpenAiOpenClawClient implements OpenClawClient {
     private readonly token = process.env.OPENCLAW_GATEWAY_TOKEN,
     private readonly model = process.env.OPENCLAW_GATEWAY_MODEL ?? "openclaw",
     private readonly timeoutMs = Number(process.env.OPENCLAW_GATEWAY_TIMEOUT_MS ?? process.env.OPENCLAW_TIMEOUT_MS ?? 600_000),
+    private readonly uploadDir = resolve(process.env.UPLOAD_DIR ?? join(process.cwd(), "state", "uploads")),
+    private readonly fetchDispatcher = new Agent({
+      // Disable undici's 300s streaming body idle timeout for long-running tool/OCR turns.
+      // The request is still bounded by timeoutMs via AbortController above.
+      bodyTimeout: Number(process.env.OPENCLAW_GATEWAY_BODY_TIMEOUT_MS ?? 0),
+    }),
   ) {}
 
   async sendMessage(input: OpenClawClientInput): Promise<OpenClawClientResult> {
+    const savedAttachments = await this.saveAttachments(input.sessionId, input.attachments ?? []);
     const url = new URL("/v1/chat/completions", this.baseUrl);
     const abortController = new AbortController();
     const onExternalAbort = () => abortController.abort(input.abortSignal?.reason ?? new Error("OpenClaw Gateway request cancelled."));
@@ -48,9 +59,10 @@ export class GatewayOpenAiOpenClawClient implements OpenClawClient {
       const response = await fetch(url, {
         method: "POST",
         headers: this.headers(input, true),
-        body: JSON.stringify(this.requestBody(input, true)),
+        body: JSON.stringify(this.requestBody(input, true, savedAttachments)),
         signal: abortController.signal,
-      });
+        dispatcher: this.fetchDispatcher,
+      } as UndiciRequestInit);
 
       if (!response.ok) {
         const body = await response.text().catch(() => "");
@@ -66,7 +78,7 @@ export class GatewayOpenAiOpenClawClient implements OpenClawClient {
         await input.callbacks?.onToken?.(token);
       }, rawStreamEvents);
       const streamReply = finalText || streamed.join("");
-      const fallbackReply = streamReply ? "" : await this.fetchNonStreamingReply(input, abortController.signal).catch(() => "");
+      const fallbackReply = streamReply ? "" : await this.fetchNonStreamingReply(input, abortController.signal, savedAttachments).catch(() => "");
 
       return {
         reply: streamReply || fallbackReply || "응답 출력에 문제가 있습니다. 다시 답변을 요청해보세요. 이 오류가 반복되면 새 대화를 열어 세션을 다시 시작해주세요.",
@@ -118,27 +130,28 @@ export class GatewayOpenAiOpenClawClient implements OpenClawClient {
     return headers;
   }
 
-  private requestBody(input: OpenClawClientInput, stream: boolean): Record<string, unknown> {
+  private requestBody(input: OpenClawClientInput, stream: boolean, attachments: SavedAttachment[]): Record<string, unknown> {
     return {
       model: this.activeModel(),
       stream,
       messages: [
         {
           role: "user",
-          content: this.buildContent(input.message, input.attachments ?? [], input.metadata, input.runtimeWorkspace),
+          content: this.buildContent(input.message, attachments, input.metadata, input.runtimeWorkspace),
         },
       ],
     };
   }
 
-  private async fetchNonStreamingReply(input: OpenClawClientInput, signal: AbortSignal): Promise<string> {
+  private async fetchNonStreamingReply(input: OpenClawClientInput, signal: AbortSignal, attachments: SavedAttachment[]): Promise<string> {
     const url = new URL("/v1/chat/completions", this.baseUrl);
     const response = await fetch(url, {
       method: "POST",
       headers: this.headers(input, false),
-      body: JSON.stringify(this.requestBody(input, false)),
+      body: JSON.stringify(this.requestBody(input, false, attachments)),
       signal,
-    });
+      dispatcher: this.fetchDispatcher,
+    } as UndiciRequestInit);
     if (!response.ok) {
       return "";
     }
@@ -153,7 +166,26 @@ export class GatewayOpenAiOpenClawClient implements OpenClawClient {
     }
   }
 
-  private buildContent(message: string, attachments: MessageAttachment[], metadata?: MessageRequestMetadata, runtimeWorkspace?: RuntimeWorkspaceScope): string | Array<Record<string, unknown>> {
+  private async saveAttachments(sessionId: string, attachments: MessageAttachment[]): Promise<SavedAttachment[]> {
+    if (attachments.length === 0) {
+      return [];
+    }
+
+    const safeSessionId = sessionId.replace(/[^a-zA-Z0-9_.-]/g, "_");
+    const targetDir = join(this.uploadDir, safeSessionId, randomUUID());
+    await mkdir(targetDir, { recursive: true });
+
+    return Promise.all(
+      attachments.map(async (attachment, index) => {
+        const safeName = basename(attachment.name).replace(/[^a-zA-Z0-9가-힣._ -]/g, "_") || `attachment-${index + 1}`;
+        const filePath = join(targetDir, `${index + 1}-${safeName}`);
+        await writeFile(filePath, Buffer.from(attachment.content_base64, "base64"));
+        return { ...attachment, filePath };
+      }),
+    );
+  }
+
+  private buildContent(message: string, attachments: SavedAttachment[], metadata?: MessageRequestMetadata, runtimeWorkspace?: RuntimeWorkspaceScope): string | Array<Record<string, unknown>> {
     const text = this.buildText(message, attachments, metadata, runtimeWorkspace);
     const imageParts = attachments
       .filter((attachment) => this.isInlineVisionAttachment(attachment))
@@ -174,7 +206,7 @@ export class GatewayOpenAiOpenClawClient implements OpenClawClient {
     ];
   }
 
-  private buildText(message: string, attachments: MessageAttachment[], metadata?: MessageRequestMetadata, runtimeWorkspace?: RuntimeWorkspaceScope): string {
+  private buildText(message: string, attachments: SavedAttachment[], metadata?: MessageRequestMetadata, runtimeWorkspace?: RuntimeWorkspaceScope): string {
     const sections = [message];
     if (runtimeWorkspace) {
       sections.push(this.runtimeWorkspaceText(runtimeWorkspace));
@@ -191,8 +223,8 @@ export class GatewayOpenAiOpenClawClient implements OpenClawClient {
     const textAttachments = attachments.filter((attachment) => !this.isInlineVisionAttachment(attachment));
     if (textAttachments.length > 0) {
       sections.push(
-        `첨부 파일이 제공되었습니다. 아래 파일 metadata와, 텍스트로 추출 가능한 파일은 원문을 함께 제공합니다.\n${textAttachments
-          .map((attachment) => `- ${attachment.name} (${attachment.mime_type}, ${attachment.type})`)
+        `첨부 파일이 서버에 저장되어 있습니다. 필요한 경우 도구로 아래 경로의 파일을 직접 읽거나 분석하세요.\n${textAttachments
+          .map((attachment) => `- ${attachment.name} (${attachment.mime_type}, ${attachment.type})\n  저장 경로: ${attachment.filePath}`)
           .join("\n")}`,
       );
 
@@ -307,6 +339,8 @@ export class GatewayOpenAiOpenClawClient implements OpenClawClient {
   }
 }
 
+type UndiciRequestInit = RequestInit & { dispatcher?: Agent };
+
 interface OpenAiChatCompletionChunk {
   choices?: Array<{
     delta?: {
@@ -325,6 +359,10 @@ interface OpenAiChatCompletionChunk {
   message?: string;
   output?: string;
   content?: string | Array<unknown>;
+}
+
+interface SavedAttachment extends MessageAttachment {
+  filePath: string;
 }
 
 function extractVisibleText(value: unknown): string | null {

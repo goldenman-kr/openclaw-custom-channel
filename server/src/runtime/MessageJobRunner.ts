@@ -1,6 +1,5 @@
-import { readdirSync, statSync } from "node:fs";
-import { readdir, stat } from "node:fs/promises";
-import { basename, dirname, extname, join } from "node:path";
+import { stat } from "node:fs/promises";
+import { basename, extname } from "node:path";
 import type { IncomingMessage } from "node:http";
 import type { MessageRequestDto } from "../contracts/apiContractV1.js";
 import { handlePostMessage } from "../http/messageHandler.js";
@@ -49,7 +48,7 @@ export class MessageJobRunner {
           return;
         }
         const errorMessage = error instanceof Error ? error.message : String(error);
-        await this.persistFailure(job, payload, `전송 실패: ${errorMessage}`);
+        await this.persistFailure(job, payload, failureTextForError(errorMessage));
         this.deps.updateJob(job, { state: "failed", error: errorMessage });
       })
       .finally(() => {
@@ -209,15 +208,12 @@ export class MessageJobRunner {
 
     if (result.statusCode >= 200 && result.statusCode < 300 && "reply" in result.body) {
       if (this.deps.shouldPersistMessage(payload.message)) {
-        const fullText = await appendRecentGeneratedMediaRefs(sanitizeAssistantReply(result.body.reply), job.createdAt, this.deps.generatedMediaDirs);
+        const fullText = sanitizeAssistantReply(result.body.reply);
         const remainingText = persistedPartialText && fullText.startsWith(persistedPartialText)
           ? fullText.slice(persistedPartialText.length).trimStart()
           : fullText;
         const text = remainingText || fullText;
-        const attachments = mergeAttachments(
-          await attachmentsFromMediaRefs(text),
-          await attachmentsFromFileMentions(`${payload.message}\n${fullText}`),
-        );
+        const attachments = await attachmentsFromMediaRefs(text);
         const savedAt = new Date().toISOString();
         const shouldRemoveTerminalPlaceholder = Boolean(persistedPartialText) && !remainingText && attachments.length === 0;
         if (job.conversationId) {
@@ -244,8 +240,9 @@ export class MessageJobRunner {
       return;
     }
 
+    const errorCode = "error" in result.body ? result.body.error.code : undefined;
     const errorMessage = "error" in result.body ? result.body.error.message : "OpenClaw request failed.";
-    await this.persistFailure(job, payload, `전송 실패: ${errorMessage}`);
+    await this.persistFailure(job, payload, failureTextForError(errorMessage, errorCode));
     this.deps.updateJob(job, { state: "failed", error: errorMessage });
   }
 
@@ -287,46 +284,12 @@ export class MessageJobRunner {
   }
 }
 
-async function appendRecentGeneratedMediaRefs(text: string, jobCreatedAt: string, generatedMediaDirs?: string[]): Promise<string> {
-  const dirs = generatedMediaDirs ?? [];
-  if (dirs.length === 0) {
-    return text;
+function failureTextForError(errorMessage: string, errorCode?: string): string {
+  if (errorCode === "UPSTREAM_OPENCLAW_TIMEOUT" || /timed?\s*out|timeout/i.test(errorMessage)) {
+    return "처리 시간이 초과되었습니다. 작업 처리에 시간이 오래 걸렸습니다. 같은 요청을 다시 보내면 재시도할 수 있습니다.";
   }
 
-  const jobStartMs = Date.parse(jobCreatedAt);
-  const sinceMs = Number.isFinite(jobStartMs) ? jobStartMs - 5_000 : Date.now() - 10 * 60_000;
-  const refs = (await Promise.all(dirs.map((dir) => recentFilesInDir(dir, sinceMs))))
-    .flat()
-    .filter((filePath) => !text.includes(filePath))
-    .sort();
-  if (refs.length === 0) {
-    return text;
-  }
-  return `${text.trim()}\n\n${refs.map((filePath) => `MEDIA:${filePath}`).join("\n")}`.trim();
-}
-
-async function recentFilesInDir(dir: string, sinceMs: number): Promise<string[]> {
-  try {
-    const entries = await readdir(dir, { withFileTypes: true });
-    const files: string[] = [];
-    for (const entry of entries) {
-      const filePath = join(dir, entry.name);
-      if (entry.isDirectory()) {
-        files.push(...await recentFilesInDir(filePath, sinceMs));
-        continue;
-      }
-      if (!entry.isFile()) {
-        continue;
-      }
-      const fileStat = await stat(filePath);
-      if (fileStat.mtimeMs >= sinceMs && fileStat.size > 0) {
-        files.push(filePath);
-      }
-    }
-    return files;
-  } catch {
-    return [];
-  }
+  return `전송 실패: ${errorMessage}`;
 }
 
 function sanitizeAssistantReply(reply: string): string {
@@ -447,82 +410,6 @@ async function attachmentsFromMediaRefs(text: string): Promise<HistoryAttachment
     }
   }
   return attachments;
-}
-
-async function attachmentsFromFileMentions(text: string): Promise<HistoryAttachment[]> {
-  const attachments: HistoryAttachment[] = [];
-  for (const ref of extractLocalFileMentions(text)) {
-    const attachment = await attachmentFromMediaRef(ref);
-    if (attachment) {
-      attachments.push(attachment);
-    }
-  }
-  return attachments;
-}
-
-function extractLocalFileMentions(text: string): string[] {
-  const refs: string[] = [];
-  const seen = new Set<string>();
-  for (const match of text.matchAll(/(?:file:\/\/)?\/[^\s`'"<>]+\.(?:pdf|xlsx?|csv|png|jpe?g|webp|gif|svg|zip|txt)/gi)) {
-    const resolved = resolveMentionedLocalFile(cleanMediaRef(match[0] ?? ""));
-    if (!resolved || seen.has(resolved)) {
-      continue;
-    }
-    seen.add(resolved);
-    refs.push(resolved);
-  }
-  return refs;
-}
-
-function resolveMentionedLocalFile(ref: string): string | null {
-  const localPath = ref.startsWith("file://") ? new URL(ref).pathname : ref;
-  return fileExistsSyncish(localPath) ? localPath : findSiblingByLooseBasename(localPath);
-}
-
-function fileExistsSyncish(filePath: string): boolean {
-  try {
-    return statSyncish(filePath)?.isFile() === true;
-  } catch {
-    return false;
-  }
-}
-
-function statSyncish(filePath: string): { isFile(): boolean } | null {
-  try {
-    return statSync(filePath);
-  } catch {
-    return null;
-  }
-}
-
-function findSiblingByLooseBasename(filePath: string): string | null {
-  const dir = dirname(filePath);
-  const wanted = looseFileName(basename(filePath));
-  let entries: string[];
-  try {
-    entries = readdirSync(dir);
-  } catch {
-    return null;
-  }
-  const match = entries.find((entry) => looseFileName(entry) === wanted);
-  return match ? join(dir, match) : null;
-}
-
-function looseFileName(name: string): string {
-  return name.normalize("NFC").replace(/[\s_-]+/g, "").toLowerCase();
-}
-
-function mergeAttachments(...groups: HistoryAttachment[][]): HistoryAttachment[] {
-  const merged: HistoryAttachment[] = [];
-  const seen = new Set<string>();
-  for (const attachment of groups.flat()) {
-    if (seen.has(attachment.path)) {
-      continue;
-    }
-    seen.add(attachment.path);
-    merged.push(attachment);
-  }
-  return merged;
 }
 
 async function attachmentFromMediaRef(ref: string): Promise<HistoryAttachment | null> {

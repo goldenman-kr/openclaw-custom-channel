@@ -59,9 +59,10 @@ export async function handleStaticRoute(request: IncomingMessage, response: Serv
     }
   }
 
+  const noCache = filePath.endsWith("index.html") || filePath.endsWith("sw.js") || filePath.endsWith("client-version.json");
   response.writeHead(200, {
     "content-type": contentTypeFor(filePath),
-    "cache-control": filePath.endsWith("index.html") || filePath.endsWith("sw.js") ? "no-cache" : "public, max-age=3600",
+    "cache-control": noCache ? "no-cache" : "public, max-age=3600",
   });
   if (request.method === "HEAD") {
     response.end();
@@ -89,6 +90,7 @@ function contentTypeFor(filePath: string): string {
     case ".js":
       return "text/javascript; charset=utf-8";
     case ".json":
+      return "application/json; charset=utf-8";
     case ".webmanifest":
       return "application/manifest+json; charset=utf-8";
     case ".svg":

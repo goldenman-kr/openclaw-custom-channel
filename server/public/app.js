@@ -1,7 +1,9 @@
 const STORAGE_KEY = 'openclaw-web-channel-settings-v1';
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
 const COMPOSER_DRAFT_KEY_PREFIX = 'openclaw-web-channel-composer-draft-v1';
-const CLIENT_BUILD_ID = 'pwa-2026-05-03-002';
+const SIDEBAR_WIDTH_KEY = 'openclaw-web-channel-sidebar-width-v1';
+const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-03-012';
+const CLIENT_API_VERSION = 1;
 const VERSION_CHECK_DISMISSED_KEY = 'openclaw-web-channel-version-dismissed-v1';
 const MAX_ATTACHMENTS = 3;
 const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
@@ -75,6 +77,8 @@ const elements = {
   modelPickerList: document.querySelector('#modelPickerList'),
   chatTitle: document.querySelector('#chatTitle'),
   mobileDrawerBackdrop: document.querySelector('#mobileDrawerBackdrop'),
+  conversationSidebar: document.querySelector('#conversationSidebar'),
+  sidebarResizeHandle: document.querySelector('#sidebarResizeHandle'),
   newConversationButton: document.querySelector('#newConversationButton'),
   sidebarOwnerTitle: document.querySelector('#sidebarOwnerTitle'),
   sidebarConversationCount: document.querySelector('#sidebarConversationCount'),
@@ -166,6 +170,31 @@ function saveSettings(settings) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
 }
 
+const SIDEBAR_WIDTH_MIN = 240;
+const SIDEBAR_WIDTH_MAX = 560;
+const SIDEBAR_RESIZE_MEDIA = '(min-width: 900px) and (pointer: fine)';
+
+function clampSidebarWidth(width) {
+  const viewportMax = Math.max(SIDEBAR_WIDTH_MIN, Math.min(SIDEBAR_WIDTH_MAX, Math.round(window.innerWidth * 0.45)));
+  return Math.min(viewportMax, Math.max(SIDEBAR_WIDTH_MIN, Math.round(width)));
+}
+
+function applyStoredSidebarWidth() {
+  const storedWidth = Number(localStorage.getItem(SIDEBAR_WIDTH_KEY));
+  if (!Number.isFinite(storedWidth) || storedWidth <= 0) {
+    return;
+  }
+  document.documentElement.style.setProperty('--sidebar-width', `${clampSidebarWidth(storedWidth)}px`);
+}
+
+function saveSidebarWidth(width) {
+  const clamped = clampSidebarWidth(width);
+  localStorage.setItem(SIDEBAR_WIDTH_KEY, String(clamped));
+  document.documentElement.style.setProperty('--sidebar-width', `${clamped}px`);
+}
+
+applyStoredSidebarWidth();
+
 let settings = loadSettings();
 let historyPollTimer = null;
 let modelPickerExpanded = false;
@@ -208,6 +237,7 @@ let conversationSearchQuery = '';
 let conversationContentMatches = new Set();
 let conversationSearchTimer = null;
 let conversationSearchRunId = 0;
+let sidebarResizeState = null;
 const conversationSearchCache = new Map();
 let settingsPanelHistoryActive = false;
 let authUser = null;
@@ -592,19 +622,22 @@ function showToast(message, options = {}) {
   }, options.durationMs || 2400);
 }
 
-function showVersionMismatchAlert(serverBuildId) {
-  const dismissKey = `${CLIENT_BUILD_ID}:${serverBuildId}`;
+function showVersionMismatchAlert(reason, details = {}) {
+  const latestVersion = details.latestVersion || details.minVersion || 'unknown';
+  const currentVersion = details.currentVersion || CLIENT_ASSET_VERSION;
+  const dismissKey = `${reason}:${currentVersion}:${latestVersion}`;
   if (localStorage.getItem(VERSION_CHECK_DISMISSED_KEY) === dismissKey || document.querySelector('.version-alert')) {
     return;
   }
 
+  const isApiMismatch = reason === 'api';
   const alert = document.createElement('section');
   alert.className = 'version-alert';
   alert.setAttribute('role', 'alert');
   alert.innerHTML = `
     <div class="version-alert__text">
-      <strong>웹앱 업데이트가 필요합니다.</strong>
-      <span>서버와 현재 웹앱 클라이언트 버전이 맞지 않습니다. 강력 새로고침을 해주세요.</span>
+      <strong>${isApiMismatch ? '웹앱 호환성 업데이트가 필요합니다.' : '웹앱 업데이트가 필요합니다.'}</strong>
+      <span>${isApiMismatch ? '서버 API와 현재 웹앱이 호환되지 않습니다. 강력 새로고침 후에도 반복되면 서버 재시작이 필요합니다.' : '새 웹앱 파일이 배포되었습니다. 강력 새로고침을 하면 적용됩니다.'}</span>
     </div>
     <div class="version-alert__actions">
       <button class="ghost-button version-alert__dismiss" type="button">나중에</button>
@@ -619,7 +652,28 @@ function showVersionMismatchAlert(serverBuildId) {
   document.body.append(alert);
 }
 
-async function checkClientServerVersion() {
+async function checkClientAssetVersion() {
+  try {
+    const response = await fetch(`${settings.apiUrl}/client-version.json?ts=${Date.now()}`, {
+      cache: 'no-store',
+    });
+    if (!response.ok) {
+      return;
+    }
+    const body = await response.json();
+    const latestAssetVersion = String(body?.client_asset_version || '');
+    if (latestAssetVersion && latestAssetVersion !== CLIENT_ASSET_VERSION) {
+      showVersionMismatchAlert('asset', {
+        currentVersion: CLIENT_ASSET_VERSION,
+        latestVersion: latestAssetVersion,
+      });
+    }
+  } catch {
+    // Version checks are best-effort only.
+  }
+}
+
+async function checkServerApiCompatibility() {
   try {
     const response = await fetch(`${settings.apiUrl}/v1/version`, {
       cache: 'no-store',
@@ -629,13 +683,21 @@ async function checkClientServerVersion() {
       return;
     }
     const body = await response.json();
-    const serverBuildId = String(body?.build_id || '');
-    if (serverBuildId && serverBuildId !== CLIENT_BUILD_ID) {
-      showVersionMismatchAlert(serverBuildId);
+    const minClientApiVersion = Number(body?.min_client_api_version || 1);
+    if (Number.isFinite(minClientApiVersion) && CLIENT_API_VERSION < minClientApiVersion) {
+      showVersionMismatchAlert('api', {
+        currentVersion: String(CLIENT_API_VERSION),
+        minVersion: String(minClientApiVersion),
+      });
     }
   } catch {
     // Version checks are best-effort only.
   }
+}
+
+async function checkClientServerVersion() {
+  await checkClientAssetVersion();
+  await checkServerApiCompatibility();
 }
 
 function isNearBottom(threshold = 120) {
@@ -1101,7 +1163,8 @@ function updateComposerAvailability() {
   elements.attachButton.disabled = disabled;
   elements.sendButton.disabled = disabled;
   updateModelPickerButtonState();
-  elements.sendButton.textContent = isSendingMessage ? '전송 중' : '전송';
+  elements.sendButton.setAttribute('aria-label', isSendingMessage ? '전송 중' : '전송');
+  elements.sendButton.title = isSendingMessage ? '전송 중' : '전송';
   if (archived) {
     elements.messageInput.placeholder = '보관된 대화입니다. 대화를 이어가려면 아카이브를 해제하세요.';
   } else if (!hasConversation) {
@@ -1186,8 +1249,9 @@ function renderConversationList() {
   }
   const activeId = activeConversationId();
   for (const conversation of list) {
+    const menuOpen = openConversationMenuId === conversation.id;
     const item = document.createElement('div');
-    item.className = `conversation-item${conversation.id === activeId ? ' active' : ''}`;
+    item.className = `conversation-item${conversation.id === activeId ? ' active' : ''}${menuOpen ? ' menu-open' : ''}`;
     item.dataset.conversationId = conversation.id;
 
     const selectButton = document.createElement('button');
@@ -1197,15 +1261,7 @@ function renderConversationList() {
 
     const title = document.createElement('span');
     title.className = 'conversation-title';
-    if (conversation.pinned) {
-      const pin = document.createElement('span');
-      pin.className = 'conversation-pin-icon';
-      pin.setAttribute('aria-label', '상단 고정됨');
-      pin.textContent = '⌖';
-      title.append(pin, document.createTextNode(conversationTitle(conversation)));
-    } else {
-      title.textContent = conversationTitle(conversation);
-    }
+    title.textContent = conversationTitle(conversation);
     const meta = document.createElement('span');
     meta.className = 'conversation-meta';
     meta.textContent = formatConversationDate(conversation.updated_at || conversation.created_at);
@@ -1213,6 +1269,13 @@ function renderConversationList() {
 
     const menuWrap = document.createElement('div');
     menuWrap.className = 'conversation-menu-wrap';
+    if (conversation.pinned) {
+      const pin = document.createElement('span');
+      pin.className = 'conversation-pin-icon';
+      pin.setAttribute('aria-label', '상단 고정됨');
+      pin.textContent = '📌';
+      menuWrap.append(pin);
+    }
     const menuButton = document.createElement('button');
     menuButton.type = 'button';
     menuButton.className = 'conversation-menu-button ghost-button';
@@ -1272,6 +1335,21 @@ function renderConversationList() {
   }
 }
 
+function syncActiveConversationFromList() {
+  const conversationId = activeConversationId();
+  if (!conversationId) {
+    return null;
+  }
+  const latest = conversations.find((conversation) => conversation.id === conversationId) || null;
+  if (!latest) {
+    return null;
+  }
+  activeConversation = latest;
+  updateChatTitle();
+  updateComposerAvailability();
+  return latest;
+}
+
 async function refreshConversations() {
   if (!canUseApi()) {
     conversations = [];
@@ -1279,6 +1357,7 @@ async function refreshConversations() {
     return conversations;
   }
   conversations = sortConversations(await fetchConversations());
+  syncActiveConversationFromList();
   await pruneStoredPendingJobs(conversations).catch(() => {});
   conversationSearchCache.clear();
   renderConversationList();
@@ -3150,6 +3229,58 @@ function delay(ms) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
+function canResizeSidebar() {
+  return window.matchMedia(SIDEBAR_RESIZE_MEDIA).matches && !document.body.classList.contains('sidebar-collapsed');
+}
+
+function startSidebarResize(event) {
+  if (!elements.conversationSidebar || !canResizeSidebar()) {
+    return;
+  }
+  event.preventDefault();
+  sidebarResizeState = {
+    pointerId: event.pointerId,
+    startX: event.clientX,
+    startWidth: elements.conversationSidebar.getBoundingClientRect().width,
+  };
+  elements.sidebarResizeHandle?.setPointerCapture?.(event.pointerId);
+  document.body.classList.add('sidebar-resizing');
+}
+
+function moveSidebarResize(event) {
+  if (!sidebarResizeState || event.pointerId !== sidebarResizeState.pointerId) {
+    return;
+  }
+  const nextWidth = sidebarResizeState.startWidth + event.clientX - sidebarResizeState.startX;
+  document.documentElement.style.setProperty('--sidebar-width', `${clampSidebarWidth(nextWidth)}px`);
+}
+
+function finishSidebarResize(event) {
+  if (!sidebarResizeState || event.pointerId !== sidebarResizeState.pointerId) {
+    return;
+  }
+  const nextWidth = sidebarResizeState.startWidth + event.clientX - sidebarResizeState.startX;
+  saveSidebarWidth(nextWidth);
+  elements.sidebarResizeHandle?.releasePointerCapture?.(event.pointerId);
+  sidebarResizeState = null;
+  document.body.classList.remove('sidebar-resizing');
+}
+
+function cancelSidebarResize() {
+  if (!sidebarResizeState) {
+    return;
+  }
+  sidebarResizeState = null;
+  document.body.classList.remove('sidebar-resizing');
+}
+
+function syncSidebarWidthToViewport() {
+  const storedWidth = Number(localStorage.getItem(SIDEBAR_WIDTH_KEY));
+  if (Number.isFinite(storedWidth) && storedWidth > 0) {
+    document.documentElement.style.setProperty('--sidebar-width', `${clampSidebarWidth(storedWidth)}px`);
+  }
+}
+
 async function sendMessage(message, attachments = [], metadata = undefined) {
   const conversation = await ensureActiveConversation();
   const response = await apiFetch('/v1/message', {
@@ -3655,6 +3786,7 @@ async function handleSubmit(event) {
     let activeJobId = null;
     try {
       const response = await sendMessage(outgoingMessage, attachments, metadata);
+      await refreshConversations().catch(() => {});
       if (response.job_id) {
         activeJobId = response.job_id;
         const conversationId = response.conversation_id || conversation.id;
@@ -4237,6 +4369,12 @@ elements.messageInput.addEventListener('input', () => {
 elements.messageInput.addEventListener('blur', () => {
   window.setTimeout(hideSlashCommandPalette, 160);
 });
+elements.sidebarResizeHandle?.addEventListener('pointerdown', startSidebarResize);
+window.addEventListener('pointermove', moveSidebarResize);
+window.addEventListener('pointerup', finishSidebarResize);
+window.addEventListener('pointercancel', cancelSidebarResize);
+window.addEventListener('resize', syncSidebarWidthToViewport);
+
 elements.messageInput.addEventListener('keydown', (event) => {
   const hasSlashPalette = !elements.slashCommandPalette.classList.contains('hidden');
   if (hasSlashPalette && ['ArrowDown', 'ArrowUp', 'Tab', 'Enter'].includes(event.key)) {
@@ -4271,6 +4409,6 @@ elements.messageInput.addEventListener('keydown', (event) => {
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js?v=pwa-2026-05-03-002').catch(() => {});
+    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-03-012').catch(() => {});
   });
 }
