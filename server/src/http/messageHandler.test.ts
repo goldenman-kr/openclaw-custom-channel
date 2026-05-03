@@ -109,6 +109,31 @@ test("rejects slash commands with attachments", async () => {
   }
 });
 
+test("maps OpenClaw timeout errors to user-facing timeout response", async () => {
+  const runtime: ChatRuntime = {
+    async sendMessage() {
+      throw new Error("OpenClaw Gateway request timed out.");
+    },
+  };
+
+  const result = await handlePostMessage(
+    {
+      chatRuntime: runtime,
+      sessionStore: new InMemorySessionStore(),
+      validApiKeys: new Set(["test-key"]),
+    },
+    { authorization: "Bearer test-key" },
+    { message: "긴 작업" },
+  );
+
+  assert.equal(result.statusCode, 504);
+  assert.equal("error" in result.body, true);
+  if ("error" in result.body) {
+    assert.equal(result.body.error.code, "UPSTREAM_OPENCLAW_TIMEOUT");
+    assert.match(result.body.error.message, /시간이 오래 걸려/);
+  }
+});
+
 test("passes runtime token callbacks to ChatRuntime", async () => {
   const tokens: string[] = [];
   const runtime: ChatRuntime = {

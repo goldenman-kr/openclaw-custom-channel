@@ -8,7 +8,7 @@
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="icon" type="image/png" sizes="192x192" href="/assets/openclaw-app-icon-192.png" />
     <link rel="apple-touch-icon" sizes="180x180" href="/assets/openclaw-app-icon-180.png" />
-    <link rel="stylesheet" href="/styles.css?v=pwa-2026-05-03-002" />
+    <link rel="stylesheet" href="/styles.css?v=pwa-client-2026-05-03-012" />
   </head>
   <body>
     <section id="loginScreen" class="login-screen hidden" aria-label="로그인">
@@ -37,7 +37,11 @@
             <strong id="sidebarOwnerTitle">대화</strong>
             <span id="sidebarConversationCount">대화 0개</span>
           </div>
-          <button id="newConversationButton" class="ghost-button sidebar-new-button" type="button">새 대화</button>
+          <button id="newConversationButton" class="ghost-button sidebar-new-button" type="button" aria-label="새 대화" title="새 대화">
+            <svg class="sidebar-new-icon" viewBox="0 0 1023 1023" aria-hidden="true" focusable="false">
+              <path d="M 861 136 L 821 102 L 780 74 L 736 50 L 696 33 L 650 18 L 600 7 L 549 1 L 493 0 L 437 5 L 390 14 L 345 27 L 295 47 L 251 70 L 217 92 L 171 129 L 128 172 L 98 209 L 81 234 L 65 261 L 48 295 L 34 329 L 21 369 L 14 397 L 6 443 L 2 487 L 3 553 L 10 607 L 20 651 L 34 694 L 56 744 L 89 799 L 116 833 L 116 835 L 10 941 L 6 947 L 0 965 L 0 981 L 4 994 L 18 1011 L 30 1018 L 46 1022 L 518 1022 L 557 1020 L 597 1015 L 643 1005 L 682 993 L 720 978 L 762 957 L 805 930 L 833 909 L 864 882 L 890 856 L 925 814 L 951 775 L 971 738 L 992 688 L 1006 643 L 1016 595 L 1022 538 L 1022 483 L 1016 426 L 1008 386 L 993 335 L 973 287 L 951 246 L 925 207 L 890 165 Z M 759 183 L 785 205 L 820 241 L 840 266 L 865 304 L 882 336 L 900 380 L 911 418 L 919 461 L 922 493 L 922 534 L 918 573 L 909 616 L 900 645 L 887 677 L 863 722 L 838 758 L 818 782 L 790 811 L 765 833 L 734 855 L 711 869 L 672 888 L 637 901 L 604 910 L 573 916 L 535 920 L 177 920 L 176 918 L 217 878 L 230 863 L 236 848 L 237 829 L 233 815 L 227 805 L 196 772 L 162 725 L 138 680 L 128 656 L 117 622 L 106 569 L 103 538 L 103 488 L 110 433 L 117 403 L 129 366 L 152 315 L 185 263 L 209 234 L 238 205 L 274 176 L 305 156 L 342 137 L 393 118 L 426 110 L 462 104 L 498 101 L 549 102 L 588 107 L 623 115 L 657 126 L 681 136 L 724 159 Z M 510 306 L 492 310 L 479 318 L 470 328 L 463 343 L 461 357 L 462 458 L 460 460 L 350 460 L 340 463 L 325 472 L 315 484 L 309 499 L 308 516 L 312 531 L 320 544 L 330 553 L 346 560 L 460 561 L 462 563 L 461 664 L 464 681 L 474 698 L 483 706 L 498 713 L 514 715 L 532 711 L 543 705 L 555 692 L 562 676 L 563 562 L 673 561 L 682 559 L 698 550 L 710 536 L 716 519 L 716 501 L 713 491 L 706 479 L 694 468 L 679 461 L 564 460 L 563 351 L 560 339 L 552 325 L 540 314 L 527 308 Z" fill="currentColor" fill-rule="evenodd" />
+            </svg>
+          </button>
         </div>
         <nav id="conversationList" class="conversation-list" aria-label="대화 목록"></nav>
         <label class="conversation-search" aria-label="대화 검색">
@@ -45,6 +49,7 @@
           <input id="conversationSearchInput" type="search" placeholder="대화 검색" autocomplete="off" />
           <button id="clearConversationSearchButton" class="clear-message-input-button conversation-search-clear hidden" type="button" aria-label="검색어 지우기">×</button>
         </label>
+        <div id="sidebarResizeHandle" class="sidebar-resize-handle" role="separator" aria-orientation="vertical" aria-label="대화 목록 너비 조절" title="드래그해서 대화 목록 너비 조절"></div>
         <div class="sidebar-footer">
           <button id="archiveToggleButton" class="ghost-button sidebar-archive-button" type="button">
             <span class="sidebar-button-icon sidebar-button-icon--archive" aria-hidden="true"></span>
@@ -60,7 +65,23 @@
 
       <section class="chat-panel" aria-label="채팅">
         <header class="chat-titlebar">
-          <button id="mobileMenuButton" class="ghost-button mobile-menu-button" type="button" aria-label="대화 목록 열기" aria-expanded="false" aria-controls="conversationSidebar"><span class="mobile-menu-icon" aria-hidden="true"></span></button>
+          <button id="mobileMenuButton" class="ghost-button mobile-menu-button" type="button" aria-label="대화 목록 열기" aria-expanded="false" aria-controls="conversationSidebar">
+            <svg class="mobile-menu-icon" viewBox="0 0 512 512" aria-hidden="true" focusable="false">
+              <g fill="none" stroke="currentColor" stroke-width="40" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M492 285V60c0-22-18-40-40-40H60C38 20 20 38 20 60v392c0 22 18 40 40 40h231" />
+                <circle cx="398" cy="397" r="70" />
+                <path d="M448 447l44 44" />
+              </g>
+              <g fill="currentColor">
+                <circle cx="125" cy="133" r="25" />
+                <circle cx="125" cy="253" r="25" />
+                <circle cx="125" cy="381" r="25" />
+                <rect x="200" y="113" width="201" height="40" />
+                <rect x="200" y="233" width="201" height="40" />
+                <rect x="200" y="360" width="68" height="41" />
+              </g>
+            </svg>
+          </button>
           <h1 id="chatTitle" class="chat-title">OpenClaw</h1>
           <div class="chat-titlebar-actions">
             <button id="modelPickerButton" class="ghost-button model-picker-button" type="button" aria-label="AI 모델 선택" aria-expanded="false" aria-controls="modelPickerPanel">
@@ -170,7 +191,11 @@
               <textarea id="messageInput" rows="2" placeholder="메시지를 입력하세요"></textarea>
               <button id="clearMessageInputButton" class="clear-message-input-button hidden" type="button" aria-label="입력 내용 지우기">×</button>
             </div>
-            <button id="sendButton" type="submit">전송</button>
+            <button id="sendButton" type="submit" aria-label="전송" title="전송">
+              <svg class="send-button-icon" viewBox="0 0 480 485" aria-hidden="true" focusable="false">
+                <path fill="currentColor" fill-rule="evenodd" d="M 68.00 298.00 L 65.00 305.00 L 65.00 311.00 L 68.00 318.00 L 159.00 396.00 L 158.00 398.00 L 70.00 454.00 L 64.00 462.00 L 64.00 472.00 L 68.00 479.00 L 75.00 483.00 L 84.00 483.00 L 90.00 480.00 L 184.00 419.00 L 186.00 419.00 L 216.00 444.00 L 225.00 448.00 L 235.00 450.00 L 251.00 449.00 L 264.00 444.00 L 294.00 419.00 L 296.00 419.00 L 392.00 481.00 L 396.00 482.00 L 404.00 481.00 L 408.00 479.00 L 413.00 473.00 L 414.00 462.00 L 412.00 457.00 L 407.00 452.00 L 321.00 397.00 L 325.00 392.00 L 412.00 318.00 L 415.00 312.00 L 415.00 303.00 L 412.00 297.00 L 407.00 293.00 L 394.00 292.00 L 390.00 294.00 L 252.00 413.00 L 243.00 418.00 L 237.00 418.00 L 228.00 413.00 L 91.00 295.00 L 85.00 292.00 L 77.00 292.00 L 74.00 293.00 Z M 7.00 233.00 L 2.00 243.00 L 0.00 250.00 L 0.00 473.00 L 2.00 477.00 L 7.00 482.00 L 12.00 484.00 L 22.00 483.00 L 29.00 477.00 L 31.00 473.00 L 31.00 259.00 L 33.00 252.00 L 40.00 245.00 L 47.00 243.00 L 432.00 243.00 L 439.00 245.00 L 446.00 252.00 L 448.00 259.00 L 448.00 472.00 L 452.00 479.00 L 459.00 483.00 L 468.00 483.00 L 475.00 479.00 L 478.00 475.00 L 479.00 472.00 L 479.00 250.00 L 477.00 243.00 L 472.00 233.00 L 458.00 219.00 L 448.00 214.00 L 441.00 212.00 L 38.00 212.00 L 31.00 214.00 L 21.00 219.00 Z M 89.00 123.00 L 89.00 140.00 L 92.00 150.00 L 96.00 158.00 L 106.00 169.00 L 120.00 177.00 L 128.00 179.00 L 350.00 179.00 L 366.00 173.00 L 378.00 163.00 L 385.00 152.00 L 389.00 139.00 L 389.00 124.00 L 387.00 116.00 L 383.00 107.00 L 373.00 95.00 L 271.00 11.00 L 258.00 3.00 L 247.00 0.00 L 227.00 1.00 L 215.00 6.00 L 106.00 94.00 L 96.00 105.00 L 92.00 113.00 Z M 121.00 127.00 L 123.00 123.00 L 130.00 116.00 L 227.00 37.00 L 235.00 32.00 L 244.00 32.00 L 258.00 42.00 L 349.00 117.00 L 355.00 123.00 L 357.00 127.00 L 357.00 136.00 L 355.00 140.00 L 350.00 145.00 L 341.00 148.00 L 137.00 148.00 L 128.00 145.00 L 123.00 140.00 L 121.00 136.00 Z" />
+              </svg>
+            </button>
           </div>
           <p id="statusText" class="status-text"></p>
         </form>
@@ -203,6 +228,6 @@
       </form>
     </dialog>
 
-    <script type="module" src="/app.js?v=pwa-2026-05-03-002"></script>
+    <script type="module" src="/app.js?v=pwa-client-2026-05-03-012"></script>
   </body>
 </html>

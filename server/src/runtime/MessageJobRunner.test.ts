@@ -148,7 +148,7 @@ test("preserves all payload text and media refs from embedded agent JSON", async
   );
 });
 
-test("appends recent generated media files when streaming omits media payload", async () => {
+test("does not auto-append recent generated media files when reply omits MEDIA refs", async () => {
   const mediaDir = await mkdtemp(join(tmpdir(), "openclaw-generated-media-"));
   const nestedMediaDir = join(mediaDir, "tool-image-generation");
   await mkdir(nestedMediaDir);
@@ -194,7 +194,7 @@ test("appends recent generated media files when streaming omits media payload", 
   await waitUntil(() => job.state === "completed");
   assert.equal(
     (await historyStore.list(job.sessionId))[0]?.text,
-    `차트를 만들었습니다.\n\nMEDIA:${join(nestedMediaDir, "chart.png")}`,
+    "차트를 만들었습니다.",
   );
 });
 
@@ -250,7 +250,7 @@ test("stores assistant MEDIA refs as conversation attachments", async () => {
   ]);
 });
 
-test("stores mentioned existing document path as conversation attachment even when MEDIA is stripped", async () => {
+test("does not attach mentioned existing document paths without explicit MEDIA refs", async () => {
   const mediaDir = await mkdtemp(join(tmpdir(), "openclaw-mentioned-media-"));
   const actualPath = join(mediaDir, "예수는_나의_힘이요_A4_통일_출력용.pdf");
   await writeFile(actualPath, "pdf");
@@ -292,15 +292,52 @@ test("stores mentioned existing document path as conversation attachment even wh
   runner.enqueue(job, { authorization: "Bearer test-key" }, { message: `이걸로 보내줘: ${requestedPath}` });
 
   await waitUntil(() => job.state === "completed");
-  assert.deepEqual(patches.at(-1)?.attachments, [
+  assert.deepEqual(patches.at(-1)?.attachments, []);
+});
+
+test("shows a clear timeout message instead of unavailable failure", async () => {
+  const runtime: ChatRuntime = {
+    async sendMessage() {
+      throw new Error("OpenClaw Gateway request timed out.");
+    },
+  };
+  const historyStore = memoryHistoryStore();
+  const job: MessageJob = {
+    id: "job_runner_timeout_test",
+    sessionId: "session-runner-timeout-test",
+    state: "queued",
+    createdAt: "2026-04-29T00:00:00.000Z",
+    updatedAt: "2026-04-29T00:00:00.000Z",
+  };
+
+  await historyStore.append(job.sessionId, [
     {
-      name: "예수는_나의_힘이요_A4_통일_출력용.pdf",
-      mime_type: "application/pdf",
-      type: "file",
-      path: actualPath,
-      size: 3,
+      id: job.id,
+      role: "assistant",
+      text: "응답 대기 중입니다…",
+      savedAt: job.createdAt,
     },
   ]);
+
+  const runner = new MessageJobRunner({
+    chatRuntime: runtime,
+    sessionStore: new InMemorySessionStore(),
+    validApiKeys: new Set(["test-key"]),
+    conversationStore: unusedConversationStore(),
+    historyStore,
+    shouldPersistMessage: () => true,
+    updateJob(jobToUpdate, patch) {
+      Object.assign(jobToUpdate, patch);
+    },
+  });
+
+  runner.enqueue(job, { authorization: "Bearer test-key" }, { message: "긴 작업" });
+
+  await waitUntil(() => job.state === "failed");
+  const message = (await historyStore.list(job.sessionId))[0];
+  assert.equal(message?.role, "system");
+  assert.match(message?.text ?? "", /처리 시간이 초과되었습니다/);
+  assert.doesNotMatch(message?.text ?? "", /OpenClaw is unavailable/);
 });
 
 test("publishes runtime tokens for queued message jobs", async () => {
