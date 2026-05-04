@@ -7,13 +7,14 @@ import { canonicalMediaRefKey, isImageRef, isPlaceholderMediaRef, normalizeMedia
 import { conversationIdFromPath, syncConversationUrl } from './modules/navigation.js';
 import { loadSettings, normalizeHistoryPageSize, randomDeviceId, saveSettings } from './modules/settings.js';
 import { applyStoredSidebarWidth, clampSidebarWidth, saveSidebarWidth, SIDEBAR_RESIZE_MEDIA } from './modules/sidebar-width.js';
+import { matchingSlashCommands as findMatchingSlashCommands } from './modules/slash-commands.js';
 import { renderCodeBlockPlugin } from './plugins/plugin-registry.js';
 import './plugins/spot-order-card.js';
 import './plugins/spot-wallet-intent.js';
 
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
 const COMPOSER_DRAFT_KEY_PREFIX = 'openclaw-web-channel-composer-draft-v1';
-const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-050';
+const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-051';
 const CLIENT_API_VERSION = 1;
 const VERSION_CHECK_DISMISSED_KEY = 'openclaw-web-channel-version-dismissed-v1';
 const elements = {
@@ -143,18 +144,6 @@ let messagesScrollIndicatorTimer = null;
 let drawerSwipeStart = null;
 const mediaUrlCache = new Map();
 const MEDIA_URL_CACHE_LIMIT = 64;
-const slashCommands = [
-  { command: '/status', title: '상태 확인', description: '현재 세션/모델/토큰/설정 상태를 확인합니다.' },
-  { command: '/model ', title: '모델 변경', description: '모델을 지정합니다. 예: /model gpt-5.5' },
-  { command: '/think ', title: 'thinking 변경', description: '현재 채팅의 thinking 레벨을 지정합니다. 예: /think high' },
-  { command: '/models', title: '모델 목록', description: '사용 가능한 모델 목록을 봅니다.' },
-  { command: '/reset', title: '대화 초기화', description: '현재 대화 맥락을 초기화합니다.' },
-  { command: '/reasoning', title: '추론 표시 전환', description: 'reasoning 설정을 켜거나 끕니다.' },
-  { command: '/help', title: '도움말', description: 'OpenClaw 명령 도움말을 표시합니다.' },
-  { command: '/weather', title: '현재 위치 날씨', description: '현재 위치 기준 날씨를 확인합니다.' },
-  { command: '/memory', title: '메모리', description: '메모리 관련 명령을 확인하거나 실행합니다.' },
-  { command: '/tasks', title: '작업 목록', description: 'TaskFlow/작업 상태를 확인합니다.' },
-];
 let selectedSlashCommandIndex = 0;
 let conversationSearchQuery = '';
 let conversationContentMatches = new Set();
@@ -4026,27 +4015,9 @@ function autoResizeTextarea() {
   updateClearMessageInputButton();
 }
 
-function slashCommandQuery() {
-  const value = elements.messageInput.value;
-  const cursor = elements.messageInput.selectionStart ?? value.length;
-  if (cursor !== value.length || !value.startsWith('/')) {
-    return null;
-  }
-  if (value.includes('\n')) {
-    return null;
-  }
-  return value.slice(1).trim().toLowerCase();
-}
-
 function matchingSlashCommands() {
-  const query = slashCommandQuery();
-  if (query === null) {
-    return [];
-  }
-  return slashCommands.filter((item) => {
-    const haystack = `${item.command} ${item.title} ${item.description}`.toLowerCase();
-    return haystack.includes(query);
-  });
+  const value = elements.messageInput.value;
+  return findMatchingSlashCommands(value, elements.messageInput.selectionStart ?? value.length);
 }
 
 function applySlashCommand(command) {

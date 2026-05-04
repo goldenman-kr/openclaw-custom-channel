@@ -1,4 +1,4 @@
-const CACHE_NAME = 'openclaw-web-channel-v206';
+const CACHE_NAME = 'openclaw-web-channel-v207';
 const ASSETS = [
   '/',
   '/index.html',
@@ -12,6 +12,7 @@ const ASSETS = [
   '/modules/media.js',
   '/modules/navigation.js',
   '/modules/settings.js',
+  '/modules/slash-commands.js',
   '/modules/sidebar-width.js',
   '/plugins/plugin-registry.js',
   '/plugins/spot-order-card.js',
