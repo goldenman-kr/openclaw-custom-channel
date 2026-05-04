@@ -1,6 +1,7 @@
 import { MAX_ATTACHMENTS, MAX_ATTACHMENT_BYTES, ALLOWED_ATTACHMENT_TYPES, formatBytes, inferAttachmentMimeType } from './modules/attachments.js';
 import { baseVisibleConversations as filterBaseVisibleConversations, conversationMatchesTitle as matchesConversationTitle, isConversationArchived, normalizeConversationSearchQuery, sortConversations, visibleConversations as filterVisibleConversations } from './modules/conversation-list.js';
 import { searchConversationContent } from './modules/conversation-search.js';
+import { clearComposerDraft as clearStoredComposerDraft, loadComposerDraft, saveComposerDraft as saveStoredComposerDraft } from './modules/composer-draft.js';
 import { conversationTitle, formatConversationDate, formatMessageTimestamp } from './modules/conversation-format.js';
 import { applyDisplaySettings as applyDisplaySettingsToElements, applyTheme, normalizeFontSize, syncNativeTheme } from './modules/display.js';
 import { canonicalMediaRefKey, isImageRef, isPlaceholderMediaRef, normalizeMediaRefPath, shortenFileName } from './modules/media.js';
@@ -13,8 +14,7 @@ import './plugins/spot-order-card.js';
 import './plugins/spot-wallet-intent.js';
 
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
-const COMPOSER_DRAFT_KEY_PREFIX = 'openclaw-web-channel-composer-draft-v1';
-const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-051';
+const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-052';
 const CLIENT_API_VERSION = 1;
 const VERSION_CHECK_DISMISSED_KEY = 'openclaw-web-channel-version-dismissed-v1';
 const elements = {
@@ -889,33 +889,16 @@ function activeConversationId() {
   return activeConversation?.id || '';
 }
 
-function composerDraftStorageKey(conversationId = activeConversationId()) {
-  return conversationId ? `${COMPOSER_DRAFT_KEY_PREFIX}:${conversationId}` : '';
-}
-
 function saveComposerDraft(conversationId = activeConversationId()) {
-  const key = composerDraftStorageKey(conversationId);
-  if (!key) {
-    return;
-  }
-  const value = elements.messageInput.value;
-  if (value) {
-    localStorage.setItem(key, value);
-  } else {
-    localStorage.removeItem(key);
-  }
+  saveStoredComposerDraft(conversationId, elements.messageInput.value);
 }
 
 function clearComposerDraft(conversationId = activeConversationId()) {
-  const key = composerDraftStorageKey(conversationId);
-  if (key) {
-    localStorage.removeItem(key);
-  }
+  clearStoredComposerDraft(conversationId);
 }
 
 function restoreComposerDraft(conversationId = activeConversationId()) {
-  const key = composerDraftStorageKey(conversationId);
-  elements.messageInput.value = key ? localStorage.getItem(key) || '' : '';
+  elements.messageInput.value = loadComposerDraft(conversationId);
   autoResizeTextarea();
   selectedSlashCommandIndex = 0;
   renderSlashCommandPalette();
