@@ -201,7 +201,9 @@ test("does not auto-append recent generated media files when reply omits MEDIA r
 test("stores assistant MEDIA refs as conversation attachments", async () => {
   const mediaDir = await mkdtemp(join(tmpdir(), "openclaw-conversation-media-"));
   const pdfPath = join(mediaDir, "report.pdf");
+  const zipPath = join(mediaDir, "openclaw-webview-debug-apk.zip");
   await writeFile(pdfPath, "pdf");
+  await writeFile(zipPath, "zip");
   const patches: Array<{ attachments?: unknown[] }> = [];
   const conversationStore = {
     ...unusedConversationStore(),
@@ -212,7 +214,7 @@ test("stores assistant MEDIA refs as conversation attachments", async () => {
   };
   const runtime: ChatRuntime = {
     async sendMessage() {
-      return { reply: `보고서입니다.\n\nMEDIA:${pdfPath}` };
+      return { reply: `보고서입니다.\n\nMEDIA:${pdfPath}\n\n\`MEDIA:${zipPath}\`` };
     },
   };
   const job: MessageJob = {
@@ -245,6 +247,13 @@ test("stores assistant MEDIA refs as conversation attachments", async () => {
       mime_type: "application/pdf",
       type: "file",
       path: pdfPath,
+      size: 3,
+    },
+    {
+      name: "openclaw-webview-debug-apk.zip",
+      mime_type: "application/zip",
+      type: "file",
+      path: zipPath,
       size: 3,
     },
   ]);

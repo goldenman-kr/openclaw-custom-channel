@@ -373,7 +373,7 @@ function asNonEmptyString(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
-const MEDIA_REF_LINE = /^\s*MEDIA:\s*(.+?)\s*$/i;
+const MEDIA_REF_LINE = /^\s*`{0,3}\s*MEDIA:\s*(.+?)\s*`{0,3}\s*$/i;
 
 function extractMediaRefs(text: string): string[] {
   const refs: string[] = [];

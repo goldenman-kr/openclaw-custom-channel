@@ -4,6 +4,7 @@ import { mkdir, realpath, writeFile } from "node:fs/promises";
 import { promisify } from "node:util";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { join, resolve } from "node:path";
+import { homedir } from "node:os";
 import {
   extractBearerToken,
   type ErrorResponseDto,
@@ -82,6 +83,7 @@ const workspaceCommonWritable = process.env.USER_WORKSPACE_COMMON_WRITABLE === "
 const mediaRoots = [
   resolve(process.env.MEDIA_ROOT ?? "/home/orbsian/.openclaw/workspace"),
   resolve(process.env.OPENCLAW_MEDIA_DIR ?? "/home/orbsian/.openclaw/media"),
+  resolve(process.env.OPENCLAW_CANVAS_DIR ?? join(homedir(), ".openclaw", "canvas")),
   resolve(process.env.UPLOAD_DIR ?? join(process.cwd(), "state", "uploads")),
   stateDir,
 ];

@@ -106,6 +106,8 @@ function contentTypeFor(filePath: string): string {
       return "image/gif";
     case ".pdf":
       return "application/pdf";
+    case ".zip":
+      return "application/zip";
     case ".txt":
       return "text/plain; charset=utf-8";
     default:
