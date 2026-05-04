@@ -15,6 +15,7 @@ import { createHomeScreen } from './modules/home-screen.js';
 import { hideLoginScreen as hideLoginScreenView, showLoginScreen as showLoginScreenView } from './modules/login-screen.js';
 import { isPendingHistoryMessage, isPlaceholderPendingText, isRunningJobHistoryMessage, shouldRerenderHistory as shouldRerenderHistorySnapshot } from './modules/history-state.js';
 import { canonicalMediaRefKey, isImageRef, isPlaceholderMediaRef, normalizeMediaRefPath, shortenFileName } from './modules/media.js';
+import { renderModelPicker as renderModelPickerView, updateModelPickerButtonState as updateModelPickerButtonStateView } from './modules/model-picker.js';
 import { conversationIdFromPath, syncConversationUrl } from './modules/navigation.js';
 import { loadSettings, normalizeHistoryPageSize, randomDeviceId, saveSettings } from './modules/settings.js';
 import { isNearBottom as isMessagesNearBottom, hideMessagesScrollIndicator, hideScrollToLatestButton as hideScrollButton, showScrollToLatestButton as showScrollButton, updateMessagesScrollIndicator as updateMessagesScrollIndicatorUi } from './modules/scroll-ui.js';
@@ -28,7 +29,7 @@ import './plugins/spot-order-card.js';
 import './plugins/spot-wallet-intent.js';
 
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
-const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-066';
+const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-067';
 const CLIENT_API_VERSION = 1;
 const elements = {
   loginScreen: document.querySelector('#loginScreen'),
@@ -1331,63 +1332,25 @@ function toggleFloatingActions() {
 }
 
 function updateModelPickerButtonState() {
-  if (!elements.modelPickerButton) {
-    return;
-  }
-  const hasConversation = Boolean(activeConversation?.id);
-  elements.modelPickerButton.disabled = !hasConversation;
-  elements.modelPickerButton.setAttribute('aria-expanded', modelPickerExpanded ? 'true' : 'false');
-  elements.modelPickerButton.title = hasConversation ? 'AI 모델 선택' : '대화를 먼저 선택하세요';
+  updateModelPickerButtonStateView(elements.modelPickerButton, {
+    hasConversation: Boolean(activeConversation?.id),
+    expanded: modelPickerExpanded,
+  });
 }
 
 function renderModelPicker() {
-  if (!elements.modelPickerPanel || !elements.modelPickerStatus || !elements.modelPickerList) {
-    return;
-  }
-  elements.modelPickerPanel.classList.toggle('hidden', !modelPickerExpanded);
-  elements.modelPickerButton?.setAttribute('aria-expanded', modelPickerExpanded ? 'true' : 'false');
-  elements.modelPickerList.replaceChildren();
-
-  if (!modelPickerExpanded) {
-    return;
-  }
-
-  const canChange = Boolean(modelPickerState?.canChange);
-  const models = Array.isArray(modelPickerState?.models) ? modelPickerState.models : [];
-  elements.modelPickerStatus.textContent = modelPickerLoading
-    ? '모델 목록을 불러오는 중입니다…'
-    : (!activeConversation?.id
-      ? '대화를 먼저 선택하세요.'
-      : (canChange ? '이 대화에서 사용할 모델을 선택하세요.' : '현재 모델만 확인할 수 있습니다.'));
-  elements.modelPickerStatus.classList.toggle('hidden', !modelPickerLoading && models.length > 0);
-
-  for (const model of models) {
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = `model-picker-item${model.selected ? ' is-selected' : ''}`;
-    button.setAttribute('role', 'menuitemradio');
-    button.setAttribute('aria-checked', model.selected ? 'true' : 'false');
-    button.disabled = !canChange || modelPickerLoading;
-    button.dataset.modelRef = model.ref;
-
-    const check = document.createElement('span');
-    check.className = 'model-picker-check';
-    check.textContent = model.selected ? '✓' : '';
-
-    const label = document.createElement('span');
-    label.className = 'model-picker-item-label';
-    label.textContent = model.label;
-
-    button.append(check, label);
-    button.addEventListener('click', () => {
-      applyConversationModel(model.ref).catch((error) => {
-        showToast(error instanceof Error ? error.message : String(error), { kind: 'error', durationMs: 3200 });
-      });
+  renderModelPickerView(elements, {
+    expanded: modelPickerExpanded,
+    loading: modelPickerLoading,
+    canChange: modelPickerState?.canChange,
+    models: modelPickerState?.models,
+    hasConversation: Boolean(activeConversation?.id),
+  }, (modelRef) => {
+    applyConversationModel(modelRef).catch((error) => {
+      showToast(error instanceof Error ? error.message : String(error), { kind: 'error', durationMs: 3200 });
     });
-    elements.modelPickerList.append(button);
-  }
+  });
 }
-
 function setModelPickerExpanded(expanded) {
   modelPickerExpanded = Boolean(expanded);
   if (!modelPickerExpanded) {
