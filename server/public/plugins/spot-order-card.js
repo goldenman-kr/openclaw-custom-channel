@@ -26,6 +26,13 @@ function shouldValidateSwapper(value) {
   return Boolean(normalizeAddress(value)) && !isZeroAddress(value);
 }
 
+function swapperMatchesAccount(swapper, account) {
+  if (!shouldValidateSwapper(swapper)) {
+    return true;
+  }
+  return normalizeAddress(account) === normalizeAddress(swapper);
+}
+
 function createButton(label, onClick, options = {}) {
   const button = document.createElement('button');
   button.type = 'button';
@@ -269,7 +276,7 @@ function renderSpotOrderCard({ parent, codeText, context, fallback }) {
       const accounts = await requestAccounts();
       const account = accounts?.[0] || '';
       updateConnectedAccount(account);
-      if (normalizeAddress(account) && shouldValidateSwapper(swapper) && normalizeAddress(account) !== shouldValidateSwapper(swapper)) {
+      if (normalizeAddress(account) && !swapperMatchesAccount(swapper, account)) {
         setStatus(status, `연결됨. 단, 주문 swapper와 달라 서명은 중단됩니다. 연결=${account}, swapper=${swapper}`, 'warn');
         return;
       }
@@ -283,7 +290,7 @@ function renderSpotOrderCard({ parent, codeText, context, fallback }) {
   window.ethereum?.on?.('accountsChanged', (accounts) => {
     const account = accounts?.[0] || '';
     updateConnectedAccount(account);
-    if (normalizeAddress(account) && shouldValidateSwapper(swapper) && normalizeAddress(account) !== shouldValidateSwapper(swapper)) {
+    if (normalizeAddress(account) && !swapperMatchesAccount(swapper, account)) {
       setStatus(status, `연결됨. 단, 주문 swapper와 달라 서명은 중단됩니다. 연결=${account}, swapper=${swapper}`, 'warn');
       return;
     }
@@ -312,7 +319,7 @@ function renderSpotOrderCard({ parent, codeText, context, fallback }) {
         if (!connectedAccount) {
           throw new Error('서명할 계정을 찾지 못했습니다.');
         }
-        if (normalizeAddress(connectedAccount) !== shouldValidateSwapper(swapper)) {
+        if (!swapperMatchesAccount(swapper, connectedAccount)) {
           throw new Error(`서명 지갑과 주문 swapper가 일치하지 않습니다. 연결=${connectedAccount}, swapper=${swapper}`);
         }
         if (!chainId || !inputToken || !inputMaxAmount || !verifyingContract) {
