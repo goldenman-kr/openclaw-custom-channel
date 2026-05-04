@@ -9,6 +9,7 @@ import { apiUrl as buildApiUrl, assertValidApiKey, normalizeApiKey } from './mod
 import { autoResizeTextarea as resizeComposerTextarea, updateClearMessageInputButton as updateComposerClearButton } from './modules/composer-input.js';
 import { conversationTitle, formatConversationDate, formatMessageTimestamp } from './modules/conversation-format.js';
 import { applyDisplaySettings as applyDisplaySettingsToElements, applyTheme, normalizeFontSize, syncNativeTheme } from './modules/display.js';
+import { applyFloatingActionsExpanded } from './modules/floating-actions.js';
 import { fetchHistory as fetchHistoryFromApi, fetchHistoryMeta as fetchHistoryMetaFromApi } from './modules/history-api.js';
 import { createHistoryLoadMoreControl, resetHistoryLoadMoreButton } from './modules/history-controls.js';
 import { createHomeScreen } from './modules/home-screen.js';
@@ -29,7 +30,7 @@ import './plugins/spot-order-card.js';
 import './plugins/spot-wallet-intent.js';
 
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
-const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-067';
+const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-068';
 const CLIENT_API_VERSION = 1;
 const elements = {
   loginScreen: document.querySelector('#loginScreen'),
@@ -1318,13 +1319,7 @@ async function startNewConversation() {
 
 function setFloatingActionsExpanded(expanded) {
   floatingActionsExpanded = expanded;
-  document.body.classList.toggle('floating-actions-open', expanded);
-  elements.floatingActionPanel?.classList.toggle('hidden', !expanded);
-  if (elements.floatingActionToggle) {
-    elements.floatingActionToggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
-    elements.floatingActionToggle.setAttribute('aria-label', expanded ? '빠른 작업 닫기' : '빠른 작업 열기');
-    elements.floatingActionToggle.title = expanded ? '빠른 작업 닫기' : '빠른 작업';
-  }
+  applyFloatingActionsExpanded(elements, expanded);
 }
 
 function toggleFloatingActions() {
