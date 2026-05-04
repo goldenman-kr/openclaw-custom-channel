@@ -1,4 +1,5 @@
 import { MAX_ATTACHMENTS, MAX_ATTACHMENT_BYTES, ALLOWED_ATTACHMENT_TYPES, formatBytes, inferAttachmentMimeType } from './modules/attachments.js';
+import { baseVisibleConversations as filterBaseVisibleConversations, conversationMatchesTitle as matchesConversationTitle, isConversationArchived, normalizeConversationSearchQuery, sortConversations, visibleConversations as filterVisibleConversations } from './modules/conversation-list.js';
 import { conversationTitle, formatConversationDate, formatMessageTimestamp } from './modules/conversation-format.js';
 import { applyDisplaySettings as applyDisplaySettingsToElements, applyTheme, normalizeFontSize, syncNativeTheme } from './modules/display.js';
 import { canonicalMediaRefKey, isImageRef, isPlaceholderMediaRef, normalizeMediaRefPath, shortenFileName } from './modules/media.js';
@@ -11,7 +12,7 @@ import './plugins/spot-wallet-intent.js';
 
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
 const COMPOSER_DRAFT_KEY_PREFIX = 'openclaw-web-channel-composer-draft-v1';
-const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-047';
+const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-048';
 const CLIENT_API_VERSION = 1;
 const VERSION_CHECK_DISMISSED_KEY = 'openclaw-web-channel-version-dismissed-v1';
 const elements = {
@@ -938,12 +939,8 @@ function updateChatTitle() {
   updateModelPickerButtonState();
 }
 
-function isConversationArchived(conversation) {
-  return Boolean(conversation?.archived_at);
-}
-
 function normalizedConversationSearchQuery() {
-  return conversationSearchQuery.trim().toLocaleLowerCase('ko-KR');
+  return normalizeConversationSearchQuery(conversationSearchQuery);
 }
 
 function updateConversationSearchClearButton() {
@@ -951,15 +948,11 @@ function updateConversationSearchClearButton() {
 }
 
 function conversationMatchesTitle(conversation, query = normalizedConversationSearchQuery()) {
-  return !query || conversationTitle(conversation).toLocaleLowerCase('ko-KR').includes(query);
+  return matchesConversationTitle(conversation, query);
 }
 
 function baseVisibleConversations() {
-  return conversations.filter((conversation) => showingArchived ? isConversationArchived(conversation) : !isConversationArchived(conversation));
-}
-
-function conversationMatchesSearch(conversation, query = normalizedConversationSearchQuery()) {
-  return !query || conversationMatchesTitle(conversation, query) || conversationContentMatches.has(conversation.id);
+  return filterBaseVisibleConversations(conversations, showingArchived);
 }
 
 async function fetchConversationHistoryMessages(conversationId) {
@@ -1045,12 +1038,11 @@ function scheduleConversationSearch() {
 }
 
 function visibleConversations() {
-  const query = normalizedConversationSearchQuery();
-  return baseVisibleConversations().filter((conversation) => conversationMatchesSearch(conversation, query));
-}
-
-function sortConversations(items) {
-  return [...items].sort((first, second) => Number(Boolean(second.pinned)) - Number(Boolean(first.pinned)) || Date.parse(second.updated_at || second.created_at || '') - Date.parse(first.updated_at || first.created_at || ''));
+  return filterVisibleConversations(conversations, {
+    query: conversationSearchQuery,
+    showingArchived,
+    contentMatches: conversationContentMatches,
+  });
 }
 
 function currentUserDisplayName() {
