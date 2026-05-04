@@ -4,6 +4,7 @@ import { searchConversationContent } from './modules/conversation-search.js';
 import { clearComposerDraft as clearStoredComposerDraft, loadComposerDraft, saveComposerDraft as saveStoredComposerDraft } from './modules/composer-draft.js';
 import { conversationTitle, formatConversationDate, formatMessageTimestamp } from './modules/conversation-format.js';
 import { applyDisplaySettings as applyDisplaySettingsToElements, applyTheme, normalizeFontSize, syncNativeTheme } from './modules/display.js';
+import { isPendingHistoryMessage, isPlaceholderPendingText, isRunningJobHistoryMessage, shouldRerenderHistory as shouldRerenderHistorySnapshot } from './modules/history-state.js';
 import { canonicalMediaRefKey, isImageRef, isPlaceholderMediaRef, normalizeMediaRefPath, shortenFileName } from './modules/media.js';
 import { conversationIdFromPath, syncConversationUrl } from './modules/navigation.js';
 import { loadSettings, normalizeHistoryPageSize, randomDeviceId, saveSettings } from './modules/settings.js';
@@ -14,7 +15,7 @@ import './plugins/spot-order-card.js';
 import './plugins/spot-wallet-intent.js';
 
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
-const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-052';
+const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-053';
 const CLIENT_API_VERSION = 1;
 const VERSION_CHECK_DISMISSED_KEY = 'openclaw-web-channel-version-dismissed-v1';
 const elements = {
@@ -2333,19 +2334,6 @@ function messageTextWithoutAttachmentPreview(node) {
 }
 
 
-function isRunningJobHistoryMessage(item) {
-  return typeof item?.id === 'string'
-    && item.id.startsWith('job_')
-    && item.role === 'assistant'
-    && !item.completedAt
-    && (isPlaceholderPendingText(item.text) || item.jobState === 'queued' || item.jobState === 'running');
-}
-
-function isPlaceholderPendingText(text) {
-  const normalized = typeof text === 'string' ? text.trim() : '';
-  return normalized === '응답 대기 중입니다…' || normalized === '응답을 처리 중입니다…' || /^응답을 처리 중입니다\s*\(\d+초\)$/.test(normalized);
-}
-
 function renderHistoryItem(item) {
   if (typeof item?.role !== 'string' || typeof item?.text !== 'string') {
     return;
@@ -2389,16 +2377,8 @@ function currentRenderedHistorySignature() {
     .join('\n---\n');
 }
 
-function historySignature(history) {
-  return history.map((item) => `${item.id || ''}:${item.role}:${item.text}:${item.jobId || ''}:${item.completedAt || ''}`).join('\n---\n');
-}
-
-function isPendingHistoryMessage(item) {
-  return isRunningJobHistoryMessage(item) && isPlaceholderPendingText(item.text);
-}
-
 function shouldRerenderHistory(history) {
-  return history.length > 0 && historySignature(history) !== currentRenderedHistorySignature();
+  return shouldRerenderHistorySnapshot(history, currentRenderedHistorySignature());
 }
 
 function renderHistorySnapshot(history) {
