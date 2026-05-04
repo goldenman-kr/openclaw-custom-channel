@@ -197,6 +197,9 @@ applyStoredSidebarWidth();
 
 let settings = loadSettings();
 let historyPollTimer = null;
+let conversationEventSource = null;
+let conversationEventConversationId = '';
+let conversationEventRefreshTimer = null;
 let modelPickerExpanded = false;
 let modelPickerLoading = false;
 let modelPickerState = null;
@@ -1260,6 +1263,7 @@ function goHome(options = {}) {
   elements.messageInput.value = '';
   autoResizeTextarea();
   renderConversationList();
+  stopConversationEvents();
   renderHome();
   updateChatTitle();
   syncConversationUrl('', { replace: options.replaceUrl === true });
@@ -1433,6 +1437,7 @@ async function selectConversation(conversationId, options = {}) {
   updateComposerAvailability();
   closeMobileDrawer();
   await renderHistory({ scrollToLatest: true });
+  startConversationEvents(conversation.id);
   await resumePendingJobIfNeeded();
   return true;
 }
@@ -2547,6 +2552,58 @@ function startHistoryPolling() {
     clearInterval(historyPollTimer);
   }
   historyPollTimer = window.setInterval(refreshHistoryIfChanged, 5000);
+}
+
+function stopConversationEvents() {
+  if (conversationEventRefreshTimer) {
+    clearTimeout(conversationEventRefreshTimer);
+    conversationEventRefreshTimer = null;
+  }
+  if (conversationEventSource) {
+    conversationEventSource.close();
+  }
+  conversationEventSource = null;
+  conversationEventConversationId = '';
+}
+
+function startConversationEvents(conversationId = activeConversationId()) {
+  if (!canUseApi() || !conversationId || typeof EventSource === 'undefined') {
+    stopConversationEvents();
+    return;
+  }
+  if (conversationEventSource && conversationEventConversationId === conversationId) {
+    return;
+  }
+  stopConversationEvents();
+  conversationEventConversationId = conversationId;
+  const eventsUrl = apiUrl(`/v1/conversations/${encodeURIComponent(conversationId)}/events`);
+  const source = new EventSource(eventsUrl, { withCredentials: true });
+  conversationEventSource = source;
+  source.addEventListener('conversation', (event) => {
+    if (conversationEventConversationId !== conversationId) {
+      return;
+    }
+    scheduleConversationEventRefresh(conversationId);
+  });
+  source.onerror = () => {
+    // EventSource reconnects automatically. History polling remains the durable fallback.
+  };
+}
+
+function scheduleConversationEventRefresh(conversationId = activeConversationId()) {
+  if (!conversationId) {
+    return;
+  }
+  if (conversationEventRefreshTimer) {
+    clearTimeout(conversationEventRefreshTimer);
+  }
+  conversationEventRefreshTimer = window.setTimeout(async () => {
+    conversationEventRefreshTimer = null;
+    await refreshConversations().catch(() => {});
+    if (conversationId === activeConversationId()) {
+      await refreshHistoryIfChanged();
+    }
+  }, 150);
 }
 
 function extractMediaRefs(text) {

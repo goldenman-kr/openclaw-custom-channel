@@ -10,6 +10,7 @@ import {
   type ErrorResponseDto,
   type MessageRequestDto,
 } from "./contracts/apiContractV1.js";
+import { ConversationEventPublisher } from "./events/ConversationEventPublisher.js";
 import { SseJobEventPublisher, type JobEventRecord } from "./events/SseJobEventPublisher.js";
 import { AUTH_COOKIE_NAME, handleAuthRoute, parseCookies, type AuthContext } from "./http/authRoutes.js";
 import { conversationIdFromPath, handleConversationRoute } from "./http/conversationRoutes.js";
@@ -18,11 +19,12 @@ import { handleJobRoute } from "./http/jobRoutes.js";
 import { handleMessageRoute } from "./http/messageRoutes.js";
 import { applyNativeModelSelection, getNativeModelMenu } from "./http/nativeCommands.js";
 import { handleMediaRoute, handleStaticRoute } from "./http/staticRoutes.js";
+import { GatewayAutonomousAnnounceBridge } from "./openclaw/GatewayAutonomousAnnounceBridge.js";
 import { createOpenClawClient } from "./openclaw/createOpenClawClient.js";
 import type { RuntimeWorkspaceScope } from "./openclaw/OpenClawClient.js";
 import { deleteOpenClawSession } from "./openclaw/SessionCleaner.js";
 import type { MessageJob } from "./runtime/MessageJob.js";
-import { MessageJobRunner } from "./runtime/MessageJobRunner.js";
+import { attachmentsFromMediaRefs, MessageJobRunner } from "./runtime/MessageJobRunner.js";
 import { OpenClawChatRuntime } from "./runtime/OpenClawChatRuntime.js";
 import { resolveAllowedWorkspacePath } from "./security/workspaceScope.js";
 import { FileHistoryStore, type HistoryAttachment } from "./session/HistoryStore.js";
@@ -456,6 +458,26 @@ function jobForRequest(jobId: string, request: IncomingMessage, url: URL): JobEv
   return null;
 }
 
+function conversationForOpenClawSessionId(openclawSessionId: string): ConversationRecord | null {
+  if (openclawSessionId.startsWith("web-conv_")) {
+    const candidate = chatStore.getConversation(openclawSessionId.slice("web-".length));
+    if (candidate?.openclawSessionId === openclawSessionId) {
+      return candidate;
+    }
+  }
+  return chatStore.listConversations({ includeArchived: true, limit: 500 })
+    .find((conversation) => conversation.openclawSessionId === openclawSessionId) ?? null;
+}
+
+function isConversationVisibleForRequest(conversationId: string, request: IncomingMessage): boolean {
+  const auth = getAuthContext(request);
+  if (!auth) {
+    return false;
+  }
+  const conversation = chatStore.getConversation(conversationId);
+  return Boolean(conversation && isConversationVisibleToAuth(conversation, auth));
+}
+
 function cancelJobForRequest(jobId: string, request: IncomingMessage, url: URL): JobEventRecord | null {
   const visibleJob = jobForRequest(jobId, request, url);
   if (!visibleJob || ["completed", "failed", "cancelled"].includes(visibleJob.state)) {
@@ -487,6 +509,33 @@ const jobEventPublisher = new SseJobEventPublisher({
   getJob: jobForRequest,
   sendError(response, statusCode, code, message) {
     sendJson(response, statusCode, makeErrorResponse(code as ErrorResponseDto["error"]["code"], message));
+  },
+});
+
+const conversationEventPublisher = new ConversationEventPublisher({
+  corsHeaders,
+  isAuthorized,
+  isVisible: isConversationVisibleForRequest,
+  sendError(response, statusCode, code, message) {
+    sendJson(response, statusCode, makeErrorResponse(code as ErrorResponseDto["error"]["code"], message));
+  },
+});
+
+const autonomousAnnounceBridge = process.env.OPENCLAW_AUTONOMOUS_ANNOUNCE_BRIDGE === "0" ? null : new GatewayAutonomousAnnounceBridge({
+  baseUrl: process.env.OPENCLAW_GATEWAY_URL,
+  token: process.env.OPENCLAW_GATEWAY_TOKEN,
+  agentId: openClawAgentId,
+  getConversationByOpenClawSessionId: conversationForOpenClawSessionId,
+  messageStore: chatStore,
+  attachmentsFromMediaRefs,
+  onAnnouncement(announcement) {
+    conversationEventPublisher.publish({
+      id: announcement.id,
+      type: "message",
+      messageId: announcement.id,
+      conversationId: announcement.conversationId,
+      createdAt: announcement.createdAt,
+    });
   },
 });
 
@@ -596,6 +645,12 @@ const server = createServer(async (request, response) => {
     cancelJob: cancelJobForRequest,
     eventPublisher: jobEventPublisher,
   })) {
+    return;
+  }
+
+  const conversationEventsId = conversationIdFromPath(url.pathname, "/events");
+  if (conversationEventsId && request.method === "GET") {
+    conversationEventPublisher.serve(request, response, conversationEventsId);
     return;
   }
 
@@ -719,5 +774,6 @@ const server = createServer(async (request, response) => {
 
 server.listen(port, host, () => {
   console.log(`Bridge server listening on http://${host}:${port}`);
+  autonomousAnnounceBridge?.start();
   processRestartFollowups().catch((error) => console.error("Failed to process restart follow-ups:", error));
 });

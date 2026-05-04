@@ -409,7 +409,7 @@ function cleanMediaRef(ref: string): string {
   return trimmed;
 }
 
-async function attachmentsFromMediaRefs(text: string): Promise<HistoryAttachment[]> {
+export async function attachmentsFromMediaRefs(text: string): Promise<HistoryAttachment[]> {
   const attachments: HistoryAttachment[] = [];
   for (const ref of extractMediaRefs(text)) {
     const attachment = await attachmentFromMediaRef(ref);
