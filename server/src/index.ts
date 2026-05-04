@@ -79,6 +79,7 @@ const restartFollowupStore = new RestartFollowupStore(join(stateDir, "restart-fo
 configureInitialAdminUser();
 const openClawAgentId = process.env.OPENCLAW_AGENT ?? "main";
 const jobs = new Map<string, MessageJob>();
+const TERMINAL_JOB_STATES = new Set<MessageJob["state"]>(["completed", "failed", "cancelled"]);
 const sessionTtlMs = Number(process.env.AUTH_SESSION_TTL_MS ?? 30 * 24 * 60 * 60 * 1000);
 const cookieSecure = process.env.AUTH_COOKIE_SECURE ? process.env.AUTH_COOKIE_SECURE === "1" : process.env.NODE_ENV === "production";
 const workspaceRoot = resolve(process.env.USER_WORKSPACE_ROOT ?? join(stateDir, "workspaces"));
@@ -429,7 +430,11 @@ function updateJob(job: MessageJob, patch: { state?: MessageJob["state"]; error?
     job.error = patch.error;
   }
   job.updatedAt = new Date().toISOString();
-  jobs.set(job.id, job);
+  if (TERMINAL_JOB_STATES.has(job.state)) {
+    jobs.delete(job.id);
+  } else {
+    jobs.set(job.id, job);
+  }
   if (job.conversationId) {
     chatStore.updateJob(job.id, {
       ...(patch.state ? { state: patch.state } : {}),

@@ -245,6 +245,7 @@ let mediaViewerHistoryActive = false;
 let messagesScrollIndicatorTimer = null;
 let drawerSwipeStart = null;
 const mediaUrlCache = new Map();
+const MEDIA_URL_CACHE_LIMIT = 64;
 const slashCommands = [
   { command: '/status', title: '상태 확인', description: '현재 세션/모델/토큰/설정 상태를 확인합니다.' },
   { command: '/model ', title: '모델 변경', description: '모델을 지정합니다. 예: /model gpt-5.5' },
@@ -932,8 +933,52 @@ function persistMessage() {
   // Server-side history is authoritative. This hook is intentionally kept as a no-op.
 }
 
+function currentMediaUrlsInUse() {
+  const urls = new Set();
+  if (mediaViewerCurrentUrl) {
+    urls.add(mediaViewerCurrentUrl);
+  }
+  for (const node of elements.messages.querySelectorAll('[src^="blob:"], [href^="blob:"]')) {
+    const url = node.getAttribute('src') || node.getAttribute('href');
+    if (url) {
+      urls.add(url);
+    }
+  }
+  return urls;
+}
+
+function revokeCachedMediaUrl(ref, url) {
+  if (mediaUrlCache.get(ref) !== url) {
+    return;
+  }
+  mediaUrlCache.delete(ref);
+  try {
+    URL.revokeObjectURL(url);
+  } catch {
+    // ignore revoke failures
+  }
+}
+
+function pruneMediaUrlCache(options = {}) {
+  const limit = Number.isFinite(options.limit) ? Number(options.limit) : MEDIA_URL_CACHE_LIMIT;
+  if (mediaUrlCache.size <= limit && !options.force) {
+    return;
+  }
+  const inUse = currentMediaUrlsInUse();
+  for (const [ref, url] of mediaUrlCache) {
+    if (!options.force && mediaUrlCache.size <= limit) {
+      break;
+    }
+    if (inUse.has(url)) {
+      continue;
+    }
+    revokeCachedMediaUrl(ref, url);
+  }
+}
+
 function clearRenderedMessages() {
   elements.messages.replaceChildren();
+  pruneMediaUrlCache();
 }
 
 async function historyHeaders() {
@@ -1031,7 +1076,9 @@ async function logout() {
   conversations = [];
   activeConversation = null;
   clearPendingJob();
+  closeMediaViewer({ syncHistory: false });
   renderHome();
+  pruneMediaUrlCache({ force: true, limit: 0 });
   renderConversationList();
   showLoginScreen('로그아웃되었습니다.');
 }
@@ -2606,36 +2653,51 @@ function isPendingHistoryMessage(item) {
   return isRunningJobHistoryMessage(item) && isPlaceholderPendingText(item.text);
 }
 
+function shouldRerenderHistory(history) {
+  return history.length > 0 && historySignature(history) !== currentRenderedHistorySignature();
+}
+
+function renderHistorySnapshot(history) {
+  const shouldFollow = isNearBottom();
+  const previousBottomOffset = elements.messages.scrollHeight - elements.messages.scrollTop;
+  clearRenderedMessages();
+  renderHistoryLoadMoreControl();
+  for (const item of history) {
+    renderHistoryItem(item);
+  }
+  if (shouldFollow) {
+    scrollToBottom({ force: true });
+    return;
+  }
+  preserveScrollAfterRender(previousBottomOffset);
+  if (history.some((item) => typeof item?.role === 'string' && item.role !== 'user' && !isPendingHistoryMessage(item))) {
+    showScrollToLatestButton();
+  }
+}
+
+async function fetchChangedHistory() {
+  const meta = await fetchHistoryMeta();
+  if (lastHistoryVersion && meta.version === lastHistoryVersion) {
+    return null;
+  }
+  const history = await fetchHistory();
+  lastHistoryVersion = meta.version || lastHistoryVersion;
+  return history;
+}
+
 async function refreshHistoryIfChanged() {
   if (!canUseApi() || document.hidden || !activeConversation?.id) {
     return;
   }
 
   try {
-    const meta = await fetchHistoryMeta();
-    if (lastHistoryVersion && meta.version === lastHistoryVersion) {
+    const history = await fetchChangedHistory();
+    if (!history) {
       return;
     }
-
-    const history = await fetchHistory();
     reconcilePendingJobWithHistory(history);
-    lastHistoryVersion = meta.version || lastHistoryVersion;
-    if (history.length > 0 && historySignature(history) !== currentRenderedHistorySignature()) {
-      const shouldFollow = isNearBottom();
-      const previousBottomOffset = elements.messages.scrollHeight - elements.messages.scrollTop;
-      clearRenderedMessages();
-      renderHistoryLoadMoreControl();
-      for (const item of history) {
-        renderHistoryItem(item);
-      }
-      if (shouldFollow) {
-        scrollToBottom({ force: true });
-      } else {
-        preserveScrollAfterRender(previousBottomOffset);
-        if (history.some((item) => typeof item?.role === 'string' && item.role !== 'user' && !isPendingHistoryMessage(item))) {
-          showScrollToLatestButton();
-        }
-      }
+    if (shouldRerenderHistory(history)) {
+      renderHistorySnapshot(history);
     }
   } catch {
     // Polling is best-effort; explicit sends/connection tests surface errors.
@@ -3009,7 +3071,10 @@ function mediaRefsFromHistoryAttachments(attachments) {
 
 async function getAuthorizedMediaUrl(ref) {
   if (mediaUrlCache.has(ref)) {
-    return mediaUrlCache.get(ref);
+    const cached = mediaUrlCache.get(ref);
+    mediaUrlCache.delete(ref);
+    mediaUrlCache.set(ref, cached);
+    return cached;
   }
 
   const response = await fetch(`${settings.apiUrl}/v1/media?path=${encodeURIComponent(ref)}`, {
@@ -3023,6 +3088,7 @@ async function getAuthorizedMediaUrl(ref) {
   const blob = await response.blob();
   const url = URL.createObjectURL(blob);
   mediaUrlCache.set(ref, url);
+  pruneMediaUrlCache();
   return url;
 }
 
@@ -4111,6 +4177,7 @@ async function handleSubmit(event) {
 
 async function clearAppCacheAndReload() {
   setStatus('캐시를 삭제하는 중입니다...');
+  pruneMediaUrlCache({ force: true, limit: 0 });
   try {
     if (navigator.serviceWorker?.getRegistrations) {
       const registrations = await navigator.serviceWorker.getRegistrations();
