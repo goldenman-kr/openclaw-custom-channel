@@ -17,6 +17,7 @@ import { hideLoginScreen as hideLoginScreenView, showLoginScreen as showLoginScr
 import { isPendingHistoryMessage, isPlaceholderPendingText, isRunningJobHistoryMessage, shouldRerenderHistory as shouldRerenderHistorySnapshot } from './modules/history-state.js';
 import { canonicalMediaRefKey, isImageRef, isPlaceholderMediaRef, normalizeMediaRefPath, shortenFileName } from './modules/media.js';
 import { renderModelPicker as renderModelPickerView, updateModelPickerButtonState as updateModelPickerButtonStateView } from './modules/model-picker.js';
+import { closeDrawer, drawerSwipeGesture, isDesktopLayout as isDesktopViewport, isDrawerOpen, openDrawer, shouldIgnoreDrawerSwipe as shouldIgnoreDrawerSwipeTarget, toggleDesktopSidebar } from './modules/mobile-drawer.js';
 import { conversationIdFromPath, syncConversationUrl } from './modules/navigation.js';
 import { loadSettings, normalizeHistoryPageSize, randomDeviceId, saveSettings } from './modules/settings.js';
 import { isNearBottom as isMessagesNearBottom, hideMessagesScrollIndicator, hideScrollToLatestButton as hideScrollButton, showScrollToLatestButton as showScrollButton, updateMessagesScrollIndicator as updateMessagesScrollIndicatorUi } from './modules/scroll-ui.js';
@@ -30,7 +31,7 @@ import './plugins/spot-order-card.js';
 import './plugins/spot-wallet-intent.js';
 
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
-const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-068';
+const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-069';
 const CLIENT_API_VERSION = 1;
 const elements = {
   loginScreen: document.querySelector('#loginScreen'),
@@ -516,16 +517,14 @@ function preserveScrollAfterRender(previousBottomOffset) {
 }
 
 function isDesktopLayout() {
-  return window.matchMedia('(min-width: 900px)').matches;
+  return isDesktopViewport();
 }
 
 function openMobileDrawer(options = {}) {
   if (isDesktopLayout()) {
     return;
   }
-  const wasOpen = document.body.classList.contains('drawer-open');
-  document.body.classList.add('drawer-open');
-  elements.mobileMenuButton?.setAttribute('aria-expanded', 'true');
+  const wasOpen = openDrawer(elements.mobileMenuButton);
   if (!wasOpen && options.pushHistory !== false && window.history?.pushState) {
     window.history.pushState({ ...(window.history.state || {}), mobileDrawerOpen: true }, '', window.location.href);
     mobileDrawerHistoryActive = true;
@@ -533,9 +532,7 @@ function openMobileDrawer(options = {}) {
 }
 
 function closeMobileDrawer(options = {}) {
-  const wasOpen = document.body.classList.contains('drawer-open');
-  document.body.classList.remove('drawer-open');
-  elements.mobileMenuButton?.setAttribute('aria-expanded', 'false');
+  const wasOpen = closeDrawer(elements.mobileMenuButton);
   if (options.syncHistory && wasOpen && mobileDrawerHistoryActive && window.history?.back) {
     mobileDrawerHistoryActive = false;
     window.history.back();
@@ -548,11 +545,10 @@ function closeMobileDrawer(options = {}) {
 
 function toggleMobileDrawer() {
   if (isDesktopLayout()) {
-    document.body.classList.toggle('sidebar-collapsed');
-    elements.mobileMenuButton?.setAttribute('aria-expanded', document.body.classList.contains('sidebar-collapsed') ? 'false' : 'true');
+    toggleDesktopSidebar(elements.mobileMenuButton);
     return;
   }
-  if (document.body.classList.contains('drawer-open')) {
+  if (isDrawerOpen()) {
     closeMobileDrawer({ syncHistory: true });
   } else {
     openMobileDrawer();
@@ -560,11 +556,11 @@ function toggleMobileDrawer() {
 }
 
 function shouldIgnoreDrawerSwipe(target) {
-  return Boolean(target?.closest?.('input, textarea, button, a, select, dialog, .composer, .settings-panel, .media-viewer, .floating-action-menu, .markdown-table-wrapper, .code-block pre'));
+  return shouldIgnoreDrawerSwipeTarget(target);
 }
 
 function handleDrawerSwipeStart(event) {
-  if (!isMobileLikeInput() || document.body.classList.contains('drawer-open') || !elements.mediaViewer.classList.contains('hidden')) {
+  if (!isMobileLikeInput() || isDrawerOpen() || !elements.mediaViewer.classList.contains('hidden')) {
     drawerSwipeStart = null;
     return;
   }
@@ -590,14 +586,12 @@ function handleDrawerSwipeEnd(event) {
   if (!touch) {
     return;
   }
-  const deltaX = touch.clientX - start.x;
-  const deltaY = touch.clientY - start.y;
-  const elapsed = Date.now() - start.time;
-  if (Math.abs(deltaX) < 90 || Math.abs(deltaY) > 70 || elapsed > 800) {
+  const gesture = drawerSwipeGesture(start, touch);
+  if (!gesture) {
     return;
   }
   event.preventDefault?.();
-  if (deltaX > 0) {
+  if (gesture === 'open-menu') {
     elements.mobileMenuButton?.click();
   } else {
     openSettingsPanel();
