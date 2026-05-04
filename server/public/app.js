@@ -6,7 +6,7 @@ const STORAGE_KEY = 'openclaw-web-channel-settings-v1';
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
 const COMPOSER_DRAFT_KEY_PREFIX = 'openclaw-web-channel-composer-draft-v1';
 const SIDEBAR_WIDTH_KEY = 'openclaw-web-channel-sidebar-width-v1';
-const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-038';
+const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-039';
 const CLIENT_API_VERSION = 1;
 const VERSION_CHECK_DISMISSED_KEY = 'openclaw-web-channel-version-dismissed-v1';
 const MAX_ATTACHMENTS = 3;
@@ -2295,7 +2295,7 @@ function codeBlockPluginContext() {
     insertIntoComposer,
     refreshHistory: () => renderHistory({ scrollToLatest: true }),
     sendPluginMessage: async (message) => {
-      const response = await sendMessage(message);
+      const response = await sendMessage(message, [], { source: 'plugin', hiddenFromHistory: true });
       if (response.job_id) {
         const conversationId = response.conversation_id || activeConversationId();
         savePendingJob({ job_id: response.job_id, startedAt: Date.now() }, conversationId);
@@ -4685,6 +4685,6 @@ elements.messageInput.addEventListener('keydown', (event) => {
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-04-038').catch(() => {});
+    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-04-039').catch(() => {});
   });
 }

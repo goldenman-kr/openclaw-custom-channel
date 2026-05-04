@@ -71,6 +71,8 @@ export interface MessageLocationMetadata {
 
 export interface MessageRequestMetadata {
   location?: MessageLocationMetadata;
+  source?: "user" | "plugin";
+  hiddenFromHistory?: boolean;
 }
 
 export interface MessageRequestDto {

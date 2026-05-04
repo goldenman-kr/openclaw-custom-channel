@@ -568,7 +568,7 @@ function titleFromMessage(message: string): string {
 }
 
 async function persistConversationUserMessage(conversation: ConversationRecord, payload: MessageRequestDto): Promise<void> {
-  if (!shouldPersistMessage(payload.message)) {
+  if (payload.metadata?.hiddenFromHistory || !shouldPersistMessage(payload.message)) {
     return;
   }
   const isFirstMessage = chatStore.listMessages(conversation.id, { limit: 1 }).length === 0;
