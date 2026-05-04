@@ -5,7 +5,7 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
-import { activeGatewayModel, getSessionModelOverride, setSessionModelOverride } from "../openclaw/modelOverride.js";
+import { activeGatewayModel, getSessionModelOverride, getSessionThinkingOverride, setSessionModelOverride, setSessionThinkingOverride } from "../openclaw/modelOverride.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -44,7 +44,7 @@ function commandParts(message: string): string[] {
 
 export function isNativeCommand(message: string): boolean {
   const command = commandParts(message)[0]?.toLowerCase();
-  return command === "/health" || command === "/status" || command === "/models" || command === "/model";
+  return command === "/health" || command === "/status" || command === "/models" || command === "/model" || command === "/think" || command === "/thinking" || command === "/t";
 }
 
 export async function executeNativeCommand(message: string, context: NativeCommandContext = {}): Promise<NativeCommandResult | null> {
@@ -63,6 +63,10 @@ export async function executeNativeCommand(message: string, context: NativeComma
       return { reply: await nativeModels(context) };
     case "/model":
       return { reply: await nativeModel(parts.slice(1).join(" "), context) };
+    case "/think":
+    case "/thinking":
+    case "/t":
+      return { reply: await nativeThink(parts.slice(1).join(" "), context) };
     default:
       return null;
   }
@@ -505,9 +509,30 @@ function isSafeModelName(model: string): boolean {
   return /^[A-Za-z0-9._~:+/-]+$/.test(model) && model.includes("/") && model.length <= 160;
 }
 
+function resolveSessionThinkingLevel(sessionKey?: string): string {
+  return getSessionThinkingOverride(sessionKey) ?? process.env.OPENCLAW_THINKING ?? "medium";
+}
+
+function normalizeThinkingLevel(value: string): string | null {
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) return null;
+  if (["default", "reset", "clear", "auto"].includes(normalized)) {
+    return "";
+  }
+  if (["off", "minimal", "low", "medium", "high", "xhigh", "adaptive", "max"].includes(normalized)) {
+    return normalized;
+  }
+  return null;
+}
+
 export interface ApplyNativeModelSelectionResult {
   currentModel: string;
   warning?: string;
+  reset: boolean;
+}
+
+export interface ApplyNativeThinkingSelectionResult {
+  currentThinking: string;
   reset: boolean;
 }
 
@@ -563,6 +588,54 @@ async function nativeModel(arg: string, context: NativeCommandContext): Promise<
       return `✅ 현재 채팅의 모델 override를 해제했습니다.\n현재 채팅 모델: ${result.currentModel}`;
     }
     return `✅ 현재 채팅의 모델 override를 변경했습니다.\n현재 채팅 모델: ${result.currentModel}${result.warning ? `\n\n${result.warning}` : ""}`;
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
+}
+
+export async function applyNativeThinkingSelection(requestedLevel: string, context: NativeCommandContext): Promise<ApplyNativeThinkingSelectionResult> {
+  const requested = requestedLevel.trim();
+  if (!context.sessionKey?.trim()) {
+    throw new Error("❌ 현재 채팅의 세션 키를 확인할 수 없어 thinking을 변경할 수 없습니다.");
+  }
+
+  const normalized = normalizeThinkingLevel(requested);
+  if (normalized === null) {
+    throw new Error("❌ thinking 값은 `off|minimal|low|medium|high|xhigh|adaptive|max` 중 하나여야 합니다. 기본값 복귀는 `/think auto` 또는 `/think default`를 사용하세요.");
+  }
+
+  if (normalized) {
+    setSessionThinkingOverride(context.sessionKey, normalized);
+    return {
+      currentThinking: resolveSessionThinkingLevel(context.sessionKey),
+      reset: false,
+    };
+  }
+
+  setSessionThinkingOverride(context.sessionKey, null);
+  return {
+    currentThinking: resolveSessionThinkingLevel(context.sessionKey),
+    reset: true,
+  };
+}
+
+async function nativeThink(arg: string, context: NativeCommandContext): Promise<string> {
+  const requested = arg.trim();
+  const currentThinking = resolveSessionThinkingLevel(context.sessionKey);
+  if (!requested) {
+    return [
+      `현재 채팅 thinking: ${currentThinking}`,
+      "변경하려면 `/think low|medium|high|xhigh|adaptive|max|off` 형식으로 입력하세요.",
+      "기본값으로 되돌리려면 `/think auto`를 입력하세요.",
+    ].join("\n");
+  }
+
+  try {
+    const result = await applyNativeThinkingSelection(requested, context);
+    if (result.reset) {
+      return `✅ 현재 채팅의 thinking override를 해제했습니다.\n현재 채팅 thinking: ${result.currentThinking}`;
+    }
+    return `✅ 현재 채팅의 thinking override를 변경했습니다.\n현재 채팅 thinking: ${result.currentThinking}`;
   } catch (error) {
     return error instanceof Error ? error.message : String(error);
   }

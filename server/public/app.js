@@ -248,6 +248,7 @@ const mediaUrlCache = new Map();
 const slashCommands = [
   { command: '/status', title: '상태 확인', description: '현재 세션/모델/토큰/설정 상태를 확인합니다.' },
   { command: '/model ', title: '모델 변경', description: '모델을 지정합니다. 예: /model gpt-5.5' },
+  { command: '/think ', title: 'thinking 변경', description: '현재 채팅의 thinking 레벨을 지정합니다. 예: /think high' },
   { command: '/models', title: '모델 목록', description: '사용 가능한 모델 목록을 봅니다.' },
   { command: '/reset', title: '대화 초기화', description: '현재 대화 맥락을 초기화합니다.' },
   { command: '/reasoning', title: '추론 표시 전환', description: 'reasoning 설정을 켜거나 끕니다.' },

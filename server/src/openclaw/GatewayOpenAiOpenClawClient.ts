@@ -4,7 +4,7 @@ import { basename, join, resolve } from "node:path";
 import { Agent } from "undici";
 import type { MessageAttachment, MessageRequestMetadata } from "../contracts/apiContractV1.js";
 import { GatewayAgentEventSubscriber, type GatewayAgentEventPayload } from "./GatewayAgentEventSubscriber.js";
-import { activeGatewayModel } from "./modelOverride.js";
+import { activeGatewayModel, getSessionThinkingOverride } from "./modelOverride.js";
 import type { OpenClawClient, OpenClawClientInput, OpenClawClientResult, RuntimeWorkspaceScope } from "./OpenClawClient.js";
 
 export class GatewayOpenAiOpenClawClient implements OpenClawClient {
@@ -138,9 +138,11 @@ export class GatewayOpenAiOpenClawClient implements OpenClawClient {
   }
 
   private requestBody(input: OpenClawClientInput, stream: boolean, attachments: SavedAttachment[]): Record<string, unknown> {
+    const thinking = getSessionThinkingOverride(input.sessionId) ?? process.env.OPENCLAW_THINKING;
     return {
       model: this.activeModel(),
       stream,
+      ...(thinking ? { thinking } : {}),
       messages: [
         {
           role: "user",
