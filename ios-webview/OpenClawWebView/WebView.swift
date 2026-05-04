@@ -13,6 +13,7 @@ struct WebView: UIViewRepresentable {
         configuration.websiteDataStore = .default()
         configuration.allowsInlineMediaPlayback = true
         configuration.defaultWebpagePreferences.allowsContentJavaScript = true
+        configuration.userContentController.addUserScript(Self.disableInputZoomUserScript())
         configuration.userContentController.add(context.coordinator, name: "openClawTheme")
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
@@ -36,6 +37,22 @@ struct WebView: UIViewRepresentable {
     }
 
     func updateUIView(_ webView: WKWebView, context: Context) {}
+
+    private static func disableInputZoomUserScript() -> WKUserScript {
+        let source = """
+        (() => {
+          const viewport = document.querySelector('meta[name="viewport"]') || document.createElement('meta');
+          viewport.setAttribute('name', 'viewport');
+          viewport.setAttribute('content', 'width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover');
+          if (!viewport.parentNode) document.head.appendChild(viewport);
+
+          const style = document.createElement('style');
+          style.textContent = 'input, textarea, select { font-size: 16px !important; }';
+          document.head.appendChild(style);
+        })();
+        """
+        return WKUserScript(source: source, injectionTime: .atDocumentEnd, forMainFrameOnly: true)
+    }
 
     final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
         weak var webView: WKWebView?
