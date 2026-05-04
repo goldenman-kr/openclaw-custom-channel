@@ -5,6 +5,7 @@ import { clearComposerDraft as clearStoredComposerDraft, loadComposerDraft, save
 import { conversationTitle, formatConversationDate, formatMessageTimestamp } from './modules/conversation-format.js';
 import { applyDisplaySettings as applyDisplaySettingsToElements, applyTheme, normalizeFontSize, syncNativeTheme } from './modules/display.js';
 import { fetchHistory as fetchHistoryFromApi, fetchHistoryMeta as fetchHistoryMetaFromApi } from './modules/history-api.js';
+import { createHistoryLoadMoreControl, resetHistoryLoadMoreButton } from './modules/history-controls.js';
 import { isPendingHistoryMessage, isPlaceholderPendingText, isRunningJobHistoryMessage, shouldRerenderHistory as shouldRerenderHistorySnapshot } from './modules/history-state.js';
 import { canonicalMediaRefKey, isImageRef, isPlaceholderMediaRef, normalizeMediaRefPath, shortenFileName } from './modules/media.js';
 import { conversationIdFromPath, syncConversationUrl } from './modules/navigation.js';
@@ -16,7 +17,7 @@ import './plugins/spot-order-card.js';
 import './plugins/spot-wallet-intent.js';
 
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
-const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-054';
+const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-055';
 const CLIENT_API_VERSION = 1;
 const VERSION_CHECK_DISMISSED_KEY = 'openclaw-web-channel-version-dismissed-v1';
 const elements = {
@@ -1849,16 +1850,10 @@ function renderHistoryLoadMoreControl() {
   if (!lastHistoryHasMore) {
     return;
   }
-  const wrapper = document.createElement('div');
-  wrapper.className = 'history-load-more';
-  const button = document.createElement('button');
-  button.type = 'button';
-  button.className = 'ghost-button history-load-more-button';
-  button.textContent = loadingOlderHistory ? '이전 대화 불러오는 중…' : '이전 대화 더보기';
-  button.disabled = loadingOlderHistory;
-  button.addEventListener('click', () => loadOlderHistory().catch((error) => appendMessage('system', error instanceof Error ? error.message : String(error), { persist: false })));
-  wrapper.append(button);
-  elements.messages.append(wrapper);
+  elements.messages.append(createHistoryLoadMoreControl({
+    loading: loadingOlderHistory,
+    onClick: () => loadOlderHistory().catch((error) => appendMessage('system', error instanceof Error ? error.message : String(error), { persist: false })),
+  }));
 }
 
 async function loadOlderHistory() {
@@ -1871,11 +1866,7 @@ async function loadOlderHistory() {
     await renderHistory({ preservePosition: true });
   } finally {
     loadingOlderHistory = false;
-    const button = elements.messages.querySelector('.history-load-more-button');
-    if (button) {
-      button.disabled = false;
-      button.textContent = '이전 대화 더보기';
-    }
+    resetHistoryLoadMoreButton(elements.messages);
   }
 }
 
