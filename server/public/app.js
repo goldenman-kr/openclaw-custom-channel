@@ -12,13 +12,14 @@ import { conversationIdFromPath, syncConversationUrl } from './modules/navigatio
 import { loadSettings, normalizeHistoryPageSize, randomDeviceId, saveSettings } from './modules/settings.js';
 import { applyStoredSidebarWidth, clampSidebarWidth, saveSidebarWidth, SIDEBAR_RESIZE_MEDIA } from './modules/sidebar-width.js';
 import { matchingSlashCommands as findMatchingSlashCommands } from './modules/slash-commands.js';
+import { showToast } from './modules/toast.js';
 import { checkClientServerVersion as checkClientServerVersionWithDeps } from './modules/version-check.js';
 import { renderCodeBlockPlugin } from './plugins/plugin-registry.js';
 import './plugins/spot-order-card.js';
 import './plugins/spot-wallet-intent.js';
 
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
-const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-056';
+const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-057';
 const CLIENT_API_VERSION = 1;
 const elements = {
   loginScreen: document.querySelector('#loginScreen'),
@@ -458,27 +459,6 @@ function readSettingsFromForm() {
 
 function setStatus(message) {
   elements.statusText.textContent = message || '';
-}
-
-function showToast(message, options = {}) {
-  const container = document.querySelector('.toast-stack') || (() => {
-    const node = document.createElement('div');
-    node.className = 'toast-stack';
-    node.setAttribute('aria-live', 'polite');
-    node.setAttribute('aria-atomic', 'true');
-    document.body.append(node);
-    return node;
-  })();
-  const toast = document.createElement('div');
-  toast.className = `toast toast--${options.kind || 'info'}`;
-  toast.textContent = message;
-  container.append(toast);
-  window.setTimeout(() => toast.classList.add('toast--visible'), 20);
-  window.setTimeout(() => {
-    toast.classList.remove('toast--visible');
-    toast.addEventListener('transitionend', () => toast.remove(), { once: true });
-    window.setTimeout(() => toast.remove(), 500);
-  }, options.durationMs || 2400);
 }
 
 async function checkClientServerVersion() {
