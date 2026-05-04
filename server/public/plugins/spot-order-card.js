@@ -18,6 +18,14 @@ function normalizeAddress(value) {
   return /^0x[a-f0-9]{40}$/.test(address) ? address : '';
 }
 
+function isZeroAddress(value) {
+  return normalizeAddress(value) === '0x0000000000000000000000000000000000000000';
+}
+
+function shouldValidateSwapper(value) {
+  return Boolean(normalizeAddress(value)) && !isZeroAddress(value);
+}
+
 function createButton(label, onClick, options = {}) {
   const button = document.createElement('button');
   button.type = 'button';
@@ -245,9 +253,6 @@ function renderSpotOrderCard({ parent, codeText, context, fallback }) {
     try {
       const accounts = await window.ethereum.request({ method: 'eth_accounts' });
       const account = accounts?.[0] || '';
-      if (normalizeAddress(account) && normalizeAddress(swapper) && normalizeAddress(account) !== normalizeAddress(swapper)) {
-        return;
-      }
       updateConnectedAccount(account, { silent: true });
     } catch {
       // Silent hydration only; explicit connect surfaces errors.
@@ -263,12 +268,11 @@ function renderSpotOrderCard({ parent, codeText, context, fallback }) {
       }
       const accounts = await requestAccounts();
       const account = accounts?.[0] || '';
-      if (normalizeAddress(account) && normalizeAddress(swapper) && normalizeAddress(account) !== normalizeAddress(swapper)) {
-        setStatus(status, `연결 지갑과 주문 swapper가 다릅니다. 연결=${account}, swapper=${swapper}`, 'error');
-        updateConnectedAccount('');
+      updateConnectedAccount(account);
+      if (normalizeAddress(account) && shouldValidateSwapper(swapper) && normalizeAddress(account) !== shouldValidateSwapper(swapper)) {
+        setStatus(status, `연결됨. 단, 주문 swapper와 달라 서명은 중단됩니다. 연결=${account}, swapper=${swapper}`, 'warn');
         return;
       }
-      updateConnectedAccount(account);
       if (!account) {
         setStatus(status, '연결된 계정이 없습니다.', 'warn');
       }
@@ -278,12 +282,11 @@ function renderSpotOrderCard({ parent, codeText, context, fallback }) {
   }, { disabled: mobileUnsupported });
   window.ethereum?.on?.('accountsChanged', (accounts) => {
     const account = accounts?.[0] || '';
-    if (normalizeAddress(account) && normalizeAddress(swapper) && normalizeAddress(account) !== normalizeAddress(swapper)) {
-      updateConnectedAccount('');
-      setStatus(status, `연결 지갑과 주문 swapper가 다릅니다. 연결=${account}, swapper=${swapper}`, 'error');
+    updateConnectedAccount(account);
+    if (normalizeAddress(account) && shouldValidateSwapper(swapper) && normalizeAddress(account) !== shouldValidateSwapper(swapper)) {
+      setStatus(status, `연결됨. 단, 주문 swapper와 달라 서명은 중단됩니다. 연결=${account}, swapper=${swapper}`, 'warn');
       return;
     }
-    updateConnectedAccount(account);
     if (!account) {
       setStatus(status, '지갑 연결이 해제되었습니다.', 'warn');
     }
@@ -309,7 +312,7 @@ function renderSpotOrderCard({ parent, codeText, context, fallback }) {
         if (!connectedAccount) {
           throw new Error('서명할 계정을 찾지 못했습니다.');
         }
-        if (normalizeAddress(connectedAccount) !== normalizeAddress(swapper)) {
+        if (normalizeAddress(connectedAccount) !== shouldValidateSwapper(swapper)) {
           throw new Error(`서명 지갑과 주문 swapper가 일치하지 않습니다. 연결=${connectedAccount}, swapper=${swapper}`);
         }
         if (!chainId || !inputToken || !inputMaxAmount || !verifyingContract) {
