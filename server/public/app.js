@@ -1,5 +1,6 @@
 import { MAX_ATTACHMENTS, MAX_ATTACHMENT_BYTES, ALLOWED_ATTACHMENT_TYPES, formatBytes, inferAttachmentMimeType } from './modules/attachments.js';
 import { conversationTitle, formatConversationDate, formatMessageTimestamp } from './modules/conversation-format.js';
+import { applyDisplaySettings as applyDisplaySettingsToElements, applyTheme, syncNativeTheme } from './modules/display.js';
 import { canonicalMediaRefKey, isImageRef, isPlaceholderMediaRef, normalizeMediaRefPath, shortenFileName } from './modules/media.js';
 import { loadSettings, normalizeHistoryPageSize, randomDeviceId, saveSettings } from './modules/settings.js';
 import { applyStoredSidebarWidth, clampSidebarWidth, saveSidebarWidth, SIDEBAR_RESIZE_MEDIA } from './modules/sidebar-width.js';
@@ -9,7 +10,7 @@ import './plugins/spot-wallet-intent.js';
 
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
 const COMPOSER_DRAFT_KEY_PREFIX = 'openclaw-web-channel-composer-draft-v1';
-const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-044';
+const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-045';
 const CLIENT_API_VERSION = 1;
 const VERSION_CHECK_DISMISSED_KEY = 'openclaw-web-channel-version-dismissed-v1';
 const elements = {
@@ -196,51 +197,14 @@ function syncConversationUrl(conversationId, options = {}) {
 }
 
 
-function resolvedThemeMode(themeMode) {
-  if (themeMode === 'light' || themeMode === 'dark') {
-    return themeMode;
-  }
-  return window.matchMedia?.('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
-}
-
-function syncNativeTheme(themeMode) {
-  const resolved = resolvedThemeMode(themeMode);
-  const themeColor = resolved === 'light' ? '#e2e8f0' : '#151515';
-  document.querySelector('meta[name="theme-color"]')?.setAttribute('content', themeColor);
-  window.OpenClawAndroid?.setThemeMode?.(resolved);
-  window.webkit?.messageHandlers?.openClawTheme?.postMessage?.({ mode: resolved, color: themeColor });
-}
-
-function applyTheme(themeMode) {
-  document.documentElement.dataset.theme = ['light', 'dark'].includes(themeMode) ? themeMode : 'system';
-  syncNativeTheme(themeMode);
-}
-
 window.matchMedia?.('(prefers-color-scheme: light)').addEventListener?.('change', () => {
   if (!['light', 'dark'].includes(settings.themeMode)) {
     syncNativeTheme(settings.themeMode || 'system');
   }
 });
 
-function normalizeFontSize(value) {
-  const size = Number(value);
-  if (!Number.isFinite(size)) {
-    return 16;
-  }
-  return Math.min(20, Math.max(12, Math.round(size)));
-}
-
 function applyDisplaySettings() {
-  const fontSize = normalizeFontSize(settings.fontSize);
-  settings.fontSize = fontSize;
-  document.documentElement.style.setProperty('--app-font-size', `${fontSize}px`);
-  if (elements.fontSizeInput) {
-    elements.fontSizeInput.value = String(fontSize);
-  }
-  if (elements.fontSizeValue) {
-    elements.fontSizeValue.value = `${fontSize}px`;
-    elements.fontSizeValue.textContent = `${fontSize}px`;
-  }
+  applyDisplaySettingsToElements(settings, elements);
 }
 
 function applySettingsToForm() {
