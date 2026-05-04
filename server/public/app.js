@@ -3,6 +3,7 @@ import { createConversationListItem } from './modules/conversation-list-item.js'
 import { conversationListEmptyMessage as getConversationListEmptyMessage, createConversationListEmptyState, updateArchiveToggleButton as updateArchiveToggleButtonView, updateSidebarSummary as updateSidebarSummaryView } from './modules/conversation-list-view.js';
 import { baseVisibleConversations as filterBaseVisibleConversations, conversationMatchesTitle as matchesConversationTitle, isConversationArchived, normalizeConversationSearchQuery, sortConversations, visibleConversations as filterVisibleConversations } from './modules/conversation-list.js';
 import { searchConversationContent } from './modules/conversation-search.js';
+import { applyComposerAvailability, composerAvailabilityState } from './modules/composer-availability.js';
 import { clearComposerDraft as clearStoredComposerDraft, loadComposerDraft, saveComposerDraft as saveStoredComposerDraft } from './modules/composer-draft.js';
 import { autoResizeTextarea as resizeComposerTextarea, updateClearMessageInputButton as updateComposerClearButton } from './modules/composer-input.js';
 import { conversationTitle, formatConversationDate, formatMessageTimestamp } from './modules/conversation-format.js';
@@ -25,7 +26,7 @@ import './plugins/spot-order-card.js';
 import './plugins/spot-wallet-intent.js';
 
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
-const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-063';
+const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-064';
 const CLIENT_API_VERSION = 1;
 const elements = {
   loginScreen: document.querySelector('#loginScreen'),
@@ -890,23 +891,12 @@ function updateArchiveToggleButton() {
 }
 
 function updateComposerAvailability() {
-  const archived = isConversationArchived(activeConversation);
-  const hasConversation = Boolean(activeConversation?.id);
-  const disabled = isSendingMessage || archived || !hasConversation;
-  elements.messageInput.disabled = disabled;
-  elements.includeLocationInput.disabled = disabled;
-  elements.attachButton.disabled = disabled;
-  elements.sendButton.disabled = disabled;
+  applyComposerAvailability(elements, composerAvailabilityState({
+    archived: isConversationArchived(activeConversation),
+    hasConversation: Boolean(activeConversation?.id),
+    isSendingMessage,
+  }));
   updateModelPickerButtonState();
-  elements.sendButton.setAttribute('aria-label', isSendingMessage ? '전송 중' : '전송');
-  elements.sendButton.title = isSendingMessage ? '전송 중' : '전송';
-  if (archived) {
-    elements.messageInput.placeholder = '보관된 대화입니다. 대화를 이어가려면 아카이브를 해제하세요.';
-  } else if (!hasConversation) {
-    elements.messageInput.placeholder = '새 대화를 열거나 목록에서 대화를 선택하세요.';
-  } else {
-    elements.messageInput.placeholder = '메시지를 입력하세요';
-  }
 }
 
 function renderHome() {
