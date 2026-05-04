@@ -2,6 +2,7 @@ import { MAX_ATTACHMENTS, MAX_ATTACHMENT_BYTES, ALLOWED_ATTACHMENT_TYPES, format
 import { conversationTitle, formatConversationDate, formatMessageTimestamp } from './modules/conversation-format.js';
 import { applyDisplaySettings as applyDisplaySettingsToElements, applyTheme, syncNativeTheme } from './modules/display.js';
 import { canonicalMediaRefKey, isImageRef, isPlaceholderMediaRef, normalizeMediaRefPath, shortenFileName } from './modules/media.js';
+import { conversationIdFromPath, syncConversationUrl } from './modules/navigation.js';
 import { loadSettings, normalizeHistoryPageSize, randomDeviceId, saveSettings } from './modules/settings.js';
 import { applyStoredSidebarWidth, clampSidebarWidth, saveSidebarWidth, SIDEBAR_RESIZE_MEDIA } from './modules/sidebar-width.js';
 import { renderCodeBlockPlugin } from './plugins/plugin-registry.js';
@@ -10,7 +11,7 @@ import './plugins/spot-wallet-intent.js';
 
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
 const COMPOSER_DRAFT_KEY_PREFIX = 'openclaw-web-channel-composer-draft-v1';
-const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-045';
+const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-046';
 const CLIENT_API_VERSION = 1;
 const VERSION_CHECK_DISMISSED_KEY = 'openclaw-web-channel-version-dismissed-v1';
 const elements = {
@@ -162,40 +163,6 @@ const conversationSearchCache = new Map();
 let settingsPanelHistoryActive = false;
 let mobileDrawerHistoryActive = false;
 let authUser = null;
-
-function conversationIdFromPath(pathname = window.location.pathname) {
-  const match = pathname.match(/^\/chat\/([^/?#]+)/);
-  if (!match) {
-    return '';
-  }
-  try {
-    return decodeURIComponent(match[1]) || '';
-  } catch {
-    return '';
-  }
-}
-
-function conversationPath(conversationId) {
-  return `/chat/${encodeURIComponent(conversationId)}`;
-}
-
-function syncConversationUrl(conversationId, options = {}) {
-  if (!window.history?.pushState || !window.history?.replaceState) {
-    return;
-  }
-  const targetPath = conversationId ? conversationPath(conversationId) : '/';
-  const currentPath = window.location.pathname || '/';
-  if (currentPath === targetPath) {
-    return;
-  }
-  const url = new URL(window.location.href);
-  url.pathname = targetPath;
-  url.search = '';
-  url.hash = '';
-  const method = options.replace ? 'replaceState' : 'pushState';
-  window.history[method]({ conversationId: conversationId || '' }, '', url);
-}
-
 
 window.matchMedia?.('(prefers-color-scheme: light)').addEventListener?.('change', () => {
   if (!['light', 'dark'].includes(settings.themeMode)) {
