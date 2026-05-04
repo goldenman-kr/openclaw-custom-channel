@@ -13,7 +13,7 @@ import './plugins/spot-wallet-intent.js';
 
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
 const COMPOSER_DRAFT_KEY_PREFIX = 'openclaw-web-channel-composer-draft-v1';
-const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-049';
+const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-050';
 const CLIENT_API_VERSION = 1;
 const VERSION_CHECK_DISMISSED_KEY = 'openclaw-web-channel-version-dismissed-v1';
 const elements = {
@@ -1104,6 +1104,106 @@ function goHome(options = {}) {
   syncConversationUrl('', { replace: options.replaceUrl === true });
 }
 
+function renderConversationListEmptyState(message) {
+  const empty = document.createElement('p');
+  empty.className = 'conversation-empty';
+  empty.textContent = message;
+  elements.conversationList.append(empty);
+}
+
+function conversationListEmptyMessage(query) {
+  if (query) {
+    return '검색 결과가 없습니다.';
+  }
+  return showingArchived ? '보관된 대화가 없습니다.' : '대화가 없습니다.';
+}
+
+function closeConversationMenuAndRender() {
+  openConversationMenuId = null;
+  renderConversationList();
+}
+
+function createConversationSelectButton(conversation) {
+  const selectButton = document.createElement('button');
+  selectButton.type = 'button';
+  selectButton.className = 'conversation-select-button';
+  selectButton.addEventListener('click', () => selectConversation(conversation.id));
+
+  const title = document.createElement('span');
+  title.className = 'conversation-title';
+  title.textContent = conversationTitle(conversation);
+  const meta = document.createElement('span');
+  meta.className = 'conversation-meta';
+  meta.textContent = formatConversationDate(conversation.updated_at || conversation.created_at);
+  selectButton.append(title, meta);
+  return selectButton;
+}
+
+function createConversationMenuButton(conversation) {
+  const menuButton = document.createElement('button');
+  menuButton.type = 'button';
+  menuButton.className = 'conversation-menu-button ghost-button';
+  menuButton.setAttribute('aria-label', `${conversationTitle(conversation)} 메뉴`);
+  menuButton.setAttribute('aria-expanded', openConversationMenuId === conversation.id ? 'true' : 'false');
+  menuButton.textContent = '⋯';
+  menuButton.addEventListener('click', (event) => {
+    event.stopPropagation();
+    openConversationMenuId = openConversationMenuId === conversation.id ? null : conversation.id;
+    renderConversationList();
+  });
+  return menuButton;
+}
+
+function createConversationMenuAction(label, action, options = {}) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.textContent = label;
+  if (options.danger) {
+    button.className = 'danger-menu-item';
+  }
+  button.addEventListener('click', async (event) => {
+    event.stopPropagation();
+    closeConversationMenuAndRender();
+    await action();
+  });
+  return button;
+}
+
+function createConversationMenu(conversation) {
+  const menu = document.createElement('div');
+  menu.className = `conversation-menu${openConversationMenuId === conversation.id ? '' : ' hidden'}`;
+  menu.append(
+    createConversationMenuAction(conversation.pinned ? '상단고정 해제' : '상단고정', () => toggleConversationPinned(conversation.id)),
+    createConversationMenuAction(isConversationArchived(conversation) ? '아카이브 해제' : '아카이브', () => toggleConversationArchived(conversation.id)),
+    createConversationMenuAction('이름 변경', () => renameConversation(conversation.id)),
+    createConversationMenuAction('삭제', () => deleteConversation(conversation.id), { danger: true }),
+  );
+  return menu;
+}
+
+function createConversationMenuWrap(conversation) {
+  const menuWrap = document.createElement('div');
+  menuWrap.className = 'conversation-menu-wrap';
+  if (conversation.pinned) {
+    const pin = document.createElement('span');
+    pin.className = 'conversation-pin-icon';
+    pin.setAttribute('aria-label', '상단 고정됨');
+    pin.textContent = '📌';
+    menuWrap.append(pin);
+  }
+  menuWrap.append(createConversationMenuButton(conversation), createConversationMenu(conversation));
+  return menuWrap;
+}
+
+function createConversationListItem(conversation, activeId) {
+  const menuOpen = openConversationMenuId === conversation.id;
+  const item = document.createElement('div');
+  item.className = `conversation-item${conversation.id === activeId ? ' active' : ''}${menuOpen ? ' menu-open' : ''}`;
+  item.dataset.conversationId = conversation.id;
+  item.append(createConversationSelectButton(conversation), createConversationMenuWrap(conversation));
+  return item;
+}
+
 function renderConversationList() {
   updateSidebarSummary();
   if (!elements.conversationList) {
@@ -1111,107 +1211,19 @@ function renderConversationList() {
   }
   elements.conversationList.replaceChildren();
   if (!canUseApi()) {
-    const empty = document.createElement('p');
-    empty.className = 'conversation-empty';
-    empty.textContent = '로그인하면 대화 목록이 표시됩니다.';
-    elements.conversationList.append(empty);
+    renderConversationListEmptyState('로그인하면 대화 목록이 표시됩니다.');
     return;
   }
   updateArchiveToggleButton();
   const list = visibleConversations();
   const query = normalizedConversationSearchQuery();
   if (list.length === 0) {
-    const empty = document.createElement('p');
-    empty.className = 'conversation-empty';
-    empty.textContent = query ? '검색 결과가 없습니다.' : (showingArchived ? '보관된 대화가 없습니다.' : '대화가 없습니다.');
-    elements.conversationList.append(empty);
+    renderConversationListEmptyState(conversationListEmptyMessage(query));
     return;
   }
   const activeId = activeConversationId();
   for (const conversation of list) {
-    const menuOpen = openConversationMenuId === conversation.id;
-    const item = document.createElement('div');
-    item.className = `conversation-item${conversation.id === activeId ? ' active' : ''}${menuOpen ? ' menu-open' : ''}`;
-    item.dataset.conversationId = conversation.id;
-
-    const selectButton = document.createElement('button');
-    selectButton.type = 'button';
-    selectButton.className = 'conversation-select-button';
-    selectButton.addEventListener('click', () => selectConversation(conversation.id));
-
-    const title = document.createElement('span');
-    title.className = 'conversation-title';
-    title.textContent = conversationTitle(conversation);
-    const meta = document.createElement('span');
-    meta.className = 'conversation-meta';
-    meta.textContent = formatConversationDate(conversation.updated_at || conversation.created_at);
-    selectButton.append(title, meta);
-
-    const menuWrap = document.createElement('div');
-    menuWrap.className = 'conversation-menu-wrap';
-    if (conversation.pinned) {
-      const pin = document.createElement('span');
-      pin.className = 'conversation-pin-icon';
-      pin.setAttribute('aria-label', '상단 고정됨');
-      pin.textContent = '📌';
-      menuWrap.append(pin);
-    }
-    const menuButton = document.createElement('button');
-    menuButton.type = 'button';
-    menuButton.className = 'conversation-menu-button ghost-button';
-    menuButton.setAttribute('aria-label', `${conversationTitle(conversation)} 메뉴`);
-    menuButton.setAttribute('aria-expanded', openConversationMenuId === conversation.id ? 'true' : 'false');
-    menuButton.textContent = '⋯';
-    menuButton.addEventListener('click', (event) => {
-      event.stopPropagation();
-      openConversationMenuId = openConversationMenuId === conversation.id ? null : conversation.id;
-      renderConversationList();
-    });
-
-    const menu = document.createElement('div');
-    menu.className = `conversation-menu${openConversationMenuId === conversation.id ? '' : ' hidden'}`;
-    const pinButton = document.createElement('button');
-    pinButton.type = 'button';
-    pinButton.textContent = conversation.pinned ? '상단고정 해제' : '상단고정';
-    pinButton.addEventListener('click', async (event) => {
-      event.stopPropagation();
-      openConversationMenuId = null;
-      renderConversationList();
-      await toggleConversationPinned(conversation.id);
-    });
-    const archiveButton = document.createElement('button');
-    archiveButton.type = 'button';
-    archiveButton.textContent = isConversationArchived(conversation) ? '아카이브 해제' : '아카이브';
-    archiveButton.addEventListener('click', async (event) => {
-      event.stopPropagation();
-      openConversationMenuId = null;
-      renderConversationList();
-      await toggleConversationArchived(conversation.id);
-    });
-    const renameButton = document.createElement('button');
-    renameButton.type = 'button';
-    renameButton.textContent = '이름 변경';
-    renameButton.addEventListener('click', async (event) => {
-      event.stopPropagation();
-      openConversationMenuId = null;
-      renderConversationList();
-      await renameConversation(conversation.id);
-    });
-    const deleteButton = document.createElement('button');
-    deleteButton.type = 'button';
-    deleteButton.className = 'danger-menu-item';
-    deleteButton.textContent = '삭제';
-    deleteButton.addEventListener('click', async (event) => {
-      event.stopPropagation();
-      openConversationMenuId = null;
-      renderConversationList();
-      await deleteConversation(conversation.id);
-    });
-    menu.append(pinButton, archiveButton, renameButton, deleteButton);
-    menuWrap.append(menuButton, menu);
-
-    item.append(selectButton, menuWrap);
-    elements.conversationList.append(item);
+    elements.conversationList.append(createConversationListItem(conversation, activeId));
   }
 }
 
