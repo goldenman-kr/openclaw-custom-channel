@@ -1,4 +1,4 @@
-import { MAX_ATTACHMENTS, MAX_ATTACHMENT_BYTES, ALLOWED_ATTACHMENT_TYPES, inferAttachmentMimeType } from './modules/attachments.js';
+import { MAX_ATTACHMENTS, MAX_ATTACHMENT_BYTES, ALLOWED_ATTACHMENT_TYPES, formatBytes, inferAttachmentMimeType } from './modules/attachments.js';
 import { renderCodeBlockPlugin } from './plugins/plugin-registry.js';
 import './plugins/spot-order-card.js';
 import './plugins/spot-wallet-intent.js';
@@ -330,19 +330,6 @@ function applySettingsToForm() {
   updateNotificationButton();
   applyTheme(settings.themeMode || 'dark');
   applyDisplaySettings();
-}
-
-function formatBytes(bytes) {
-  if (!Number.isFinite(bytes)) {
-    return '';
-  }
-  if (bytes >= 1024 * 1024) {
-    return `${(bytes / 1024 / 1024).toFixed(1)}MB`;
-  }
-  if (bytes >= 1024) {
-    return `${Math.round(bytes / 1024)}KB`;
-  }
-  return `${bytes}B`;
 }
 
 function notificationsSupported() {
