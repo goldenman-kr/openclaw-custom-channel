@@ -1,5 +1,6 @@
 import { MAX_ATTACHMENTS, MAX_ATTACHMENT_BYTES, ALLOWED_ATTACHMENT_TYPES, formatBytes, inferAttachmentMimeType } from './modules/attachments.js';
 import { baseVisibleConversations as filterBaseVisibleConversations, conversationMatchesTitle as matchesConversationTitle, isConversationArchived, normalizeConversationSearchQuery, sortConversations, visibleConversations as filterVisibleConversations } from './modules/conversation-list.js';
+import { searchConversationContent } from './modules/conversation-search.js';
 import { conversationTitle, formatConversationDate, formatMessageTimestamp } from './modules/conversation-format.js';
 import { applyDisplaySettings as applyDisplaySettingsToElements, applyTheme, normalizeFontSize, syncNativeTheme } from './modules/display.js';
 import { canonicalMediaRefKey, isImageRef, isPlaceholderMediaRef, normalizeMediaRefPath, shortenFileName } from './modules/media.js';
@@ -12,7 +13,7 @@ import './plugins/spot-wallet-intent.js';
 
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
 const COMPOSER_DRAFT_KEY_PREFIX = 'openclaw-web-channel-composer-draft-v1';
-const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-048';
+const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-049';
 const CLIENT_API_VERSION = 1;
 const VERSION_CHECK_DISMISSED_KEY = 'openclaw-web-channel-version-dismissed-v1';
 const elements = {
@@ -955,68 +956,21 @@ function baseVisibleConversations() {
   return filterBaseVisibleConversations(conversations, showingArchived);
 }
 
-async function fetchConversationHistoryMessages(conversationId) {
-  const response = await apiFetch('/v1/history', {
-    params: { conversation_id: conversationId },
-    headers: await historyHeaders(),
-  });
-  if (!response.ok) {
-    return [];
-  }
-  const body = await response.json().catch(() => null);
-  return Array.isArray(body?.messages) ? body.messages : [];
-}
-
-async function searchConversationContentOnServer(query) {
-  const response = await apiFetch('/v1/conversations/search', {
-    params: {
-      query,
-      ...(showingArchived ? { include_archived: '1' } : {}),
-    },
-  });
-  if (!response.ok) {
-    throw new Error(`Conversation search failed: ${response.status}`);
-  }
-  const body = await response.json().catch(() => null);
-  return new Set(Array.isArray(body?.conversation_ids) ? body.conversation_ids : []);
-}
-
-async function searchConversationContentInBrowser(runId, query) {
-  const candidates = baseVisibleConversations().filter((conversation) => !conversationMatchesTitle(conversation, query));
-  const nextMatches = new Set();
-  let index = 0;
-  const worker = async () => {
-    while (index < candidates.length && runId === conversationSearchRunId) {
-      const conversation = candidates[index++];
-      const cacheKey = `${conversation.id}:${query}`;
-      let matched = conversationSearchCache.get(cacheKey);
-      if (matched === undefined) {
-        const messages = await fetchConversationHistoryMessages(conversation.id);
-        const haystack = messages.map((message) => typeof message?.text === 'string' ? message.text : '').join('\n').toLocaleLowerCase('ko-KR');
-        matched = haystack.includes(query);
-        conversationSearchCache.set(cacheKey, matched);
-      }
-      if (matched) {
-        nextMatches.add(conversation.id);
-      }
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(4, candidates.length) }, worker));
-  return nextMatches;
-}
-
 async function runConversationContentSearch(runId, query) {
   if (!query || !canUseApi()) {
     conversationContentMatches = new Set();
     renderConversationList();
     return;
   }
-  let nextMatches;
-  try {
-    nextMatches = await searchConversationContentOnServer(query);
-  } catch {
-    nextMatches = await searchConversationContentInBrowser(runId, query);
-  }
+  const nextMatches = await searchConversationContent(runId, query, {
+    apiFetch,
+    historyHeaders,
+    showingArchived,
+    baseVisibleConversations,
+    conversationMatchesTitle,
+    cache: conversationSearchCache,
+    currentRunId: () => conversationSearchRunId,
+  });
   if (runId !== conversationSearchRunId) {
     return;
   }
