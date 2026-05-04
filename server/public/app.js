@@ -1,5 +1,6 @@
 import { MAX_ATTACHMENTS, MAX_ATTACHMENT_BYTES, ALLOWED_ATTACHMENT_TYPES, formatBytes, inferAttachmentMimeType } from './modules/attachments.js';
 import { createConversationListItem } from './modules/conversation-list-item.js';
+import { conversationListEmptyMessage as getConversationListEmptyMessage, createConversationListEmptyState, updateArchiveToggleButton as updateArchiveToggleButtonView, updateSidebarSummary as updateSidebarSummaryView } from './modules/conversation-list-view.js';
 import { baseVisibleConversations as filterBaseVisibleConversations, conversationMatchesTitle as matchesConversationTitle, isConversationArchived, normalizeConversationSearchQuery, sortConversations, visibleConversations as filterVisibleConversations } from './modules/conversation-list.js';
 import { searchConversationContent } from './modules/conversation-search.js';
 import { clearComposerDraft as clearStoredComposerDraft, loadComposerDraft, saveComposerDraft as saveStoredComposerDraft } from './modules/composer-draft.js';
@@ -23,7 +24,7 @@ import './plugins/spot-order-card.js';
 import './plugins/spot-wallet-intent.js';
 
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
-const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-061';
+const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-062';
 const CLIENT_API_VERSION = 1;
 const elements = {
   loginScreen: document.querySelector('#loginScreen'),
@@ -875,29 +876,18 @@ function currentUserDisplayName() {
 }
 
 function updateSidebarSummary() {
-  if (!elements.sidebarOwnerTitle || !elements.sidebarConversationCount) {
-    return;
-  }
-  if (!canUseApi()) {
-    elements.sidebarOwnerTitle.textContent = '대화';
-    elements.sidebarConversationCount.textContent = '로그인이 필요합니다';
-    return;
-  }
-  const ownerName = currentUserDisplayName();
-  const count = baseVisibleConversations().length;
-  elements.sidebarOwnerTitle.textContent = `${ownerName}님의 대화`;
-  elements.sidebarConversationCount.textContent = showingArchived ? `보관함 ${count}개` : `대화 ${count}개`;
+  updateSidebarSummaryView({
+    ownerTitle: elements.sidebarOwnerTitle,
+    countNode: elements.sidebarConversationCount,
+    canUseApi: canUseApi(),
+    ownerName: currentUserDisplayName(),
+    count: baseVisibleConversations().length,
+    showingArchived,
+  });
 }
 
 function updateArchiveToggleButton() {
-  if (!elements.archiveToggleButton) {
-    return;
-  }
-  const label = elements.archiveToggleButton.querySelector('.sidebar-button-label');
-  if (label) {
-    label.textContent = showingArchived ? '나가기' : '보관함';
-  }
-  elements.archiveToggleButton.setAttribute('aria-pressed', showingArchived ? 'true' : 'false');
+  updateArchiveToggleButtonView(elements.archiveToggleButton, showingArchived);
 }
 
 function updateComposerAvailability() {
@@ -955,17 +945,11 @@ function goHome(options = {}) {
 }
 
 function renderConversationListEmptyState(message) {
-  const empty = document.createElement('p');
-  empty.className = 'conversation-empty';
-  empty.textContent = message;
-  elements.conversationList.append(empty);
+  elements.conversationList.append(createConversationListEmptyState(message));
 }
 
 function conversationListEmptyMessage(query) {
-  if (query) {
-    return '검색 결과가 없습니다.';
-  }
-  return showingArchived ? '보관된 대화가 없습니다.' : '대화가 없습니다.';
+  return getConversationListEmptyMessage({ query, showingArchived });
 }
 
 function renderConversationList() {
