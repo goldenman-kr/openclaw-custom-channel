@@ -115,7 +115,7 @@ html[data-theme="system"] .danger-button { color: #991b1b; }
   align-items: center;
   gap: 4px;
   margin: 0;
-  padding: max(8px, env(safe-area-inset-top)) max(0px, env(safe-area-inset-right)) 8px max(0px, env(safe-area-inset-left));
+  padding: max(8px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right)) 8px max(8px, env(safe-area-inset-left));
   border-bottom: 1px solid var(--border);
   background: rgba(21, 21, 21, 0.82);
   backdrop-filter: blur(18px);

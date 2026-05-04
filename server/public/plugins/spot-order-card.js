@@ -52,6 +52,21 @@ async function requestAccounts() {
   return window.ethereum.request({ method: 'eth_requestAccounts' });
 }
 
+async function revokeWalletPermissionsIfSupported() {
+  if (!window.ethereum?.request) {
+    return false;
+  }
+  try {
+    await window.ethereum.request({
+      method: 'wallet_revokePermissions',
+      params: [{ eth_accounts: {} }],
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function switchChain(chainId) {
   if (!window.ethereum?.request) {
     throw new Error('브라우저 지갑을 찾지 못했습니다.');
@@ -212,20 +227,37 @@ function renderSpotOrderCard({ parent, codeText, context, fallback }) {
   actions.className = 'spot-plugin-actions';
 
   let connectedAccount = '';
-  actions.append(
-    createButton('지갑 연결', async () => {
-      try {
-        const accounts = await requestAccounts();
-        connectedAccount = accounts?.[0] || '';
-        if (normalizeAddress(connectedAccount) && normalizeAddress(swapper) && normalizeAddress(connectedAccount) !== normalizeAddress(swapper)) {
-          setStatus(status, `연결 지갑과 주문 swapper가 다릅니다. 연결=${connectedAccount}, swapper=${swapper}`, 'error');
-          return;
-        }
-        setStatus(status, connectedAccount ? `연결됨: ${connectedAccount}` : '연결된 계정이 없습니다.', connectedAccount ? 'ok' : 'warn');
-      } catch (connectError) {
-        setStatus(status, connectError instanceof Error ? connectError.message : String(connectError), 'error');
+  let connectButton;
+  function updateConnectButton() {
+    if (connectButton) {
+      connectButton.textContent = connectedAccount ? '연결 끊기' : '지갑 연결';
+    }
+  }
+  connectButton = createButton('지갑 연결', async () => {
+    try {
+      if (connectedAccount) {
+        const revoked = await revokeWalletPermissionsIfSupported();
+        connectedAccount = '';
+        updateConnectButton();
+        setStatus(status, revoked ? '지갑 연결을 해제했습니다.' : '이 카드의 지갑 연결 상태를 해제했습니다.', 'ok');
+        return;
       }
-    }, { disabled: mobileUnsupported }),
+      const accounts = await requestAccounts();
+      connectedAccount = accounts?.[0] || '';
+      if (normalizeAddress(connectedAccount) && normalizeAddress(swapper) && normalizeAddress(connectedAccount) !== normalizeAddress(swapper)) {
+        setStatus(status, `연결 지갑과 주문 swapper가 다릅니다. 연결=${connectedAccount}, swapper=${swapper}`, 'error');
+        connectedAccount = '';
+        updateConnectButton();
+        return;
+      }
+      updateConnectButton();
+      setStatus(status, connectedAccount ? `연결됨: ${connectedAccount}` : '연결된 계정이 없습니다.', connectedAccount ? 'ok' : 'warn');
+    } catch (connectError) {
+      setStatus(status, connectError instanceof Error ? connectError.message : String(connectError), 'error');
+    }
+  }, { disabled: mobileUnsupported });
+  actions.append(
+    connectButton,
     createButton('주소 복사', async () => {
       if (!connectedAccount) {
         setStatus(status, '먼저 지갑을 연결하세요.', 'warn');
