@@ -259,6 +259,52 @@ test("stores assistant MEDIA refs as conversation attachments", async () => {
   ]);
 });
 
+
+test("ignores MEDIA refs inside fenced code blocks", async () => {
+  const mediaDir = await mkdtemp(join(tmpdir(), "openclaw-code-fence-media-"));
+  const imagePath = join(mediaDir, "cat.png");
+  await writeFile(imagePath, "png");
+  const patches: Array<{ text?: string; attachments?: unknown[] }> = [];
+  const conversationStore = {
+    ...unusedConversationStore(),
+    updateMessage(_id: string, patch: { text?: string; attachments?: unknown[] }) {
+      patches.push(patch);
+      return null;
+    },
+  };
+  const runtime: ChatRuntime = {
+    async sendMessage() {
+      return { reply: `raw 답신입니다.\n\n\`\`\`text\nMEDIA:${imagePath}\n\`\`\`` };
+    },
+  };
+  const job: MessageJob = {
+    id: "job_runner_code_fence_media_test",
+    sessionId: "session-runner-code-fence-media-test",
+    conversationId: "conv-runner-code-fence-media-test",
+    state: "queued",
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+
+  const runner = new MessageJobRunner({
+    chatRuntime: runtime,
+    sessionStore: new InMemorySessionStore(),
+    validApiKeys: new Set(["test-key"]),
+    conversationStore,
+    historyStore: memoryHistoryStore(),
+    shouldPersistMessage: () => true,
+    updateJob(jobToUpdate, patch) {
+      Object.assign(jobToUpdate, patch);
+    },
+  });
+
+  runner.enqueue(job, { authorization: "Bearer test-key" }, { message: "raw code 보여줘" });
+
+  await waitUntil(() => job.state === "completed");
+  assert.equal(patches.at(-1)?.text, `raw 답신입니다.\n\n\`\`\`text\nMEDIA:${imagePath}\n\`\`\``);
+  assert.deepEqual(patches.at(-1)?.attachments, []);
+});
+
 test("does not attach mentioned existing document paths without explicit MEDIA refs", async () => {
   const mediaDir = await mkdtemp(join(tmpdir(), "openclaw-mentioned-media-"));
   const actualPath = join(mediaDir, "예수는_나의_힘이요_A4_통일_출력용.pdf");

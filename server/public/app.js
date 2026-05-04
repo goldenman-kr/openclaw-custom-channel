@@ -2,7 +2,7 @@ const STORAGE_KEY = 'openclaw-web-channel-settings-v1';
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
 const COMPOSER_DRAFT_KEY_PREFIX = 'openclaw-web-channel-composer-draft-v1';
 const SIDEBAR_WIDTH_KEY = 'openclaw-web-channel-sidebar-width-v1';
-const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-03-030';
+const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-029';
 const CLIENT_API_VERSION = 1;
 const VERSION_CHECK_DISMISSED_KEY = 'openclaw-web-channel-version-dismissed-v1';
 const MAX_ATTACHMENTS = 3;
@@ -2552,13 +2552,24 @@ function startHistoryPolling() {
 function extractMediaRefs(text) {
   const refs = [];
   const visibleLines = [];
+  let inCodeBlock = false;
 
   for (const line of text.split('\n')) {
-    const mediaMatch = line.match(/^\s*`{0,3}\s*MEDIA:\s*(.+?)\s*`{0,3}\s*$/);
-    if (mediaMatch) {
-      refs.push(mediaMatch[1].replace(/`+$/g, '').trim());
+    const fenceMatch = line.match(/^\s*```/);
+    if (fenceMatch) {
+      inCodeBlock = !inCodeBlock;
+      visibleLines.push(line);
       continue;
     }
+
+    if (!inCodeBlock) {
+      const mediaMatch = line.match(/^\s*MEDIA:\s*(.+?)\s*$/);
+      if (mediaMatch) {
+        refs.push(mediaMatch[1].trim());
+        continue;
+      }
+    }
+
     visibleLines.push(line);
   }
 
@@ -2670,6 +2681,7 @@ function handleMediaViewerPointerDown(event) {
     return;
   }
   event.preventDefault();
+  elements.mediaViewer.classList.add('gesturing');
   elements.mediaViewerImage.setPointerCapture?.(event.pointerId);
   mediaViewerPointers.set(event.pointerId, event);
   beginMediaViewerGesture();
@@ -2690,19 +2702,35 @@ function handleMediaViewerPointerEnd(event) {
   }
   mediaViewerPointers.delete(event.pointerId);
   elements.mediaViewerImage.releasePointerCapture?.(event.pointerId);
+  if (mediaViewerPointers.size === 0) {
+    elements.mediaViewer.classList.remove('gesturing');
+  }
   beginMediaViewerGesture();
 }
 
 function handleMediaViewerWheel(event) {
-  if (!event.ctrlKey && !event.metaKey) {
+  if (elements.mediaViewer.classList.contains('hidden')) {
     return;
   }
   event.preventDefault();
-  const nextScale = clamp(mediaViewerTransform.scale + (event.deltaY < 0 ? 0.2 : -0.2), 1, 5);
+  const nextScale = clamp(mediaViewerTransform.scale + (event.deltaY < 0 ? 0.25 : -0.25), 1, 5);
   mediaViewerTransform = {
     scale: nextScale,
     x: nextScale <= 1.01 ? 0 : mediaViewerTransform.x,
     y: nextScale <= 1.01 ? 0 : mediaViewerTransform.y,
+  };
+  applyMediaViewerTransform();
+}
+
+function toggleMediaViewerZoom() {
+  if (elements.mediaViewer.classList.contains('hidden')) {
+    return;
+  }
+  const nextScale = mediaViewerTransform.scale > 1.01 ? 1 : 2.5;
+  mediaViewerTransform = {
+    scale: nextScale,
+    x: 0,
+    y: 0,
   };
   applyMediaViewerTransform();
 }
@@ -4336,7 +4364,7 @@ elements.mediaViewerImage.addEventListener('pointermove', handleMediaViewerPoint
 elements.mediaViewerImage.addEventListener('pointerup', handleMediaViewerPointerEnd);
 elements.mediaViewerImage.addEventListener('pointercancel', handleMediaViewerPointerEnd);
 elements.mediaViewerImage.addEventListener('wheel', handleMediaViewerWheel, { passive: false });
-elements.mediaViewerImage.addEventListener('dblclick', resetMediaViewerZoom);
+elements.mediaViewerImage.addEventListener('dblclick', toggleMediaViewerZoom);
 elements.mediaViewer.addEventListener('click', (event) => {
   if (event.target?.hasAttribute?.('data-media-viewer-close')) {
     closeMediaViewer();
@@ -4454,6 +4482,6 @@ elements.messageInput.addEventListener('keydown', (event) => {
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-03-030').catch(() => {});
+    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-04-029').catch(() => {});
   });
 }

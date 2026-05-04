@@ -850,6 +850,7 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); }
 
 .media-viewer-panel {
   position: relative;
+  box-sizing: border-box;
   width: 100vw;
   height: 100dvh;
   display: grid;
@@ -890,10 +891,10 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); }
 
 .media-viewer img {
   display: block;
-  width: 100%;
-  height: 100%;
-  max-width: 100%;
-  max-height: 100%;
+  width: auto;
+  height: auto;
+  max-width: calc(100vw - 24px);
+  max-height: calc(100dvh - 104px - env(safe-area-inset-top) - env(safe-area-inset-bottom));
   object-fit: contain;
   border-radius: 0;
   background: transparent;
@@ -905,6 +906,7 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); }
   -webkit-user-drag: none;
 }
 
+.media-viewer.gesturing img,
 .media-viewer img.zoomed {
   cursor: grab;
   transition: none;

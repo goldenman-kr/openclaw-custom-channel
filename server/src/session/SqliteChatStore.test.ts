@@ -147,6 +147,37 @@ test("orders user messages before assistant placeholders with identical timestam
 });
 
 
+test("returns 300 recent messages by default for multi-day conversations", () => {
+  const dir = tempDir();
+  const store = new SqliteChatStore(join(dir, "chat.sqlite"));
+  try {
+    const conversation = store.createConversation({
+      title: "긴 대화",
+      openclawSessionId: "web-long-history-test",
+      now: "2026-04-29T00:00:00.000Z",
+    });
+
+    for (let i = 0; i < 350; i += 1) {
+      store.addMessage({
+        id: `msg_long_history_${i.toString().padStart(3, "0")}`,
+        conversationId: conversation.id,
+        role: i % 2 === 0 ? "user" : "assistant",
+        text: `message ${i}`,
+        createdAt: new Date(Date.parse("2026-04-29T00:01:00.000Z") + i * 1000).toISOString(),
+      });
+    }
+
+    const messages = store.listMessages(conversation.id);
+    assert.equal(messages.length, 300);
+    assert.equal(messages[0]?.text, "message 50");
+    assert.equal(messages.at(-1)?.text, "message 349");
+  } finally {
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+
 test("updates conversation version without moving message order", () => {
   const dir = tempDir();
   const store = new SqliteChatStore(join(dir, "chat.sqlite"));
