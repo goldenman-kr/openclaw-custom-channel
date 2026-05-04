@@ -4,6 +4,7 @@ import { searchConversationContent } from './modules/conversation-search.js';
 import { clearComposerDraft as clearStoredComposerDraft, loadComposerDraft, saveComposerDraft as saveStoredComposerDraft } from './modules/composer-draft.js';
 import { conversationTitle, formatConversationDate, formatMessageTimestamp } from './modules/conversation-format.js';
 import { applyDisplaySettings as applyDisplaySettingsToElements, applyTheme, normalizeFontSize, syncNativeTheme } from './modules/display.js';
+import { fetchHistory as fetchHistoryFromApi, fetchHistoryMeta as fetchHistoryMetaFromApi } from './modules/history-api.js';
 import { isPendingHistoryMessage, isPlaceholderPendingText, isRunningJobHistoryMessage, shouldRerenderHistory as shouldRerenderHistorySnapshot } from './modules/history-state.js';
 import { canonicalMediaRefKey, isImageRef, isPlaceholderMediaRef, normalizeMediaRefPath, shortenFileName } from './modules/media.js';
 import { conversationIdFromPath, syncConversationUrl } from './modules/navigation.js';
@@ -15,7 +16,7 @@ import './plugins/spot-order-card.js';
 import './plugins/spot-wallet-intent.js';
 
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
-const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-053';
+const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-054';
 const CLIENT_API_VERSION = 1;
 const VERSION_CHECK_DISMISSED_KEY = 'openclaw-web-channel-version-dismissed-v1';
 const elements = {
@@ -1824,30 +1825,24 @@ async function continueInNewSession() {
 }
 
 async function fetchHistory() {
-  const conversation = await ensureActiveConversation();
-  const response = await apiFetch('/v1/history', {
-    params: { conversation_id: conversation.id, limit: activeHistoryLimit },
-    headers: await historyHeaders(),
+  const body = await fetchHistoryFromApi({
+    apiFetch,
+    historyHeaders,
+    ensureActiveConversation,
+    limit: activeHistoryLimit,
   });
-  if (!response.ok) {
-    throw new Error(`대화 기록을 불러오지 못했습니다: HTTP ${response.status}`);
-  }
-  const body = await response.json();
   lastHistoryVersion = body.version || lastHistoryVersion;
-  lastHistoryHasMore = Boolean(body.hasMore);
-  return Array.isArray(body.messages) ? body.messages : [];
+  lastHistoryHasMore = body.hasMore;
+  return body.messages;
 }
 
 async function fetchHistoryMeta() {
-  const conversation = await ensureActiveConversation();
-  const response = await apiFetch('/v1/history', {
-    params: { meta: '1', conversation_id: conversation.id, limit: activeHistoryLimit },
-    headers: await historyHeaders(),
+  return fetchHistoryMetaFromApi({
+    apiFetch,
+    historyHeaders,
+    ensureActiveConversation,
+    limit: activeHistoryLimit,
   });
-  if (!response.ok) {
-    throw new Error(`대화 기록 상태를 확인하지 못했습니다: HTTP ${response.status}`);
-  }
-  return response.json();
 }
 
 function renderHistoryLoadMoreControl() {
