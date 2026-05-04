@@ -19,6 +19,7 @@ import { canonicalMediaRefKey, isImageRef, isPlaceholderMediaRef, normalizeMedia
 import { renderModelPicker as renderModelPickerView, updateModelPickerButtonState as updateModelPickerButtonStateView } from './modules/model-picker.js';
 import { closeDrawer, drawerSwipeGesture, isDesktopLayout as isDesktopViewport, isDrawerOpen, openDrawer, shouldIgnoreDrawerSwipe as shouldIgnoreDrawerSwipeTarget, toggleDesktopSidebar } from './modules/mobile-drawer.js';
 import { conversationIdFromPath, syncConversationUrl } from './modules/navigation.js';
+import { openSettingsPanel as openSettingsPanelView, closeSettingsPanel as closeSettingsPanelView } from './modules/settings-panel.js';
 import { loadSettings, normalizeHistoryPageSize, randomDeviceId, saveSettings } from './modules/settings.js';
 import { isNearBottom as isMessagesNearBottom, hideMessagesScrollIndicator, hideScrollToLatestButton as hideScrollButton, showScrollToLatestButton as showScrollButton, updateMessagesScrollIndicator as updateMessagesScrollIndicatorUi } from './modules/scroll-ui.js';
 import { applyStoredSidebarWidth, clampSidebarWidth, saveSidebarWidth, SIDEBAR_RESIZE_MEDIA } from './modules/sidebar-width.js';
@@ -31,7 +32,7 @@ import './plugins/spot-order-card.js';
 import './plugins/spot-wallet-intent.js';
 
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
-const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-069';
+const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-070';
 const CLIENT_API_VERSION = 1;
 const elements = {
   loginScreen: document.querySelector('#loginScreen'),
@@ -3812,11 +3813,9 @@ function persistSettingsFromForm(options = {}) {
 }
 
 function openSettingsPanel(options = {}) {
-  if (!elements.settingsPanel || !elements.settingsPanel.classList.contains('hidden')) {
+  if (!openSettingsPanelView(elements.settingsPanel)) {
     return;
   }
-  elements.settingsPanel.classList.remove('hidden');
-  document.body.classList.add('settings-open');
   if (options.pushHistory === false || settingsPanelHistoryActive || !window.history?.pushState) {
     return;
   }
@@ -3827,12 +3826,11 @@ function openSettingsPanel(options = {}) {
 function closeSettingsPanel(options = {}) {
   if (!elements.settingsPanel || elements.settingsPanel.classList.contains('hidden')) {
     settingsPanelHistoryActive = false;
-    document.body.classList.remove('settings-open');
+    closeSettingsPanelView(elements.settingsPanel);
     return;
   }
   persistSettingsFromForm({ silent: true });
-  elements.settingsPanel.classList.add('hidden');
-  document.body.classList.remove('settings-open');
+  closeSettingsPanelView(elements.settingsPanel);
   if (options.syncHistory && settingsPanelHistoryActive && window.history?.back) {
     settingsPanelHistoryActive = false;
     window.history.back();
