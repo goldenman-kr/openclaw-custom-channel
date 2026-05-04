@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { ErrorResponseDto } from "../contracts/apiContractV1.js";
 import type { AuthContext } from "./authRoutes.js";
-import { conversationHistoryResponse } from "./conversationRoutes.js";
+import { conversationHistoryResponse, historyLimitFromUrl } from "./conversationRoutes.js";
 import type { HistoryAttachment, HistoryMessage, HistoryStore } from "../session/HistoryStore.js";
 import type { ConversationRecord, ConversationStore, MessageStore } from "../session/SqliteChatStore.js";
 
@@ -96,7 +96,7 @@ export async function handleHistoryRoute(
 
   if (request.method === "GET") {
     if (queryConversation) {
-      const body = conversationHistoryResponse(queryConversation, deps.conversationStore);
+      const body = conversationHistoryResponse(queryConversation, deps.conversationStore, { limit: historyLimitFromUrl(url) });
       if (url.searchParams.get("meta") === "1") {
         deps.sendJson(response, 200, { version: body.version, size: body.size, mtimeMs: body.mtimeMs, conversation: body.conversation });
         return true;

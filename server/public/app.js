@@ -2,10 +2,11 @@ const STORAGE_KEY = 'openclaw-web-channel-settings-v1';
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
 const COMPOSER_DRAFT_KEY_PREFIX = 'openclaw-web-channel-composer-draft-v1';
 const SIDEBAR_WIDTH_KEY = 'openclaw-web-channel-sidebar-width-v1';
-const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-029';
+const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-031';
 const CLIENT_API_VERSION = 1;
 const VERSION_CHECK_DISMISSED_KEY = 'openclaw-web-channel-version-dismissed-v1';
 const MAX_ATTACHMENTS = 3;
+const HISTORY_PAGE_SIZE_OPTIONS = [100, 200, 300, 400, 500];
 const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
 const ALLOWED_ATTACHMENT_TYPES = new Set([
   'image/jpeg',
@@ -66,6 +67,8 @@ const elements = {
   floatingActionToggle: document.querySelector('#floatingActionToggle'),
   floatingSettingsButton: document.querySelector('#floatingSettingsButton'),
   floatingRefreshButton: document.querySelector('#floatingRefreshButton'),
+  floatingScrollTopButton: document.querySelector('#floatingScrollTopButton'),
+  floatingScrollBottomButton: document.querySelector('#floatingScrollBottomButton'),
   continueNewSessionButton: document.querySelector('#continueNewSessionButton'),
   scrollToLatestButton: document.querySelector('#scrollToLatestButton'),
   sidebarSettingsButton: document.querySelector('#sidebarSettingsButton'),
@@ -101,6 +104,7 @@ const elements = {
   autoLocationOnHereInput: document.querySelector('#autoLocationOnHereInput'),
   fontSizeInput: document.querySelector('#fontSizeInput'),
   fontSizeValue: document.querySelector('#fontSizeValue'),
+  historyPageSizeInput: document.querySelector('#historyPageSizeInput'),
   saveSettingsButton: document.querySelector('#saveSettingsButton'),
   healthCheckButton: document.querySelector('#healthCheckButton'),
   resetPasswordButton: document.querySelector('#resetPasswordButton'),
@@ -146,6 +150,15 @@ function slashCommandUsesCurrentLocation(message) {
   return args.join(' ').includes('여기');
 }
 
+function normalizeHistoryPageSize(value) {
+  const size = Number(value);
+  if (!Number.isFinite(size)) {
+    return 300;
+  }
+  const rounded = Math.round(size / 100) * 100;
+  return HISTORY_PAGE_SIZE_OPTIONS.includes(rounded) ? rounded : 300;
+}
+
 function loadSettings() {
   const fallback = {
     apiUrl: window.location.origin,
@@ -157,6 +170,7 @@ function loadSettings() {
     sessionNonce: '',
     lastActiveConversationId: '',
     autoLocationOnHere: true,
+    historyPageSize: 300,
   };
 
   try {
@@ -210,6 +224,9 @@ let isSendingMessage = false;
 let selectedAttachments = [];
 let composerDragDepth = 0;
 let lastHistoryVersion = null;
+let activeHistoryLimit = normalizeHistoryPageSize(settings.historyPageSize);
+let lastHistoryHasMore = false;
+let loadingOlderHistory = false;
 let activeConversation = null;
 let openConversationMenuId = null;
 let floatingActionsExpanded = false;
@@ -342,6 +359,10 @@ function applySettingsToForm() {
   }
   if (elements.autoLocationOnHereInput) {
     elements.autoLocationOnHereInput.checked = settings.autoLocationOnHere !== false;
+  }
+  if (elements.historyPageSizeInput) {
+    settings.historyPageSize = normalizeHistoryPageSize(settings.historyPageSize);
+    elements.historyPageSizeInput.value = String(settings.historyPageSize);
   }
   updateNotificationButton();
   applyTheme(settings.themeMode || 'dark');
@@ -620,7 +641,8 @@ function readSettingsFromForm() {
   const themeMode = elements.themeModeInput?.value || settings.themeMode || 'dark';
   const fontSize = normalizeFontSize(elements.fontSizeInput?.value || settings.fontSize);
   const autoLocationOnHere = elements.autoLocationOnHereInput ? elements.autoLocationOnHereInput.checked : settings.autoLocationOnHere !== false;
-  return { ...settings, apiUrl, apiKey, deviceId, themeMode, fontSize, autoLocationOnHere };
+  const historyPageSize = normalizeHistoryPageSize(elements.historyPageSizeInput?.value || settings.historyPageSize);
+  return { ...settings, apiUrl, apiKey, deviceId, themeMode, fontSize, autoLocationOnHere, historyPageSize };
 }
 
 function setStatus(message) {
@@ -1247,6 +1269,8 @@ function renderHome() {
   }
   elements.messages.append(home);
   lastHistoryVersion = null;
+  lastHistoryHasMore = false;
+  activeHistoryLimit = normalizeHistoryPageSize(settings.historyPageSize);
   updateComposerAvailability();
 }
 
@@ -1431,6 +1455,8 @@ async function selectConversation(conversationId, options = {}) {
   saveSettings(settings);
   syncConversationUrl(conversation.id, { replace: options.replaceUrl === true });
   lastHistoryVersion = null;
+  lastHistoryHasMore = false;
+  activeHistoryLimit = normalizeHistoryPageSize(settings.historyPageSize);
   clearPendingJob();
   renderConversationList();
   restoreComposerDraft(conversation.id);
@@ -1718,6 +1744,8 @@ async function startNewConversation() {
   conversations = [activeConversation, ...conversations.filter((conversation) => conversation.id !== activeConversation.id)];
   saveSettings(settings);
   lastHistoryVersion = null;
+  lastHistoryHasMore = false;
+  activeHistoryLimit = normalizeHistoryPageSize(settings.historyPageSize);
   clearPendingJob();
   clearRenderedMessages();
   renderConversationList();
@@ -2001,7 +2029,7 @@ async function continueInNewSession() {
 async function fetchHistory() {
   const conversation = await ensureActiveConversation();
   const response = await apiFetch('/v1/history', {
-    params: { conversation_id: conversation.id },
+    params: { conversation_id: conversation.id, limit: activeHistoryLimit },
     headers: await historyHeaders(),
   });
   if (!response.ok) {
@@ -2009,13 +2037,14 @@ async function fetchHistory() {
   }
   const body = await response.json();
   lastHistoryVersion = body.version || lastHistoryVersion;
+  lastHistoryHasMore = Boolean(body.hasMore);
   return Array.isArray(body.messages) ? body.messages : [];
 }
 
 async function fetchHistoryMeta() {
   const conversation = await ensureActiveConversation();
   const response = await apiFetch('/v1/history', {
-    params: { meta: '1', conversation_id: conversation.id },
+    params: { meta: '1', conversation_id: conversation.id, limit: activeHistoryLimit },
     headers: await historyHeaders(),
   });
   if (!response.ok) {
@@ -2024,13 +2053,47 @@ async function fetchHistoryMeta() {
   return response.json();
 }
 
+function renderHistoryLoadMoreControl() {
+  if (!lastHistoryHasMore) {
+    return;
+  }
+  const wrapper = document.createElement('div');
+  wrapper.className = 'history-load-more';
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'ghost-button history-load-more-button';
+  button.textContent = loadingOlderHistory ? '이전 대화 불러오는 중…' : '이전 대화 더보기';
+  button.disabled = loadingOlderHistory;
+  button.addEventListener('click', () => loadOlderHistory().catch((error) => appendMessage('system', error instanceof Error ? error.message : String(error), { persist: false })));
+  wrapper.append(button);
+  elements.messages.append(wrapper);
+}
+
+async function loadOlderHistory() {
+  if (loadingOlderHistory || !lastHistoryHasMore) {
+    return;
+  }
+  loadingOlderHistory = true;
+  activeHistoryLimit += normalizeHistoryPageSize(settings.historyPageSize);
+  try {
+    await renderHistory({ preservePosition: true });
+  } finally {
+    loadingOlderHistory = false;
+    const button = elements.messages.querySelector('.history-load-more-button');
+    if (button) {
+      button.disabled = false;
+      button.textContent = '이전 대화 더보기';
+    }
+  }
+}
+
 async function renderHistory(options = {}) {
   if (!activeConversation?.id) {
     renderHome();
     return;
   }
   updateComposerAvailability();
-  const { scrollToLatest = false } = options;
+  const { scrollToLatest = false, preservePosition = false } = options;
   const hadRenderedMessages = elements.messages.children.length > 0;
   const shouldFollow = isNearBottom();
   const previousBottomOffset = elements.messages.scrollHeight - elements.messages.scrollTop;
@@ -2047,6 +2110,7 @@ async function renderHistory(options = {}) {
       return;
     }
 
+    renderHistoryLoadMoreControl();
     for (const item of history) {
       renderHistoryItem(item);
     }
@@ -2055,7 +2119,7 @@ async function renderHistory(options = {}) {
       if (scrollToLatest) {
         window.setTimeout(() => scrollToBottom({ force: true }), 250);
       }
-    } else if (hadRenderedMessages) {
+    } else if (hadRenderedMessages || preservePosition) {
       preserveScrollAfterRender(previousBottomOffset);
       if (history.some((item) => typeof item?.role === 'string' && item.role !== 'user' && !isPendingHistoryMessage(item))) {
         showScrollToLatestButton();
@@ -2497,6 +2561,7 @@ async function refreshHistoryIfChanged() {
       const shouldFollow = isNearBottom();
       const previousBottomOffset = elements.messages.scrollHeight - elements.messages.scrollTop;
       clearRenderedMessages();
+      renderHistoryLoadMoreControl();
       for (const item of history) {
         renderHistoryItem(item);
       }
@@ -4346,6 +4411,17 @@ elements.fontSizeInput.addEventListener('input', () => {
   saveSettings(settings);
 });
 
+elements.historyPageSizeInput?.addEventListener('change', () => {
+  settings = { ...settings, historyPageSize: normalizeHistoryPageSize(elements.historyPageSizeInput.value) };
+  elements.historyPageSizeInput.value = String(settings.historyPageSize);
+  activeHistoryLimit = normalizeHistoryPageSize(settings.historyPageSize);
+  lastHistoryVersion = null;
+  saveSettings(settings);
+  if (activeConversation?.id) {
+    renderHistory({ scrollToLatest: true }).catch((error) => appendMessage('system', error instanceof Error ? error.message : String(error), { persist: false }));
+  }
+});
+
 elements.newConversationButton?.addEventListener('click', async () => {
   try {
     await startNewConversation();
@@ -4401,6 +4477,14 @@ elements.floatingSettingsButton?.addEventListener('click', (event) => {
   openSettingsPanel();
 });
 elements.floatingRefreshButton?.addEventListener('click', () => window.location.reload());
+elements.floatingScrollTopButton?.addEventListener('click', () => {
+  setFloatingActionsExpanded(false);
+  elements.messages.scrollTo({ top: 0, behavior: 'smooth' });
+});
+elements.floatingScrollBottomButton?.addEventListener('click', () => {
+  setFloatingActionsExpanded(false);
+  scrollToBottom({ force: true });
+});
 elements.continueNewSessionButton?.addEventListener('click', continueInNewSession);
 elements.scrollToLatestButton?.addEventListener('click', () => scrollToBottom({ force: true }));
 elements.messages.addEventListener('scroll', () => {
@@ -4539,6 +4623,6 @@ elements.messageInput.addEventListener('keydown', (event) => {
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-04-029').catch(() => {});
+    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-04-031').catch(() => {});
   });
 }

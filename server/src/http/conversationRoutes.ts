@@ -48,15 +48,33 @@ export function chatMessageToHistoryDto(message: ChatMessageRecord) {
 export function conversationHistoryResponse(
   conversation: ConversationRecord,
   messageStore: Pick<MessageStore, "listMessages">,
+  input: { limit?: number } = {},
 ) {
-  const messages = messageStore.listMessages(conversation.id).map(chatMessageToHistoryDto);
+  const requestedLimit = Math.max(1, Math.min(input.limit ?? 300, 5000));
+  const messagesWithLookahead = messageStore.listMessages(conversation.id, { limit: requestedLimit + 1 });
+  const hasMore = messagesWithLookahead.length > requestedLimit;
+  const messages = (hasMore ? messagesWithLookahead.slice(1) : messagesWithLookahead).map(chatMessageToHistoryDto);
   return {
-    version: `${conversation.updatedAt}:${messages.length}`,
+    version: `${conversation.updatedAt}:${messages.length}:${requestedLimit}:${hasMore ? 1 : 0}`,
     size: messages.length,
+    limit: requestedLimit,
+    hasMore,
     mtimeMs: Date.parse(conversation.updatedAt) || 0,
     conversation: conversationToDto(conversation),
     messages,
   };
+}
+
+export function historyLimitFromUrl(url: URL): number | undefined {
+  const raw = url.searchParams.get("limit");
+  if (!raw) {
+    return undefined;
+  }
+  const limit = Number.parseInt(raw, 10);
+  if (!Number.isFinite(limit)) {
+    return undefined;
+  }
+  return Math.max(1, Math.min(limit, 5000));
 }
 
 export function conversationIdFromPath(pathname: string, suffix = ""): string | null {
@@ -139,7 +157,7 @@ export async function handleConversationRoute(
       deps.sendJson(response, 404, deps.makeErrorResponse("CONVERSATION_NOT_FOUND", "Conversation not found.", { conversation_id: conversationHistoryId }));
       return true;
     }
-    deps.sendJson(response, 200, conversationHistoryResponse(conversation, deps.conversationStore));
+    deps.sendJson(response, 200, conversationHistoryResponse(conversation, deps.conversationStore, { limit: historyLimitFromUrl(url) }));
     return true;
   }
 

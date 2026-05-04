@@ -376,8 +376,28 @@ html[data-theme="system"] .danger-button { color: #991b1b; }
   font-weight: 500;
 }
 
+.floating-action-compact-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.floating-action-compact-item {
+  min-height: 38px;
+  justify-content: center;
+  padding: 8px 10px;
+  border-radius: 999px;
+  background: rgba(21, 21, 21, 0.82);
+  box-shadow: 0 10px 24px rgba(8, 8, 8, 0.26);
+  backdrop-filter: blur(18px);
+  font-size: 12px;
+  font-weight: 700;
+}
+
 html[data-theme="light"] .floating-action-item,
-html[data-theme="system"] .floating-action-item {
+html[data-theme="system"] .floating-action-item,
+html[data-theme="light"] .floating-action-compact-item,
+html[data-theme="system"] .floating-action-compact-item {
   background: rgba(255, 255, 255, 0.94);
 }
 
@@ -519,6 +539,17 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); }
 .messages:not(:has(> .message.system:only-child))::before {
   content: '';
   margin-top: auto;
+}
+
+.history-load-more {
+  display: flex;
+  justify-content: center;
+  margin: 4px 0 10px;
+}
+
+.history-load-more-button {
+  font-size: 12px;
+  padding: 7px 12px;
 }
 
 .messages-scroll-indicator {

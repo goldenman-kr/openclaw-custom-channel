@@ -10,7 +10,7 @@
     <link rel="manifest" href="/manifest.webmanifest?v=pwa-client-2026-05-03-030" />
     <link rel="icon" type="image/png" sizes="192x192" href="/assets/openclaw-app-icon-192.png" />
     <link rel="apple-touch-icon" sizes="180x180" href="/assets/openclaw-app-icon-180.png" />
-    <link rel="stylesheet" href="/styles.css?v=pwa-client-2026-05-04-029" />
+    <link rel="stylesheet" href="/styles.css?v=pwa-client-2026-05-04-031" />
   </head>
   <body>
     <section id="loginScreen" class="login-screen hidden" aria-label="로그인">
@@ -126,6 +126,10 @@
                 <small>최근 대화 맥락을 새 OpenClaw 세션에 전달하고 이어갑니다.</small>
               </span>
             </button>
+            <div class="floating-action-compact-row" role="group" aria-label="스크롤 이동">
+              <button id="floatingScrollTopButton" class="ghost-button floating-action-compact-item" type="button">맨위로</button>
+              <button id="floatingScrollBottomButton" class="ghost-button floating-action-compact-item" type="button">맨아래로</button>
+            </div>
           </div>
           <button id="floatingActionToggle" class="ghost-button floating-action-toggle" type="button" aria-label="빠른 작업 열기" aria-expanded="false" aria-controls="floatingActionPanel" title="빠른 작업"><span class="floating-action-toggle-icon" aria-hidden="true"></span></button>
         </div>
@@ -154,6 +158,16 @@
               <input id="fontSizeInput" type="range" min="12" max="20" step="1" />
               <output id="fontSizeValue" for="fontSizeInput">16px</output>
             </span>
+          </label>
+          <label>
+            대화방 입장 시 불러올 최근 대화
+            <select id="historyPageSizeInput">
+              <option value="100">100개</option>
+              <option value="200">200개</option>
+              <option value="300">300개</option>
+              <option value="400">400개</option>
+              <option value="500">500개</option>
+            </select>
           </label>
           <div class="settings-actions">
             <button id="refreshAppButton" class="ghost-button" type="button">새로고침</button>
@@ -230,6 +244,6 @@
       </form>
     </dialog>
 
-    <script type="module" src="/app.js?v=pwa-client-2026-05-04-029"></script>
+    <script type="module" src="/app.js?v=pwa-client-2026-05-04-031"></script>
   </body>
 </html>

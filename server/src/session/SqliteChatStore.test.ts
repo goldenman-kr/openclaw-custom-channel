@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { conversationHistoryResponse } from "../http/conversationRoutes.js";
 import { SqliteChatStore } from "./SqliteChatStore.js";
 
 function tempDir(): string {
@@ -171,6 +172,42 @@ test("returns 300 recent messages by default for multi-day conversations", () =>
     assert.equal(messages.length, 300);
     assert.equal(messages[0]?.text, "message 50");
     assert.equal(messages.at(-1)?.text, "message 349");
+  } finally {
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+
+test("conversation history response reports whether older messages are available", () => {
+  const dir = tempDir();
+  const store = new SqliteChatStore(join(dir, "chat.sqlite"));
+  try {
+    const conversation = store.createConversation({
+      title: "더보기 테스트",
+      openclawSessionId: "web-history-more-test",
+      now: "2026-04-29T00:00:00.000Z",
+    });
+
+    for (let i = 0; i < 305; i += 1) {
+      store.addMessage({
+        id: `msg_history_more_${i.toString().padStart(3, "0")}`,
+        conversationId: conversation.id,
+        role: "user",
+        text: `message ${i}`,
+        createdAt: new Date(Date.parse("2026-04-29T00:01:00.000Z") + i * 1000).toISOString(),
+      });
+    }
+
+    const firstPage = conversationHistoryResponse(conversation, store, { limit: 300 });
+    assert.equal(firstPage.messages.length, 300);
+    assert.equal(firstPage.messages[0]?.text, "message 5");
+    assert.equal(firstPage.hasMore, true);
+
+    const expanded = conversationHistoryResponse(conversation, store, { limit: 500 });
+    assert.equal(expanded.messages.length, 305);
+    assert.equal(expanded.messages[0]?.text, "message 0");
+    assert.equal(expanded.hasMore, false);
   } finally {
     store.close();
     rmSync(dir, { recursive: true, force: true });
