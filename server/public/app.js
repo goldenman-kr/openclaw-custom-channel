@@ -1,3 +1,4 @@
+import { MAX_ATTACHMENTS, MAX_ATTACHMENT_BYTES, ALLOWED_ATTACHMENT_TYPES, inferAttachmentMimeType } from './modules/attachments.js';
 import { renderCodeBlockPlugin } from './plugins/plugin-registry.js';
 import './plugins/spot-order-card.js';
 import './plugins/spot-wallet-intent.js';
@@ -6,55 +7,10 @@ const STORAGE_KEY = 'openclaw-web-channel-settings-v1';
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
 const COMPOSER_DRAFT_KEY_PREFIX = 'openclaw-web-channel-composer-draft-v1';
 const SIDEBAR_WIDTH_KEY = 'openclaw-web-channel-sidebar-width-v1';
-const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-039';
+const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-040';
 const CLIENT_API_VERSION = 1;
 const VERSION_CHECK_DISMISSED_KEY = 'openclaw-web-channel-version-dismissed-v1';
-const MAX_ATTACHMENTS = 3;
 const HISTORY_PAGE_SIZE_OPTIONS = [100, 200, 300, 400, 500];
-const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
-const ALLOWED_ATTACHMENT_TYPES = new Set([
-  'image/jpeg',
-  'image/png',
-  'image/webp',
-  'image/svg+xml',
-  'application/pdf',
-  'text/plain',
-  'text/csv',
-  'application/csv',
-  'application/vnd.ms-excel',
-  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-  'application/msword',
-  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-  'application/vnd.ms-powerpoint',
-  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-  'application/zip',
-]);
-
-const ATTACHMENT_MIME_BY_EXTENSION = new Map([
-  ['jpg', 'image/jpeg'],
-  ['jpeg', 'image/jpeg'],
-  ['png', 'image/png'],
-  ['webp', 'image/webp'],
-  ['svg', 'image/svg+xml'],
-  ['pdf', 'application/pdf'],
-  ['txt', 'text/plain'],
-  ['csv', 'text/csv'],
-  ['xls', 'application/vnd.ms-excel'],
-  ['xlsx', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],
-  ['doc', 'application/msword'],
-  ['docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'],
-  ['ppt', 'application/vnd.ms-powerpoint'],
-  ['pptx', 'application/vnd.openxmlformats-officedocument.presentationml.presentation'],
-  ['zip', 'application/zip'],
-]);
-
-function inferAttachmentMimeType(name, mimeType = '') {
-  if (ALLOWED_ATTACHMENT_TYPES.has(mimeType)) {
-    return mimeType;
-  }
-  const extension = String(name || '').split('.').pop()?.toLowerCase();
-  return ATTACHMENT_MIME_BY_EXTENSION.get(extension) || mimeType;
-}
 
 const elements = {
   loginScreen: document.querySelector('#loginScreen'),
