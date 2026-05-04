@@ -378,7 +378,15 @@ const MEDIA_REF_LINE = /^\s*MEDIA:\s*(.+?)\s*$/i;
 function extractMediaRefs(text: string): string[] {
   const refs: string[] = [];
   const seen = new Set<string>();
+  let inCodeBlock = false;
   for (const line of text.split(/\r?\n/)) {
+    if (/^\s*```/.test(line)) {
+      inCodeBlock = !inCodeBlock;
+      continue;
+    }
+    if (inCodeBlock) {
+      continue;
+    }
     const match = line.match(MEDIA_REF_LINE);
     if (!match) {
       continue;

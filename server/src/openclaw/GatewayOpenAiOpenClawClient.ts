@@ -3,7 +3,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { Agent } from "undici";
 import type { MessageAttachment, MessageRequestMetadata } from "../contracts/apiContractV1.js";
-import { GatewayAgentEventSubscriber } from "./GatewayAgentEventSubscriber.js";
+import { GatewayAgentEventSubscriber, type GatewayAgentEventPayload } from "./GatewayAgentEventSubscriber.js";
 import { activeGatewayModel } from "./modelOverride.js";
 import type { OpenClawClient, OpenClawClientInput, OpenClawClientResult, RuntimeWorkspaceScope } from "./OpenClawClient.js";
 
@@ -34,12 +34,17 @@ export class GatewayOpenAiOpenClawClient implements OpenClawClient {
     const timeout = setTimeout(() => abortController.abort(new Error("OpenClaw Gateway request timed out.")), this.timeoutMs);
     const streamed: string[] = [];
     const rawStreamEvents: string[] = [];
+    let mediaReplyFromAgentEvent = "";
     const agentEventSubscriber = input.callbacks?.onAgentEvent
       ? new GatewayAgentEventSubscriber({
           baseUrl: this.baseUrl,
           token: this.token,
           sessionKey: input.sessionId,
           onEvent: (event) => {
+            const eventReply = mediaReplyFromEvent(event);
+            if (eventReply) {
+              mediaReplyFromAgentEvent = eventReply;
+            }
             input.callbacks?.onAgentEvent?.(event);
           },
         })
@@ -79,9 +84,10 @@ export class GatewayOpenAiOpenClawClient implements OpenClawClient {
       }, rawStreamEvents);
       const streamReply = finalText || streamed.join("");
       const fallbackReply = streamReply ? "" : await this.fetchNonStreamingReply(input, abortController.signal, savedAttachments).catch(() => "");
+      const reply = mediaReplyFromAgentEvent || streamReply || fallbackReply;
 
       return {
-        reply: streamReply || fallbackReply || "응답 출력에 문제가 있습니다. 다시 답변을 요청해보세요. 이 오류가 반복되면 새 대화를 열어 세션을 다시 시작해주세요.",
+        reply: reply || "응답 출력에 문제가 있습니다. 다시 답변을 요청해보세요. 이 오류가 반복되면 새 대화를 열어 세션을 다시 시작해주세요.",
         raw: {
           transport: "gateway-openai",
           endpoint: url.toString(),
@@ -89,6 +95,7 @@ export class GatewayOpenAiOpenClawClient implements OpenClawClient {
           sessionId: input.sessionId,
           streamedChunks: streamed.length,
           rawStreamEvents: rawStreamEvents.slice(-5),
+          usedMediaReplyFromAgentEvent: Boolean(mediaReplyFromAgentEvent),
           usedNonStreamFallback: !streamReply && Boolean(fallbackReply),
           agentEventSubscriberReady,
         },
@@ -337,6 +344,45 @@ export class GatewayOpenAiOpenClawClient implements OpenClawClient {
       return null;
     }
   }
+}
+
+function mediaReplyFromEvent(event: GatewayAgentEventPayload): string | null {
+  const payloadText = payloadTextFromEventData(event.data);
+  const candidates = [
+    ...(payloadText ? [payloadText] : []),
+    ...stringsFromUnknown(event.data?.assistantTexts),
+    ...stringsFromUnknown(event.data?.assistantText),
+    ...stringsFromUnknown(event.data?.finalAssistantRawText),
+    ...stringsFromUnknown(event.data?.finalAssistantVisibleText),
+  ];
+  return candidates.find((candidate) => containsMediaDirective(candidate)) ?? null;
+}
+
+function payloadTextFromEventData(data: Record<string, unknown> | undefined): string | null {
+  if (!data) {
+    return null;
+  }
+  const media = [data.mediaUrls, data.MediaUrls, data.MediaPaths]
+    .flatMap((entry) => (Array.isArray(entry) ? entry : []))
+    .filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0)
+    .map((entry) => `MEDIA:${entry.trim()}`);
+  const singles = [data.mediaUrl, data.MediaUrl, data.MediaPath]
+    .map((entry) => (typeof entry === "string" && entry.trim() ? entry.trim() : null))
+    .filter((entry): entry is string => Boolean(entry))
+    .map((entry) => `MEDIA:${entry}`);
+  const parts = [typeof data.text === "string" && data.text.trim() ? data.text.trim() : null, ...media, ...singles]
+    .filter((entry): entry is string => Boolean(entry));
+  return parts.length > 0 ? parts.join("\n\n") : null;
+}
+
+function stringsFromUnknown(value: unknown): string[] {
+  if (typeof value === "string" && value.trim()) {
+    return [value.trim()];
+  }
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0).map((entry) => entry.trim());
 }
 
 type UndiciRequestInit = RequestInit & { dispatcher?: Agent };

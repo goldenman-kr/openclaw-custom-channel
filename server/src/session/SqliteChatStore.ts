@@ -305,7 +305,7 @@ export class SqliteChatStore implements ConversationStore, MessageStore, JobStor
   }
 
   listMessages(conversationId: string, input: { limit?: number } = {}): ChatMessageRecord[] {
-    const limit = Math.max(1, Math.min(input.limit ?? 200, 1000));
+    const limit = Math.max(1, Math.min(input.limit ?? 300, 5000));
     const rows = this.db
       .prepare(
         `SELECT * FROM (
