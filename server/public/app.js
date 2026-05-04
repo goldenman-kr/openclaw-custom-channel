@@ -21,13 +21,14 @@ import { isNearBottom as isMessagesNearBottom, hideMessagesScrollIndicator, hide
 import { applyStoredSidebarWidth, clampSidebarWidth, saveSidebarWidth, SIDEBAR_RESIZE_MEDIA } from './modules/sidebar-width.js';
 import { matchingSlashCommands as findMatchingSlashCommands } from './modules/slash-commands.js';
 import { showToast } from './modules/toast.js';
+import { currentUserDisplayName as getCurrentUserDisplayName, sharedUserId as getSharedUserId } from './modules/user-identity.js';
 import { checkClientServerVersion as checkClientServerVersionWithDeps } from './modules/version-check.js';
 import { renderCodeBlockPlugin } from './plugins/plugin-registry.js';
 import './plugins/spot-order-card.js';
 import './plugins/spot-wallet-intent.js';
 
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
-const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-065';
+const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-066';
 const CLIENT_API_VERSION = 1;
 const elements = {
   loginScreen: document.querySelector('#loginScreen'),
@@ -601,25 +602,6 @@ function handleDrawerSwipeEnd(event) {
   }
 }
 
-async function hashText(text) {
-  if (crypto.subtle) {
-    const bytes = new TextEncoder().encode(text);
-    const digest = await crypto.subtle.digest('SHA-256', bytes);
-    return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('').slice(0, 24);
-  }
-
-  let hash = 0;
-  for (let index = 0; index < text.length; index += 1) {
-    hash = (Math.imul(31, hash) + text.charCodeAt(index)) | 0;
-  }
-  return Math.abs(hash).toString(16).padStart(8, '0');
-}
-
-async function sharedUserId() {
-  const baseId = `web-api-key-${await hashText(settings.apiKey || 'anonymous')}`;
-  return settings.sessionNonce ? `${baseId}-${settings.sessionNonce}` : baseId;
-}
-
 function persistMessage() {
   // Server-side history is authoritative. This hook is intentionally kept as a no-op.
 }
@@ -670,6 +652,10 @@ function pruneMediaUrlCache(options = {}) {
 function clearRenderedMessages() {
   elements.messages.replaceChildren();
   pruneMediaUrlCache();
+}
+
+async function sharedUserId() {
+  return getSharedUserId({ apiKey: settings.apiKey, sessionNonce: settings.sessionNonce });
 }
 
 async function historyHeaders() {
@@ -853,8 +839,7 @@ function visibleConversations() {
 }
 
 function currentUserDisplayName() {
-  const name = authUser?.display_name || authUser?.displayName || authUser?.username || authUser?.id || '';
-  return String(name).trim() || '사용자';
+  return getCurrentUserDisplayName(authUser);
 }
 
 function updateSidebarSummary() {
