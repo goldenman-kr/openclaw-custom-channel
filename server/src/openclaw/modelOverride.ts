@@ -46,29 +46,35 @@ function sessionKeyCandidates(sessionKey: string): string[] {
   ];
 }
 
-export function getSessionModelOverride(sessionKey?: string): string | null {
+function readSessionEntry(sessionKey?: string): { targetKey: string; entry: SessionStoreEntry; store: Record<string, SessionStoreEntry> } | null {
   if (!sessionKey?.trim()) return null;
+  const trimmedSessionKey = sessionKey.trim();
   const store = readSessionStore();
-  for (const key of sessionKeyCandidates(sessionKey)) {
-    const entry = store[key];
-    if (!entry) continue;
-    const provider = typeof entry.providerOverride === "string" ? entry.providerOverride.trim() : "";
-    const model = typeof entry.modelOverride === "string" ? entry.modelOverride.trim() : "";
-    if (provider && model) {
-      return `${provider}/${model}`;
-    }
-  }
-  return null;
+  const targetKey = sessionKeyCandidates(trimmedSessionKey).find((key) => store[key]) ?? `agent:${process.env.OPENCLAW_AGENT ?? "main"}:${trimmedSessionKey}`;
+  return { targetKey, entry: { ...(store[targetKey] ?? {}) }, store };
+}
+
+export function getSessionModelOverride(sessionKey?: string): string | null {
+  const resolved = readSessionEntry(sessionKey);
+  if (!resolved) return null;
+  const provider = typeof resolved.entry.providerOverride === "string" ? resolved.entry.providerOverride.trim() : "";
+  const model = typeof resolved.entry.modelOverride === "string" ? resolved.entry.modelOverride.trim() : "";
+  return provider && model ? `${provider}/${model}` : null;
+}
+
+export function getSessionThinkingOverride(sessionKey?: string): string | null {
+  const resolved = readSessionEntry(sessionKey);
+  if (!resolved) return null;
+  const thinking = typeof resolved.entry.thinkingLevel === "string" ? resolved.entry.thinkingLevel.trim() : "";
+  return thinking || null;
 }
 
 export function setSessionModelOverride(sessionKey: string, modelRef: string | null): string | null {
-  const trimmedSessionKey = sessionKey.trim();
-  if (!trimmedSessionKey) {
+  const resolved = readSessionEntry(sessionKey);
+  if (!resolved) {
     throw new Error("sessionKey is required");
   }
-  const store = readSessionStore();
-  const targetKey = sessionKeyCandidates(trimmedSessionKey).find((key) => store[key]) ?? `agent:${process.env.OPENCLAW_AGENT ?? "main"}:${trimmedSessionKey}`;
-  const entry = { ...(store[targetKey] ?? {}) } as SessionStoreEntry;
+  const { targetKey, entry, store } = resolved;
   const normalized = modelRef?.trim() ?? "";
   if (normalized) {
     const slash = normalized.indexOf("/");
@@ -95,6 +101,24 @@ export function setSessionModelOverride(sessionKey: string, modelRef: string | n
   store[targetKey] = entry;
   writeSessionStore(store);
   return entry.providerOverride && entry.modelOverride ? `${entry.providerOverride}/${entry.modelOverride}` : null;
+}
+
+export function setSessionThinkingOverride(sessionKey: string, level: string | null): string | null {
+  const resolved = readSessionEntry(sessionKey);
+  if (!resolved) {
+    throw new Error("sessionKey is required");
+  }
+  const { targetKey, entry, store } = resolved;
+  const normalized = level?.trim() ?? "";
+  if (normalized) {
+    entry.thinkingLevel = normalized;
+  } else {
+    delete entry.thinkingLevel;
+  }
+  entry.updatedAt = Date.now();
+  store[targetKey] = entry;
+  writeSessionStore(store);
+  return typeof entry.thinkingLevel === "string" && entry.thinkingLevel.trim() ? entry.thinkingLevel.trim() : null;
 }
 
 export function activeGatewayModel(defaultModel = process.env.OPENCLAW_GATEWAY_MODEL ?? "openclaw"): string {

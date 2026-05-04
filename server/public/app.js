@@ -1,8 +1,12 @@
+import { renderCodeBlockPlugin } from './plugins/plugin-registry.js';
+import './plugins/spot-order-card.js';
+import './plugins/spot-wallet-intent.js';
+
 const STORAGE_KEY = 'openclaw-web-channel-settings-v1';
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
 const COMPOSER_DRAFT_KEY_PREFIX = 'openclaw-web-channel-composer-draft-v1';
 const SIDEBAR_WIDTH_KEY = 'openclaw-web-channel-sidebar-width-v1';
-const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-031';
+const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-039';
 const CLIENT_API_VERSION = 1;
 const VERSION_CHECK_DISMISSED_KEY = 'openclaw-web-channel-version-dismissed-v1';
 const MAX_ATTACHMENTS = 3;
@@ -244,6 +248,7 @@ const mediaUrlCache = new Map();
 const slashCommands = [
   { command: '/status', title: '상태 확인', description: '현재 세션/모델/토큰/설정 상태를 확인합니다.' },
   { command: '/model ', title: '모델 변경', description: '모델을 지정합니다. 예: /model gpt-5.5' },
+  { command: '/think ', title: 'thinking 변경', description: '현재 채팅의 thinking 레벨을 지정합니다. 예: /think high' },
   { command: '/models', title: '모델 목록', description: '사용 가능한 모델 목록을 봅니다.' },
   { command: '/reset', title: '대화 초기화', description: '현재 대화 맥락을 초기화합니다.' },
   { command: '/reasoning', title: '추론 표시 전환', description: 'reasoning 설정을 켜거나 끕니다.' },
@@ -791,7 +796,7 @@ function hideMessagesScrollIndicatorSoon() {
 }
 
 function scrollToBottom(options = {}) {
-  const { force = false, autoScroll = true } = options;
+  const { force = false, autoScroll = true, smooth = false } = options;
   if (!autoScroll) {
     return;
   }
@@ -800,7 +805,7 @@ function scrollToBottom(options = {}) {
     return;
   }
   requestAnimationFrame(() => {
-    elements.messages.scrollTop = elements.messages.scrollHeight;
+    elements.messages.scrollTo({ top: elements.messages.scrollHeight, behavior: smooth ? 'smooth' : 'auto' });
     hideScrollToLatestButton();
   });
 }
@@ -2253,7 +2258,65 @@ function appendMarkdownTable(parent, headerCells, separatorLine, bodyRows) {
   parent.append(wrapper);
 }
 
+function insertIntoComposer(text) {
+  const value = String(text || '');
+  if (!value || !elements.messageInput) {
+    return;
+  }
+  const current = elements.messageInput.value;
+  const separator = current && !current.endsWith('\n') ? '\n' : '';
+  elements.messageInput.value = `${current}${separator}${value}`;
+  elements.messageInput.dispatchEvent(new Event('input', { bubbles: true }));
+  elements.messageInput.focus();
+  saveComposerDraft();
+}
+
+async function apiJson(path, options = {}) {
+  const response = await apiFetch(path, {
+    ...options,
+    headers: {
+      'content-type': 'application/json',
+      ...(await historyHeaders()),
+      ...(options.headers || {}),
+    },
+    body: options.body === undefined ? undefined : JSON.stringify(options.body),
+  });
+  const body = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error(body?.error?.message || `HTTP ${response.status}`);
+  }
+  return body;
+}
+
+function codeBlockPluginContext() {
+  return {
+    activeConversationId,
+    apiJson,
+    copyTextToClipboard,
+    insertIntoComposer,
+    refreshHistory: () => renderHistory({ scrollToLatest: true }),
+    sendPluginMessage: async (message) => {
+      const response = await sendMessage(message, [], { source: 'plugin', hiddenFromHistory: true });
+      if (response.job_id) {
+        const conversationId = response.conversation_id || activeConversationId();
+        savePendingJob({ job_id: response.job_id, startedAt: Date.now() }, conversationId);
+        ensurePendingJobBubble(response.job_id, conversationId);
+        await refreshHistoryIfChanged();
+      }
+      return response;
+    },
+    renderFallbackCodeBlock: appendPlainCodeBlock,
+  };
+}
+
 function appendCodeBlock(parent, codeText, language = '', options = {}) {
+  if (!options.skipPlugins && renderCodeBlockPlugin(parent, codeText, language, codeBlockPluginContext())) {
+    return;
+  }
+  appendPlainCodeBlock(parent, codeText, language, options);
+}
+
+function appendPlainCodeBlock(parent, codeText, language = '', options = {}) {
   const { showHeader = true, showCopyButton = true } = options;
   const wrapper = document.createElement('div');
   wrapper.className = `code-block${showHeader ? '' : ' compact'}`;
@@ -4483,7 +4546,7 @@ elements.floatingScrollTopButton?.addEventListener('click', () => {
 });
 elements.floatingScrollBottomButton?.addEventListener('click', () => {
   setFloatingActionsExpanded(false);
-  scrollToBottom({ force: true });
+  scrollToBottom({ force: true, smooth: true });
 });
 elements.continueNewSessionButton?.addEventListener('click', continueInNewSession);
 elements.scrollToLatestButton?.addEventListener('click', () => scrollToBottom({ force: true }));
@@ -4623,6 +4686,6 @@ elements.messageInput.addEventListener('keydown', (event) => {
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-04-031').catch(() => {});
+    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-04-039').catch(() => {});
   });
 }

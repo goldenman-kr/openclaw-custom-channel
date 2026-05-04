@@ -33,7 +33,7 @@ writeFileSync(process.env.OPENCLAW_SESSION_STORE_PATH, JSON.stringify({
   },
 }, null, 2));
 
-const { executeNativeCommand, getNativeModelMenu, applyNativeModelSelection } = await import("./nativeCommands.js");
+const { executeNativeCommand, getNativeModelMenu, applyNativeModelSelection, applyNativeThinkingSelection } = await import("./nativeCommands.js");
 
 test("/model changes are admin-only", async () => {
   const denied = await executeNativeCommand("/model llamacpp/Qwen3.6-35B-A3B", { userRole: "user", sessionKey: "web-conv_test" });
@@ -73,4 +73,29 @@ test("applyNativeModelSelection enforces admin and updates selected model", asyn
   const result = await applyNativeModelSelection("openai-codex/gpt-5.4", { userRole: "admin", sessionKey: "web-conv_test" });
   assert.equal(result.currentModel, "openai-codex/gpt-5.4");
   assert.equal(result.reset, false);
+});
+
+test("/think updates current chat session only", async () => {
+  const changed = await executeNativeCommand("/think high", { userRole: "admin", sessionKey: "web-conv_test" });
+  assert.match(changed?.reply ?? "", /현재 채팅의 thinking override를 변경했습니다/);
+  assert.match(changed?.reply ?? "", /현재 채팅 thinking: high/);
+
+  const current = await executeNativeCommand("/think", { userRole: "admin", sessionKey: "web-conv_test" });
+  assert.match(current?.reply ?? "", /현재 채팅 thinking: high/);
+
+  const reset = await executeNativeCommand("/think auto", { userRole: "admin", sessionKey: "web-conv_test" });
+  assert.match(reset?.reply ?? "", /현재 채팅의 thinking override를 해제했습니다/);
+  assert.match(reset?.reply ?? "", /현재 채팅 thinking: medium/);
+});
+
+test("applyNativeThinkingSelection updates and resets session thinking override", async () => {
+  const result = await applyNativeThinkingSelection("xhigh", { userRole: "admin", sessionKey: "web-conv_test" });
+  assert.equal(result.currentThinking, "xhigh");
+  assert.equal(result.reset, false);
+
+  const reset = await applyNativeThinkingSelection("default", { userRole: "admin", sessionKey: "web-conv_test" });
+  assert.equal(reset.currentThinking, "medium");
+  assert.equal(reset.reset, true);
+
+  await assert.rejects(() => applyNativeThinkingSelection("turbo", { userRole: "admin", sessionKey: "web-conv_test" }), /thinking 값은/);
 });

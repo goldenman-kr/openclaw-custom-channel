@@ -1,8 +1,16 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import { GatewayOpenAiOpenClawClient } from "./GatewayOpenAiOpenClawClient.js";
+import { setSessionThinkingOverride } from "./modelOverride.js";
+
+const tempDir = mkdtempSync(join(tmpdir(), "gateway-openclaw-client-test-"));
+process.env.OPENCLAW_SESSION_STORE_PATH = join(tempDir, "sessions.json");
+writeFileSync(process.env.OPENCLAW_SESSION_STORE_PATH, "{}\n");
 
 async function withServer(handler: (req: IncomingMessage, res: ServerResponse) => void | Promise<void>) {
   const server = createServer((req, res) => {
@@ -192,6 +200,25 @@ test("passes runtime workspace metadata to Gateway requests", async () => {
     assert.match(messages[0]?.content, /common_writable=false/);
     assert.match(messages[0]?.content, /Eddy가 아닙니다/);
   } finally {
+    await server.close();
+  }
+});
+
+test("includes session thinking override in Gateway requests", async () => {
+  const requests: Array<Record<string, unknown>> = [];
+  const server = await withServer(async (req, res) => {
+    requests.push(await readJson(req));
+    res.writeHead(200, { "content-type": "text/event-stream; charset=utf-8" });
+    res.end('data: {"choices":[{"delta":{"content":"ok"}}]}\n\ndata: [DONE]\n\n');
+  });
+
+  try {
+    setSessionThinkingOverride("session-thinking-test", "high");
+    const client = new GatewayOpenAiOpenClawClient(server.baseUrl, undefined, "openclaw-test", 5_000);
+    await client.sendMessage({ sessionId: "session-thinking-test", message: "hello" });
+    assert.equal(requests[0]?.thinking, "high");
+  } finally {
+    setSessionThinkingOverride("session-thinking-test", null);
     await server.close();
   }
 });

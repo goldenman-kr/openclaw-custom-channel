@@ -1,9 +1,12 @@
-const CACHE_NAME = 'openclaw-web-channel-v187';
+const CACHE_NAME = 'openclaw-web-channel-v195';
 const ASSETS = [
   '/',
   '/index.html',
   '/styles.css',
   '/app.js',
+  '/plugins/plugin-registry.js',
+  '/plugins/spot-order-card.js',
+  '/plugins/spot-wallet-intent.js',
   '/manifest.webmanifest',
   '/assets/openclaw-app-icon-180.png',
   '/assets/openclaw-app-icon-192.png',
@@ -26,6 +29,19 @@ self.addEventListener('activate', (event) => {
   self.clients.claim();
 });
 
+async function networkFirst(request, fallbackPath) {
+  const cache = await caches.open(CACHE_NAME);
+  try {
+    const response = await fetch(request);
+    if (response.ok) {
+      cache.put(request, response.clone()).catch(() => {});
+    }
+    return response;
+  } catch {
+    return (await caches.match(request)) || (fallbackPath ? caches.match(fallbackPath) : undefined);
+  }
+}
+
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
   if (event.request.method !== 'GET' || url.pathname.startsWith('/v1/')) {
@@ -33,12 +49,15 @@ self.addEventListener('fetch', (event) => {
   }
 
   const isNavigation = event.request.mode === 'navigate';
+  const isMutableClientAsset = ['/', '/index.html', '/app.js', '/styles.css', '/sw.js'].includes(url.pathname)
+    || url.pathname.startsWith('/plugins/');
+
+  if (isNavigation || isMutableClientAsset) {
+    event.respondWith(networkFirst(event.request, isNavigation ? '/index.html' : undefined));
+    return;
+  }
+
   event.respondWith(
-    caches.match(event.request).then((cached) => {
-      if (cached) {
-        return cached;
-      }
-      return fetch(event.request).catch(() => isNavigation ? caches.match('/index.html') : undefined);
-    }),
+    caches.match(event.request).then((cached) => cached || fetch(event.request)),
   );
 });

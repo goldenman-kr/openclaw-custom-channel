@@ -5,6 +5,7 @@ import { basename, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import type { MessageAttachment, MessageRequestMetadata } from "../contracts/apiContractV1.js";
 import type { OpenClawClient, RuntimeWorkspaceScope } from "./OpenClawClient.js";
+import { getSessionThinkingOverride } from "./modelOverride.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -30,8 +31,9 @@ export class AgentOpenClawClient implements OpenClawClient {
       args.push("--agent", process.env.OPENCLAW_AGENT);
     }
 
-    if (process.env.OPENCLAW_THINKING) {
-      args.push("--thinking", process.env.OPENCLAW_THINKING);
+    const thinking = getSessionThinkingOverride(input.sessionId) ?? process.env.OPENCLAW_THINKING;
+    if (thinking) {
+      args.push("--thinking", thinking);
     }
 
     if (process.env.OPENCLAW_AGENT_TIMEOUT_SECONDS) {
