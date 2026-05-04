@@ -1,4 +1,4 @@
-const CACHE_NAME = 'openclaw-web-channel-v199';
+const CACHE_NAME = 'openclaw-web-channel-v200';
 const ASSETS = [
   '/',
   '/index.html',
@@ -8,6 +8,7 @@ const ASSETS = [
   '/modules/conversation-format.js',
   '/modules/media.js',
   '/modules/settings.js',
+  '/modules/sidebar-width.js',
   '/plugins/plugin-registry.js',
   '/plugins/spot-order-card.js',
   '/plugins/spot-wallet-intent.js',

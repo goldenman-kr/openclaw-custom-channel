@@ -2,14 +2,14 @@ import { MAX_ATTACHMENTS, MAX_ATTACHMENT_BYTES, ALLOWED_ATTACHMENT_TYPES, format
 import { conversationTitle, formatConversationDate, formatMessageTimestamp } from './modules/conversation-format.js';
 import { canonicalMediaRefKey, isImageRef, isPlaceholderMediaRef, normalizeMediaRefPath, shortenFileName } from './modules/media.js';
 import { loadSettings, normalizeHistoryPageSize, randomDeviceId, saveSettings } from './modules/settings.js';
+import { applyStoredSidebarWidth, clampSidebarWidth, saveSidebarWidth, SIDEBAR_RESIZE_MEDIA } from './modules/sidebar-width.js';
 import { renderCodeBlockPlugin } from './plugins/plugin-registry.js';
 import './plugins/spot-order-card.js';
 import './plugins/spot-wallet-intent.js';
 
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
 const COMPOSER_DRAFT_KEY_PREFIX = 'openclaw-web-channel-composer-draft-v1';
-const SIDEBAR_WIDTH_KEY = 'openclaw-web-channel-sidebar-width-v1';
-const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-043';
+const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-044';
 const CLIENT_API_VERSION = 1;
 const VERSION_CHECK_DISMISSED_KEY = 'openclaw-web-channel-version-dismissed-v1';
 const elements = {
@@ -101,29 +101,6 @@ function slashCommandUsesCurrentLocation(message) {
     return false;
   }
   return args.join(' ').includes('여기');
-}
-
-const SIDEBAR_WIDTH_MIN = 240;
-const SIDEBAR_WIDTH_MAX = 560;
-const SIDEBAR_RESIZE_MEDIA = '(min-width: 900px) and (pointer: fine)';
-
-function clampSidebarWidth(width) {
-  const viewportMax = Math.max(SIDEBAR_WIDTH_MIN, Math.min(SIDEBAR_WIDTH_MAX, Math.round(window.innerWidth * 0.45)));
-  return Math.min(viewportMax, Math.max(SIDEBAR_WIDTH_MIN, Math.round(width)));
-}
-
-function applyStoredSidebarWidth() {
-  const storedWidth = Number(localStorage.getItem(SIDEBAR_WIDTH_KEY));
-  if (!Number.isFinite(storedWidth) || storedWidth <= 0) {
-    return;
-  }
-  document.documentElement.style.setProperty('--sidebar-width', `${clampSidebarWidth(storedWidth)}px`);
-}
-
-function saveSidebarWidth(width) {
-  const clamped = clampSidebarWidth(width);
-  localStorage.setItem(SIDEBAR_WIDTH_KEY, String(clamped));
-  document.documentElement.style.setProperty('--sidebar-width', `${clamped}px`);
 }
 
 applyStoredSidebarWidth();
@@ -3483,10 +3460,7 @@ function cancelSidebarResize() {
 }
 
 function syncSidebarWidthToViewport() {
-  const storedWidth = Number(localStorage.getItem(SIDEBAR_WIDTH_KEY));
-  if (Number.isFinite(storedWidth) && storedWidth > 0) {
-    document.documentElement.style.setProperty('--sidebar-width', `${clampSidebarWidth(storedWidth)}px`);
-  }
+  applyStoredSidebarWidth();
 }
 
 async function sendMessage(message, attachments = [], metadata = undefined) {
