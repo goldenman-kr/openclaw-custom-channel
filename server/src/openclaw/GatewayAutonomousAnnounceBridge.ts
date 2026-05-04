@@ -286,8 +286,8 @@ export class GatewayAutonomousAnnounceBridge {
 
   private childResultText(record: ModelCompletedRecord): string | null {
     const prompt = typeof record.data?.finalPromptText === "string" ? record.data.finalPromptText : "";
-    const match = prompt.match(/<<<BEGIN_UNTRUSTED_CHILD_RESULT>>>\s*([\s\S]*?)\s*<<<END_UNTRUSTED_CHILD_RESULT>>>/);
-    const text = match?.[1]?.trim();
+    const matches = [...prompt.matchAll(/<<<BEGIN_UNTRUSTED_CHILD_RESULT>>>\s*([\s\S]*?)\s*<<<END_UNTRUSTED_CHILD_RESULT>>>/g)];
+    const text = matches.at(-1)?.[1]?.trim();
     return text || null;
   }
 
