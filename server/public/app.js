@@ -1,4 +1,5 @@
 import { MAX_ATTACHMENTS, MAX_ATTACHMENT_BYTES, ALLOWED_ATTACHMENT_TYPES, formatBytes, inferAttachmentMimeType } from './modules/attachments.js';
+import { conversationTitle, formatConversationDate, formatMessageTimestamp } from './modules/conversation-format.js';
 import { canonicalMediaRefKey, isImageRef, isPlaceholderMediaRef, normalizeMediaRefPath, shortenFileName } from './modules/media.js';
 import { loadSettings, normalizeHistoryPageSize, randomDeviceId, saveSettings } from './modules/settings.js';
 import { renderCodeBlockPlugin } from './plugins/plugin-registry.js';
@@ -8,7 +9,7 @@ import './plugins/spot-wallet-intent.js';
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
 const COMPOSER_DRAFT_KEY_PREFIX = 'openclaw-web-channel-composer-draft-v1';
 const SIDEBAR_WIDTH_KEY = 'openclaw-web-channel-sidebar-width-v1';
-const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-042';
+const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-043';
 const CLIENT_API_VERSION = 1;
 const VERSION_CHECK_DISMISSED_KEY = 'openclaw-web-channel-version-dismissed-v1';
 const elements = {
@@ -1021,36 +1022,12 @@ function restoreComposerDraft(conversationId = activeConversationId()) {
   renderSlashCommandPalette();
 }
 
-function conversationTitle(conversation) {
-  const title = typeof conversation?.title === 'string' ? conversation.title.trim() : '';
-  return title || '새 대화';
-}
-
 function updateChatTitle() {
   if (!elements.chatTitle) {
     return;
   }
   elements.chatTitle.textContent = activeConversation?.id ? conversationTitle(activeConversation) : 'OpenClaw';
   updateModelPickerButtonState();
-}
-
-function formatConversationDate(value) {
-  const time = Date.parse(value || '');
-  if (!Number.isFinite(time)) {
-    return '';
-  }
-  const date = new Date(time);
-  return date.toLocaleDateString('ko-KR', { month: 'short', day: 'numeric' });
-}
-
-function formatMessageTimestamp(value) {
-  const time = Date.parse(value || '');
-  if (!Number.isFinite(time)) {
-    return '';
-  }
-  const date = new Date(time);
-  const pad = (number) => String(number).padStart(2, '0');
-  return `${pad(date.getMonth() + 1)}월${pad(date.getDate())}일 ${pad(date.getHours())}시${pad(date.getMinutes())}분${pad(date.getSeconds())}초`;
 }
 
 function isConversationArchived(conversation) {
