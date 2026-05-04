@@ -54,6 +54,7 @@ interface ModelCompletedRecord {
   ts?: string;
   data?: {
     assistantTexts?: unknown;
+    finalPromptText?: unknown;
   };
 }
 
@@ -169,7 +170,7 @@ export class GatewayAutonomousAnnounceBridge {
         await this.request("connect", {
           minProtocol: 3,
           maxProtocol: 3,
-          client: { id: "pwa-autonomous-announce-bridge", displayName: "PWA autonomous announce bridge", version: "1.0.0", platform: process.platform, mode: "backend" },
+          client: { id: "gateway-client", displayName: "PWA autonomous announce bridge", version: "1.0.0", platform: process.platform, mode: "backend" },
           caps: [],
           auth: this.options.token ? { token: this.options.token } : undefined,
           role: "operator",
@@ -238,7 +239,7 @@ export class GatewayAutonomousAnnounceBridge {
       if (this.seenRunIds.has(record.runId)) {
         continue;
       }
-      const text = this.assistantText(record).trim();
+      const text = this.announcementText(record).trim();
       if (!text) {
         continue;
       }
@@ -267,12 +268,42 @@ export class GatewayAutonomousAnnounceBridge {
     }
   }
 
+  private announcementText(record: ModelCompletedRecord): string {
+    const childResult = this.childResultText(record);
+    if (childResult) {
+      return this.withMediaLines(childResult);
+    }
+    return this.assistantText(record);
+  }
+
   private assistantText(record: ModelCompletedRecord): string {
     const texts = record.data?.assistantTexts;
     if (!Array.isArray(texts)) {
       return "";
     }
     return texts.filter((value): value is string => typeof value === "string" && value.trim().length > 0).join("\n\n");
+  }
+
+  private childResultText(record: ModelCompletedRecord): string | null {
+    const prompt = typeof record.data?.finalPromptText === "string" ? record.data.finalPromptText : "";
+    const match = prompt.match(/<<<BEGIN_UNTRUSTED_CHILD_RESULT>>>\s*([\s\S]*?)\s*<<<END_UNTRUSTED_CHILD_RESULT>>>/);
+    const text = match?.[1]?.trim();
+    return text || null;
+  }
+
+  private withMediaLines(text: string): string {
+    const existing = new Set([...text.matchAll(/^\s*MEDIA:\s*(.+?)\s*$/gim)].map((match) => match[1]?.trim()).filter(Boolean));
+    const mediaPaths = [...text.matchAll(/`(\/home\/[^`\n]+?\.(?:xlsx|xls|pdf|csv|zip|png|jpe?g|webp))`/gi)]
+      .map((match) => match[1]?.trim())
+      .filter((value): value is string => Boolean(value) && value.includes("/.openclaw/media/outbound/"));
+    const additions: string[] = [];
+    for (const mediaPath of mediaPaths) {
+      if (!existing.has(mediaPath)) {
+        existing.add(mediaPath);
+        additions.push(`MEDIA:${mediaPath}`);
+      }
+    }
+    return additions.length > 0 ? `${text}\n\n${additions.join("\n\n")}` : text;
   }
 
   private openclawSessionIdFromGatewayKey(sessionKey: string): string | null {
