@@ -215,6 +215,7 @@ applyStoredSidebarWidth();
 
 let settings = loadSettings();
 let historyPollTimer = null;
+let versionCheckTimer = null;
 let conversationEventSource = null;
 let conversationEventConversationId = '';
 let conversationEventRefreshTimer = null;
@@ -1187,12 +1188,21 @@ async function fetchConversationHistoryMessages(conversationId) {
   return Array.isArray(body?.messages) ? body.messages : [];
 }
 
-async function runConversationContentSearch(runId, query) {
-  if (!query || !canUseApi()) {
-    conversationContentMatches = new Set();
-    renderConversationList();
-    return;
+async function searchConversationContentOnServer(query) {
+  const response = await apiFetch('/v1/conversations/search', {
+    params: {
+      query,
+      ...(showingArchived ? { include_archived: '1' } : {}),
+    },
+  });
+  if (!response.ok) {
+    throw new Error(`Conversation search failed: ${response.status}`);
   }
+  const body = await response.json().catch(() => null);
+  return new Set(Array.isArray(body?.conversation_ids) ? body.conversation_ids : []);
+}
+
+async function searchConversationContentInBrowser(runId, query) {
   const candidates = baseVisibleConversations().filter((conversation) => !conversationMatchesTitle(conversation, query));
   const nextMatches = new Set();
   let index = 0;
@@ -1213,10 +1223,26 @@ async function runConversationContentSearch(runId, query) {
     }
   };
   await Promise.all(Array.from({ length: Math.min(4, candidates.length) }, worker));
+  return nextMatches;
+}
+
+async function runConversationContentSearch(runId, query) {
+  if (!query || !canUseApi()) {
+    conversationContentMatches = new Set();
+    renderConversationList();
+    return;
+  }
+  let nextMatches;
+  try {
+    nextMatches = await searchConversationContentOnServer(query);
+  } catch {
+    nextMatches = await searchConversationContentInBrowser(runId, query);
+  }
   if (runId !== conversationSearchRunId) {
     return;
   }
-  conversationContentMatches = nextMatches;
+  const titleMatches = new Set(baseVisibleConversations().filter((conversation) => conversationMatchesTitle(conversation, query)).map((conversation) => conversation.id));
+  conversationContentMatches = new Set([...nextMatches].filter((id) => !titleMatches.has(id)));
   renderConversationList();
 }
 
@@ -1340,6 +1366,7 @@ function goHome(options = {}) {
   autoResizeTextarea();
   renderConversationList();
   stopConversationEvents();
+  syncHistoryPolling();
   renderHome();
   updateChatTitle();
   syncConversationUrl('', { replace: options.replaceUrl === true });
@@ -1516,6 +1543,7 @@ async function selectConversation(conversationId, options = {}) {
   closeMobileDrawer();
   await renderHistory({ scrollToLatest: true });
   startConversationEvents(conversation.id);
+  syncHistoryPolling();
   await resumePendingJobIfNeeded();
   return true;
 }
@@ -2737,11 +2765,31 @@ function reconcilePendingJobWithHistory(history, conversationId = activeConversa
   }
 }
 
+function shouldPollHistory() {
+  return canUseApi() && !document.hidden && Boolean(activeConversation?.id);
+}
+
 function startHistoryPolling() {
-  if (historyPollTimer) {
-    clearInterval(historyPollTimer);
+  if (historyPollTimer || !shouldPollHistory()) {
+    return;
   }
   historyPollTimer = window.setInterval(refreshHistoryIfChanged, 5000);
+}
+
+function stopHistoryPolling() {
+  if (!historyPollTimer) {
+    return;
+  }
+  window.clearInterval(historyPollTimer);
+  historyPollTimer = null;
+}
+
+function syncHistoryPolling() {
+  if (shouldPollHistory()) {
+    startHistoryPolling();
+    return;
+  }
+  stopHistoryPolling();
 }
 
 function stopConversationEvents() {
@@ -4354,8 +4402,35 @@ applySettingsToForm();
 renderHome();
 updateChatTitle();
 updateConversationSearchClearButton();
+function startClientServerVersionPolling() {
+  if (versionCheckTimer || document.hidden) {
+    return;
+  }
+  versionCheckTimer = window.setInterval(checkClientServerVersion, 10 * 60 * 1000);
+}
+
+function stopClientServerVersionPolling() {
+  if (!versionCheckTimer) {
+    return;
+  }
+  window.clearInterval(versionCheckTimer);
+  versionCheckTimer = null;
+}
+
+function syncPageLifecyclePolling() {
+  syncHistoryPolling();
+  if (document.hidden) {
+    stopClientServerVersionPolling();
+    return;
+  }
+  startClientServerVersionPolling();
+  checkClientServerVersion();
+  refreshHistoryIfChanged().catch(() => {});
+}
+
+document.addEventListener('visibilitychange', syncPageLifecyclePolling);
 checkClientServerVersion();
-window.setInterval(checkClientServerVersion, 10 * 60 * 1000);
+startClientServerVersionPolling();
 const initialConversationId = conversationIdFromPath();
 (async () => {
   const user = await loadCurrentUser();

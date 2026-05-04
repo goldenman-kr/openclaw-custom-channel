@@ -19,7 +19,13 @@ function unusedConversationStore(): ConversationStore & MessageStore & JobStore 
     getConversation() {
       return null;
     },
+    getConversationByOpenClawSessionId() {
+      return null;
+    },
     listConversations() {
+      return [];
+    },
+    searchConversationMessageText() {
       return [];
     },
     updateConversation() {

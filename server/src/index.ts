@@ -467,14 +467,7 @@ function jobForRequest(jobId: string, request: IncomingMessage, url: URL): JobEv
 }
 
 function conversationForOpenClawSessionId(openclawSessionId: string): ConversationRecord | null {
-  if (openclawSessionId.startsWith("web-conv_")) {
-    const candidate = chatStore.getConversation(openclawSessionId.slice("web-".length));
-    if (candidate?.openclawSessionId === openclawSessionId) {
-      return candidate;
-    }
-  }
-  return chatStore.listConversations({ includeArchived: true, limit: 500 })
-    .find((conversation) => conversation.openclawSessionId === openclawSessionId) ?? null;
+  return chatStore.getConversationByOpenClawSessionId(openclawSessionId);
 }
 
 function isConversationVisibleForRequest(conversationId: string, request: IncomingMessage): boolean {

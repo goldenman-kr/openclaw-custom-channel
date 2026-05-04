@@ -89,6 +89,11 @@ export function conversationIdFromPath(pathname: string, suffix = ""): string | 
   return decodeURIComponent(raw);
 }
 
+
+function searchQueryFromUrl(url: URL): string {
+  return (url.searchParams.get("query") ?? "").trim().slice(0, 200);
+}
+
 function titleFromPayload(payload: unknown): string | undefined {
   if (typeof payload !== "object" || payload === null) {
     return undefined;
@@ -117,6 +122,35 @@ export async function handleConversationRoute(
   url: URL,
   deps: ConversationRouteDeps,
 ): Promise<boolean> {
+
+  if (url.pathname === "/v1/conversations/search" && request.method === "GET") {
+    if (!deps.isAuthorized(request)) {
+      deps.sendJson(response, 401, deps.makeErrorResponse("AUTH_INVALID_TOKEN", "API key is invalid."));
+      return true;
+    }
+
+    const auth = deps.getAuthContext(request);
+    if (!auth) {
+      deps.sendJson(response, 401, deps.makeErrorResponse("AUTH_INVALID_TOKEN", "Login is required."));
+      return true;
+    }
+
+    const query = searchQueryFromUrl(url);
+    const matchedConversationIds = query
+      ? deps.conversationStore.searchConversationMessageText({
+          query,
+          ownerId: auth.user.role === "admin" ? undefined : auth.user.id,
+          includeArchived: url.searchParams.get("include_archived") === "1",
+        })
+      : [];
+    const visibleIds = matchedConversationIds.filter((id) => {
+      const conversation = deps.conversationStore.getConversation(id);
+      return conversation ? deps.isConversationVisibleToAuth(conversation, auth) : false;
+    });
+    deps.sendJson(response, 200, { conversation_ids: visibleIds });
+    return true;
+  }
+
   if (url.pathname === "/v1/conversations" && ["GET", "POST"].includes(request.method ?? "")) {
     if (!deps.isAuthorized(request)) {
       deps.sendJson(response, 401, deps.makeErrorResponse("AUTH_INVALID_TOKEN", "API key is invalid."));
