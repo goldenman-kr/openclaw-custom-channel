@@ -10,6 +10,7 @@ import { applyDisplaySettings as applyDisplaySettingsToElements, applyTheme, nor
 import { fetchHistory as fetchHistoryFromApi, fetchHistoryMeta as fetchHistoryMetaFromApi } from './modules/history-api.js';
 import { createHistoryLoadMoreControl, resetHistoryLoadMoreButton } from './modules/history-controls.js';
 import { createHomeScreen } from './modules/home-screen.js';
+import { hideLoginScreen as hideLoginScreenView, showLoginScreen as showLoginScreenView } from './modules/login-screen.js';
 import { isPendingHistoryMessage, isPlaceholderPendingText, isRunningJobHistoryMessage, shouldRerenderHistory as shouldRerenderHistorySnapshot } from './modules/history-state.js';
 import { canonicalMediaRefKey, isImageRef, isPlaceholderMediaRef, normalizeMediaRefPath, shortenFileName } from './modules/media.js';
 import { conversationIdFromPath, syncConversationUrl } from './modules/navigation.js';
@@ -24,7 +25,7 @@ import './plugins/spot-order-card.js';
 import './plugins/spot-wallet-intent.js';
 
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
-const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-062';
+const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-063';
 const CLIENT_API_VERSION = 1;
 const elements = {
   loginScreen: document.querySelector('#loginScreen'),
@@ -726,19 +727,17 @@ async function apiFetch(path, options = {}) {
 }
 
 function showLoginScreen(message = '') {
-  elements.loginScreen?.classList.remove('hidden');
-  document.body.classList.add('auth-required');
-  if (elements.loginStatusText) {
-    elements.loginStatusText.textContent = message;
-  }
+  showLoginScreenView({
+    screen: elements.loginScreen,
+    statusText: elements.loginStatusText,
+  }, message);
 }
 
 function hideLoginScreen() {
-  elements.loginScreen?.classList.add('hidden');
-  document.body.classList.remove('auth-required');
-  if (elements.loginPasswordInput) {
-    elements.loginPasswordInput.value = '';
-  }
+  hideLoginScreenView({
+    screen: elements.loginScreen,
+    passwordInput: elements.loginPasswordInput,
+  });
 }
 
 async function loadCurrentUser() {
