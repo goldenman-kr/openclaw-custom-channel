@@ -1,4 +1,4 @@
-const CACHE_NAME = 'openclaw-web-channel-v213';
+const CACHE_NAME = 'openclaw-web-channel-v214';
 const ASSETS = [
   '/',
   '/index.html',
@@ -15,6 +15,7 @@ const ASSETS = [
   '/modules/history-state.js',
   '/modules/media.js',
   '/modules/navigation.js',
+  '/modules/scroll-ui.js',
   '/modules/settings.js',
   '/modules/slash-commands.js',
   '/modules/toast.js',

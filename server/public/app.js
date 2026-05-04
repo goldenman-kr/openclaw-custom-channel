@@ -10,6 +10,7 @@ import { isPendingHistoryMessage, isPlaceholderPendingText, isRunningJobHistoryM
 import { canonicalMediaRefKey, isImageRef, isPlaceholderMediaRef, normalizeMediaRefPath, shortenFileName } from './modules/media.js';
 import { conversationIdFromPath, syncConversationUrl } from './modules/navigation.js';
 import { loadSettings, normalizeHistoryPageSize, randomDeviceId, saveSettings } from './modules/settings.js';
+import { isNearBottom as isMessagesNearBottom, hideMessagesScrollIndicator, hideScrollToLatestButton as hideScrollButton, showScrollToLatestButton as showScrollButton, updateMessagesScrollIndicator as updateMessagesScrollIndicatorUi } from './modules/scroll-ui.js';
 import { applyStoredSidebarWidth, clampSidebarWidth, saveSidebarWidth, SIDEBAR_RESIZE_MEDIA } from './modules/sidebar-width.js';
 import { matchingSlashCommands as findMatchingSlashCommands } from './modules/slash-commands.js';
 import { showToast } from './modules/toast.js';
@@ -19,7 +20,7 @@ import './plugins/spot-order-card.js';
 import './plugins/spot-wallet-intent.js';
 
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
-const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-057';
+const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-058';
 const CLIENT_API_VERSION = 1;
 const elements = {
   loginScreen: document.querySelector('#loginScreen'),
@@ -471,44 +472,25 @@ async function checkClientServerVersion() {
   });
 }
 function isNearBottom(threshold = 120) {
-  return elements.messages.scrollHeight - elements.messages.scrollTop - elements.messages.clientHeight < threshold;
+  return isMessagesNearBottom(elements.messages, threshold);
 }
 
 function showScrollToLatestButton() {
-  elements.scrollToLatestButton?.classList.remove('hidden');
+  showScrollButton(elements.scrollToLatestButton);
 }
 
 function hideScrollToLatestButton() {
-  elements.scrollToLatestButton?.classList.add('hidden');
+  hideScrollButton(elements.scrollToLatestButton);
 }
 
 function updateMessagesScrollIndicator() {
-  const indicator = elements.messagesScrollIndicator;
-  if (!indicator) {
-    return;
-  }
-  const { scrollHeight, clientHeight, scrollTop } = elements.messages;
-  if (scrollHeight <= clientHeight + 1) {
-    indicator.classList.remove('visible');
-    return;
-  }
-  const trackHeight = clientHeight;
-  const thumbHeight = clamp((clientHeight / scrollHeight) * trackHeight, 36, Math.max(36, trackHeight));
-  const maxThumbTop = Math.max(0, trackHeight - thumbHeight);
-  const maxScrollTop = Math.max(1, scrollHeight - clientHeight);
-  const thumbTop = (scrollTop / maxScrollTop) * maxThumbTop;
-  const messagesRect = elements.messages.getBoundingClientRect();
-  indicator.style.top = `${messagesRect.top}px`;
-  indicator.style.height = `${thumbHeight}px`;
-  indicator.style.transform = `translateY(${thumbTop}px)`;
-  indicator.classList.add('visible');
+  updateMessagesScrollIndicatorUi(elements.messages, elements.messagesScrollIndicator);
 }
 
 function hideMessagesScrollIndicatorSoon() {
   window.clearTimeout(messagesScrollIndicatorTimer);
   messagesScrollIndicatorTimer = window.setTimeout(() => {
-    elements.messages.classList.remove('is-scrolling');
-    elements.messagesScrollIndicator?.classList.remove('visible');
+    hideMessagesScrollIndicator(elements.messages, elements.messagesScrollIndicator);
   }, 800);
 }
 
@@ -526,7 +508,6 @@ function scrollToBottom(options = {}) {
     hideScrollToLatestButton();
   });
 }
-
 function preserveScrollAfterRender(previousBottomOffset) {
   const restore = () => {
     elements.messages.scrollTop = Math.max(0, elements.messages.scrollHeight - previousBottomOffset);
