@@ -1,18 +1,16 @@
 import { MAX_ATTACHMENTS, MAX_ATTACHMENT_BYTES, ALLOWED_ATTACHMENT_TYPES, formatBytes, inferAttachmentMimeType } from './modules/attachments.js';
 import { canonicalMediaRefKey, isImageRef, isPlaceholderMediaRef, normalizeMediaRefPath, shortenFileName } from './modules/media.js';
+import { loadSettings, normalizeHistoryPageSize, randomDeviceId, saveSettings } from './modules/settings.js';
 import { renderCodeBlockPlugin } from './plugins/plugin-registry.js';
 import './plugins/spot-order-card.js';
 import './plugins/spot-wallet-intent.js';
 
-const STORAGE_KEY = 'openclaw-web-channel-settings-v1';
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
 const COMPOSER_DRAFT_KEY_PREFIX = 'openclaw-web-channel-composer-draft-v1';
 const SIDEBAR_WIDTH_KEY = 'openclaw-web-channel-sidebar-width-v1';
-const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-041';
+const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-042';
 const CLIENT_API_VERSION = 1;
 const VERSION_CHECK_DISMISSED_KEY = 'openclaw-web-channel-version-dismissed-v1';
-const HISTORY_PAGE_SIZE_OPTIONS = [100, 200, 300, 400, 500];
-
 const elements = {
   loginScreen: document.querySelector('#loginScreen'),
   loginForm: document.querySelector('#loginForm'),
@@ -91,13 +89,6 @@ const elements = {
   statusText: document.querySelector('#statusText'),
 };
 
-function randomDeviceId() {
-  if (crypto.randomUUID) {
-    return crypto.randomUUID();
-  }
-  return `web-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-}
-
 function isMobileLikeInput() {
   return window.matchMedia('(pointer: coarse)').matches || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
 }
@@ -109,40 +100,6 @@ function slashCommandUsesCurrentLocation(message) {
     return false;
   }
   return args.join(' ').includes('여기');
-}
-
-function normalizeHistoryPageSize(value) {
-  const size = Number(value);
-  if (!Number.isFinite(size)) {
-    return 300;
-  }
-  const rounded = Math.round(size / 100) * 100;
-  return HISTORY_PAGE_SIZE_OPTIONS.includes(rounded) ? rounded : 300;
-}
-
-function loadSettings() {
-  const fallback = {
-    apiUrl: window.location.origin,
-    apiKey: '',
-    deviceId: randomDeviceId(),
-    themeMode: 'dark',
-    fontSize: 16,
-    notificationsEnabled: false,
-    sessionNonce: '',
-    lastActiveConversationId: '',
-    autoLocationOnHere: true,
-    historyPageSize: 300,
-  };
-
-  try {
-    return { ...fallback, ...JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}') };
-  } catch {
-    return fallback;
-  }
-}
-
-function saveSettings(settings) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
 }
 
 const SIDEBAR_WIDTH_MIN = 240;
