@@ -5,7 +5,7 @@ const STORAGE_KEY = 'openclaw-web-channel-settings-v1';
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
 const COMPOSER_DRAFT_KEY_PREFIX = 'openclaw-web-channel-composer-draft-v1';
 const SIDEBAR_WIDTH_KEY = 'openclaw-web-channel-sidebar-width-v1';
-const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-033';
+const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-034';
 const CLIENT_API_VERSION = 1;
 const VERSION_CHECK_DISMISSED_KEY = 'openclaw-web-channel-version-dismissed-v1';
 const MAX_ATTACHMENTS = 3;
@@ -4674,6 +4674,6 @@ elements.messageInput.addEventListener('keydown', (event) => {
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-04-033').catch(() => {});
+    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-04-034').catch(() => {});
   });
 }

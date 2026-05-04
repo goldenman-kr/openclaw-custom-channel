@@ -228,34 +228,68 @@ function renderSpotOrderCard({ parent, codeText, context, fallback }) {
 
   let connectedAccount = '';
   let connectButton;
-  function updateConnectButton() {
+  function updateConnectedAccount(account, options = {}) {
+    connectedAccount = account || '';
     if (connectButton) {
       connectButton.textContent = connectedAccount ? '연결 끊기' : '지갑 연결';
+      connectButton.setAttribute('aria-pressed', connectedAccount ? 'true' : 'false');
+    }
+    if (connectedAccount && !options.silent) {
+      setStatus(status, `연결됨: ${connectedAccount}`, 'ok');
+    }
+  }
+  async function hydrateConnectedAccount() {
+    if (mobileUnsupported || !window.ethereum?.request) {
+      return;
+    }
+    try {
+      const accounts = await window.ethereum.request({ method: 'eth_accounts' });
+      const account = accounts?.[0] || '';
+      if (normalizeAddress(account) && normalizeAddress(swapper) && normalizeAddress(account) !== normalizeAddress(swapper)) {
+        return;
+      }
+      updateConnectedAccount(account, { silent: true });
+    } catch {
+      // Silent hydration only; explicit connect surfaces errors.
     }
   }
   connectButton = createButton('지갑 연결', async () => {
     try {
       if (connectedAccount) {
         const revoked = await revokeWalletPermissionsIfSupported();
-        connectedAccount = '';
-        updateConnectButton();
+        updateConnectedAccount('');
         setStatus(status, revoked ? '지갑 연결을 해제했습니다.' : '이 카드의 지갑 연결 상태를 해제했습니다.', 'ok');
         return;
       }
       const accounts = await requestAccounts();
-      connectedAccount = accounts?.[0] || '';
-      if (normalizeAddress(connectedAccount) && normalizeAddress(swapper) && normalizeAddress(connectedAccount) !== normalizeAddress(swapper)) {
-        setStatus(status, `연결 지갑과 주문 swapper가 다릅니다. 연결=${connectedAccount}, swapper=${swapper}`, 'error');
-        connectedAccount = '';
-        updateConnectButton();
+      const account = accounts?.[0] || '';
+      if (normalizeAddress(account) && normalizeAddress(swapper) && normalizeAddress(account) !== normalizeAddress(swapper)) {
+        setStatus(status, `연결 지갑과 주문 swapper가 다릅니다. 연결=${account}, swapper=${swapper}`, 'error');
+        updateConnectedAccount('');
         return;
       }
-      updateConnectButton();
-      setStatus(status, connectedAccount ? `연결됨: ${connectedAccount}` : '연결된 계정이 없습니다.', connectedAccount ? 'ok' : 'warn');
+      updateConnectedAccount(account);
+      if (!account) {
+        setStatus(status, '연결된 계정이 없습니다.', 'warn');
+      }
     } catch (connectError) {
       setStatus(status, connectError instanceof Error ? connectError.message : String(connectError), 'error');
     }
   }, { disabled: mobileUnsupported });
+  window.ethereum?.on?.('accountsChanged', (accounts) => {
+    const account = accounts?.[0] || '';
+    if (normalizeAddress(account) && normalizeAddress(swapper) && normalizeAddress(account) !== normalizeAddress(swapper)) {
+      updateConnectedAccount('');
+      setStatus(status, `연결 지갑과 주문 swapper가 다릅니다. 연결=${account}, swapper=${swapper}`, 'error');
+      return;
+    }
+    updateConnectedAccount(account);
+    if (!account) {
+      setStatus(status, '지갑 연결이 해제되었습니다.', 'warn');
+    }
+  });
+  hydrateConnectedAccount();
+
   actions.append(
     connectButton,
     createButton('주소 복사', async () => {
