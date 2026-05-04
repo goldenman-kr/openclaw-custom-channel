@@ -1,6 +1,6 @@
 import { MAX_ATTACHMENTS, MAX_ATTACHMENT_BYTES, ALLOWED_ATTACHMENT_TYPES, formatBytes, inferAttachmentMimeType } from './modules/attachments.js';
 import { conversationTitle, formatConversationDate, formatMessageTimestamp } from './modules/conversation-format.js';
-import { applyDisplaySettings as applyDisplaySettingsToElements, applyTheme, syncNativeTheme } from './modules/display.js';
+import { applyDisplaySettings as applyDisplaySettingsToElements, applyTheme, normalizeFontSize, syncNativeTheme } from './modules/display.js';
 import { canonicalMediaRefKey, isImageRef, isPlaceholderMediaRef, normalizeMediaRefPath, shortenFileName } from './modules/media.js';
 import { conversationIdFromPath, syncConversationUrl } from './modules/navigation.js';
 import { loadSettings, normalizeHistoryPageSize, randomDeviceId, saveSettings } from './modules/settings.js';
@@ -11,7 +11,7 @@ import './plugins/spot-wallet-intent.js';
 
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
 const COMPOSER_DRAFT_KEY_PREFIX = 'openclaw-web-channel-composer-draft-v1';
-const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-046';
+const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-047';
 const CLIENT_API_VERSION = 1;
 const VERSION_CHECK_DISMISSED_KEY = 'openclaw-web-channel-version-dismissed-v1';
 const elements = {
