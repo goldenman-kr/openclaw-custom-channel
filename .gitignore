@@ -8,6 +8,7 @@
 node_modules/
 dist/
 server/state/
+TODO.md
 
 # Flutter / Dart
 build/
