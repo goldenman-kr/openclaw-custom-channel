@@ -12,14 +12,14 @@ import { conversationIdFromPath, syncConversationUrl } from './modules/navigatio
 import { loadSettings, normalizeHistoryPageSize, randomDeviceId, saveSettings } from './modules/settings.js';
 import { applyStoredSidebarWidth, clampSidebarWidth, saveSidebarWidth, SIDEBAR_RESIZE_MEDIA } from './modules/sidebar-width.js';
 import { matchingSlashCommands as findMatchingSlashCommands } from './modules/slash-commands.js';
+import { checkClientServerVersion as checkClientServerVersionWithDeps } from './modules/version-check.js';
 import { renderCodeBlockPlugin } from './plugins/plugin-registry.js';
 import './plugins/spot-order-card.js';
 import './plugins/spot-wallet-intent.js';
 
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
-const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-055';
+const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-056';
 const CLIENT_API_VERSION = 1;
-const VERSION_CHECK_DISMISSED_KEY = 'openclaw-web-channel-version-dismissed-v1';
 const elements = {
   loginScreen: document.querySelector('#loginScreen'),
   loginForm: document.querySelector('#loginForm'),
@@ -481,84 +481,15 @@ function showToast(message, options = {}) {
   }, options.durationMs || 2400);
 }
 
-function showVersionMismatchAlert(reason, details = {}) {
-  const latestVersion = details.latestVersion || details.minVersion || 'unknown';
-  const currentVersion = details.currentVersion || CLIENT_ASSET_VERSION;
-  const dismissKey = `${reason}:${currentVersion}:${latestVersion}`;
-  if (localStorage.getItem(VERSION_CHECK_DISMISSED_KEY) === dismissKey || document.querySelector('.version-alert')) {
-    return;
-  }
-
-  const isApiMismatch = reason === 'api';
-  const alert = document.createElement('section');
-  alert.className = 'version-alert';
-  alert.setAttribute('role', 'alert');
-  alert.innerHTML = `
-    <div class="version-alert__text">
-      <strong>${isApiMismatch ? '웹앱 호환성 업데이트가 필요합니다.' : '웹앱 업데이트가 필요합니다.'}</strong>
-      <span>${isApiMismatch ? '서버 API와 현재 웹앱이 호환되지 않습니다. 강력 새로고침 후에도 반복되면 서버 재시작이 필요합니다.' : '새 웹앱 파일이 배포되었습니다. 강력 새로고침을 하면 적용됩니다.'}</span>
-    </div>
-    <div class="version-alert__actions">
-      <button class="ghost-button version-alert__dismiss" type="button">나중에</button>
-      <button class="version-alert__refresh" type="button">강력 새로고침</button>
-    </div>
-  `;
-  alert.querySelector('.version-alert__refresh')?.addEventListener('click', () => clearAppCacheAndReload());
-  alert.querySelector('.version-alert__dismiss')?.addEventListener('click', () => {
-    localStorage.setItem(VERSION_CHECK_DISMISSED_KEY, dismissKey);
-    alert.remove();
-  });
-  document.body.append(alert);
-}
-
-async function checkClientAssetVersion() {
-  try {
-    const response = await fetch(`${settings.apiUrl}/client-version.json?ts=${Date.now()}`, {
-      cache: 'no-store',
-    });
-    if (!response.ok) {
-      return;
-    }
-    const body = await response.json();
-    const latestAssetVersion = String(body?.client_asset_version || '');
-    if (latestAssetVersion && latestAssetVersion !== CLIENT_ASSET_VERSION) {
-      showVersionMismatchAlert('asset', {
-        currentVersion: CLIENT_ASSET_VERSION,
-        latestVersion: latestAssetVersion,
-      });
-    }
-  } catch {
-    // Version checks are best-effort only.
-  }
-}
-
-async function checkServerApiCompatibility() {
-  try {
-    const response = await fetch(`${settings.apiUrl}/v1/version`, {
-      cache: 'no-store',
-      headers: await apiHeaders(),
-    });
-    if (!response.ok) {
-      return;
-    }
-    const body = await response.json();
-    const minClientApiVersion = Number(body?.min_client_api_version || 1);
-    if (Number.isFinite(minClientApiVersion) && CLIENT_API_VERSION < minClientApiVersion) {
-      showVersionMismatchAlert('api', {
-        currentVersion: String(CLIENT_API_VERSION),
-        minVersion: String(minClientApiVersion),
-      });
-    }
-  } catch {
-    // Version checks are best-effort only.
-  }
-}
-
 async function checkClientServerVersion() {
-  await checkClientAssetVersion();
-  await checkServerApiCompatibility();
+  await checkClientServerVersionWithDeps({
+    apiUrl: settings.apiUrl,
+    apiHeaders,
+    clearAppCacheAndReload,
+    clientApiVersion: CLIENT_API_VERSION,
+    clientAssetVersion: CLIENT_ASSET_VERSION,
+  });
 }
-
 function isNearBottom(threshold = 120) {
   return elements.messages.scrollHeight - elements.messages.scrollTop - elements.messages.clientHeight < threshold;
 }
