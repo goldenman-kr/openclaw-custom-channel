@@ -1,4 +1,5 @@
 import { MAX_ATTACHMENTS, MAX_ATTACHMENT_BYTES, ALLOWED_ATTACHMENT_TYPES, formatBytes, inferAttachmentMimeType } from './modules/attachments.js';
+import { canonicalMediaRefKey, isImageRef, isPlaceholderMediaRef, normalizeMediaRefPath, shortenFileName } from './modules/media.js';
 import { renderCodeBlockPlugin } from './plugins/plugin-registry.js';
 import './plugins/spot-order-card.js';
 import './plugins/spot-wallet-intent.js';
@@ -7,7 +8,7 @@ const STORAGE_KEY = 'openclaw-web-channel-settings-v1';
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
 const COMPOSER_DRAFT_KEY_PREFIX = 'openclaw-web-channel-composer-draft-v1';
 const SIDEBAR_WIDTH_KEY = 'openclaw-web-channel-sidebar-width-v1';
-const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-040';
+const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-041';
 const CLIENT_API_VERSION = 1;
 const VERSION_CHECK_DISMISSED_KEY = 'openclaw-web-channel-version-dismissed-v1';
 const HISTORY_PAGE_SIZE_OPTIONS = [100, 200, 300, 400, 500];
@@ -2815,26 +2816,6 @@ function extractMediaRefs(text) {
   return { text: visibleText || (refs.length > 0 ? '' : text), refs };
 }
 
-function isImageRef(ref) {
-  return /\.(png|jpe?g|webp|gif|svg)(\?.*)?$/i.test(ref);
-}
-
-function isPlaceholderMediaRef(ref) {
-  return !ref || ref === '/파일경로' || ref === '파일경로' || ref.includes('/파일경로');
-}
-
-function shortenFileName(name, maxLength = 34) {
-  if (!name || name.length <= maxLength) {
-    return name;
-  }
-  const dotIndex = name.lastIndexOf('.');
-  const extension = dotIndex > 0 && name.length - dotIndex <= 10 ? name.slice(dotIndex) : '';
-  const base = extension ? name.slice(0, dotIndex) : name;
-  const headLength = Math.max(8, Math.floor((maxLength - extension.length - 1) * 0.55));
-  const tailLength = Math.max(6, maxLength - extension.length - headLength - 1);
-  return `${base.slice(0, headLength)}…${base.slice(-tailLength)}${extension}`;
-}
-
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
@@ -3081,24 +3062,6 @@ async function getAuthorizedMediaUrl(ref) {
   mediaUrlCache.set(ref, url);
   pruneMediaUrlCache();
   return url;
-}
-
-function normalizeMediaRefPath(ref) {
-  if (typeof ref !== 'string') {
-    return '';
-  }
-  if (ref.startsWith('file://')) {
-    try {
-      return decodeURIComponent(new URL(ref).pathname);
-    } catch {
-      return ref;
-    }
-  }
-  return ref;
-}
-
-function canonicalMediaRefKey(ref) {
-  return normalizeMediaRefPath(ref).trim().replace(/\/+$/, '');
 }
 
 function appendMediaRef(parent, rawRef) {
