@@ -1,4 +1,4 @@
-const CACHE_NAME = 'openclaw-web-channel-v214';
+const CACHE_NAME = 'openclaw-web-channel-v215';
 const ASSETS = [
   '/',
   '/index.html',
@@ -6,6 +6,7 @@ const ASSETS = [
   '/app.js',
   '/modules/attachments.js',
   '/modules/composer-draft.js',
+  '/modules/composer-input.js',
   '/modules/conversation-format.js',
   '/modules/conversation-list.js',
   '/modules/conversation-search.js',

@@ -2,6 +2,7 @@ import { MAX_ATTACHMENTS, MAX_ATTACHMENT_BYTES, ALLOWED_ATTACHMENT_TYPES, format
 import { baseVisibleConversations as filterBaseVisibleConversations, conversationMatchesTitle as matchesConversationTitle, isConversationArchived, normalizeConversationSearchQuery, sortConversations, visibleConversations as filterVisibleConversations } from './modules/conversation-list.js';
 import { searchConversationContent } from './modules/conversation-search.js';
 import { clearComposerDraft as clearStoredComposerDraft, loadComposerDraft, saveComposerDraft as saveStoredComposerDraft } from './modules/composer-draft.js';
+import { autoResizeTextarea as resizeComposerTextarea, updateClearMessageInputButton as updateComposerClearButton } from './modules/composer-input.js';
 import { conversationTitle, formatConversationDate, formatMessageTimestamp } from './modules/conversation-format.js';
 import { applyDisplaySettings as applyDisplaySettingsToElements, applyTheme, normalizeFontSize, syncNativeTheme } from './modules/display.js';
 import { fetchHistory as fetchHistoryFromApi, fetchHistoryMeta as fetchHistoryMetaFromApi } from './modules/history-api.js';
@@ -20,7 +21,7 @@ import './plugins/spot-order-card.js';
 import './plugins/spot-wallet-intent.js';
 
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
-const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-058';
+const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-059';
 const CLIENT_API_VERSION = 1;
 const elements = {
   loginScreen: document.querySelector('#loginScreen'),
@@ -3846,13 +3847,11 @@ async function healthCheck() {
 }
 
 function updateClearMessageInputButton() {
-  elements.clearMessageInputButton?.classList.toggle('hidden', elements.messageInput.value.length === 0);
+  updateComposerClearButton(elements.clearMessageInputButton, elements.messageInput.value);
 }
 
 function autoResizeTextarea() {
-  elements.messageInput.style.height = 'auto';
-  const minHeight = Number.parseFloat(getComputedStyle(elements.messageInput).minHeight) || 74;
-  elements.messageInput.style.height = `${Math.max(minHeight, Math.min(elements.messageInput.scrollHeight, 150))}px`;
+  resizeComposerTextarea(elements.messageInput);
   updateClearMessageInputButton();
 }
 
