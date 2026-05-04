@@ -5,6 +5,7 @@ import { baseVisibleConversations as filterBaseVisibleConversations, conversatio
 import { searchConversationContent } from './modules/conversation-search.js';
 import { applyComposerAvailability, composerAvailabilityState } from './modules/composer-availability.js';
 import { clearComposerDraft as clearStoredComposerDraft, loadComposerDraft, saveComposerDraft as saveStoredComposerDraft } from './modules/composer-draft.js';
+import { apiUrl as buildApiUrl, assertValidApiKey, normalizeApiKey } from './modules/api-client.js';
 import { autoResizeTextarea as resizeComposerTextarea, updateClearMessageInputButton as updateComposerClearButton } from './modules/composer-input.js';
 import { conversationTitle, formatConversationDate, formatMessageTimestamp } from './modules/conversation-format.js';
 import { applyDisplaySettings as applyDisplaySettingsToElements, applyTheme, normalizeFontSize, syncNativeTheme } from './modules/display.js';
@@ -26,7 +27,7 @@ import './plugins/spot-order-card.js';
 import './plugins/spot-wallet-intent.js';
 
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
-const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-064';
+const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-065';
 const CLIENT_API_VERSION = 1;
 const elements = {
   loginScreen: document.querySelector('#loginScreen'),
@@ -440,19 +441,6 @@ function attachmentSummary(files = selectedAttachments) {
   return `\n\n첨부 파일:\n${files.map((file) => `- ${file.name} (${inferAttachmentMimeType(file.name, file.type) || 'unknown'}, ${formatBytes(file.size)})`).join('\n')}`;
 }
 
-function normalizeApiKey(value) {
-  return value.trim().replace(/[\s\u200B-\u200D\uFEFF]/g, '');
-}
-
-function assertValidApiKey(apiKey) {
-  if (!apiKey) {
-    return;
-  }
-  if (!/^[A-Za-z0-9._~+-]+$/.test(apiKey)) {
-    throw new Error('API Key에 사용할 수 없는 문자가 포함되어 있습니다. 키만 다시 복사해서 붙여넣어 주세요.');
-  }
-}
-
 function readSettingsFromForm() {
   const apiUrl = elements.apiUrlInput?.value.trim().replace(/\/+$/, '') || window.location.origin;
   const apiKey = elements.apiKeyInput ? normalizeApiKey(elements.apiKeyInput.value) : settings.apiKey;
@@ -696,13 +684,7 @@ function canUseApi() {
 }
 
 function apiUrl(path, params = {}) {
-  const url = new URL(path, settings.apiUrl);
-  for (const [key, value] of Object.entries(params)) {
-    if (value !== undefined && value !== null && String(value).trim()) {
-      url.searchParams.set(key, String(value));
-    }
-  }
-  return url.toString();
+  return buildApiUrl(settings.apiUrl, path, params);
 }
 
 async function apiHeaders(extra = {}) {
