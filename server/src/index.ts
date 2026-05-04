@@ -18,6 +18,7 @@ import { handleHistoryRoute } from "./http/historyRoutes.js";
 import { handleJobRoute } from "./http/jobRoutes.js";
 import { handleMessageRoute } from "./http/messageRoutes.js";
 import { applyNativeModelSelection, getNativeModelMenu } from "./http/nativeCommands.js";
+import { handleSpotPluginRoute } from "./http/spotPluginRoutes.js";
 import { handleMediaRoute, handleStaticRoute } from "./http/staticRoutes.js";
 import { GatewayAutonomousAnnounceBridge } from "./openclaw/GatewayAutonomousAnnounceBridge.js";
 import { createOpenClawClient } from "./openclaw/createOpenClawClient.js";
@@ -31,6 +32,7 @@ import { FileHistoryStore, type HistoryAttachment } from "./session/HistoryStore
 import { AuthStore, publicUser, type WorkspaceScopeRecord } from "./session/AuthStore.js";
 import { InMemorySessionStore } from "./session/SessionStore.js";
 import { RestartFollowupStore, type RestartFollowupRecord } from "./session/RestartFollowupStore.js";
+import { SpotOrderStore } from "./session/SpotOrderStore.js";
 import { SqliteChatStore, type ConversationRecord } from "./session/SqliteChatStore.js";
 
 const host = process.env.HOST ?? "0.0.0.0";
@@ -63,6 +65,7 @@ const assistantGeneratedMediaDirs = (process.env.ASSISTANT_MEDIA_SCAN_DIRS ?? "/
 const chatDbPath = resolve(process.env.CHAT_DB_PATH ?? join(stateDir, "chat.sqlite"));
 const authStore = new AuthStore(chatDbPath);
 const chatStore = new SqliteChatStore(chatDbPath);
+const spotOrderStore = new SpotOrderStore(chatDbPath);
 const staleJobCleanup = chatStore.cancelStaleJobs({
   olderThanMs: Number(process.env.STALE_JOB_CLEANUP_AFTER_MS ?? 30 * 60 * 1000),
   reason: "Cancelled stale job on PWA service startup.",
@@ -674,6 +677,20 @@ const server = createServer(async (request, response) => {
           jobs.delete(jobId);
         }
       }
+    },
+  })) {
+    return;
+  }
+
+  if (await handleSpotPluginRoute(request, response, url, {
+    conversationStore: chatStore,
+    spotOrderStore,
+    getAuthContext,
+    isConversationVisibleToAuth,
+    sendJson,
+    readJsonBody,
+    publishConversationEvent(event) {
+      conversationEventPublisher.publish(event);
     },
   })) {
     return;
