@@ -5,8 +5,8 @@
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
-  "background_color": "#020b26",
-  "theme_color": "#05194f",
+  "background_color": "#151515",
+  "theme_color": "#151515",
   "icons": [
     {
       "src": "/assets/openclaw-app-icon-192.png",

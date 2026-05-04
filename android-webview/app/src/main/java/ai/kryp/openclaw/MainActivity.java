@@ -11,6 +11,7 @@ import android.os.Bundle;
 import android.os.Environment;
 import android.provider.MediaStore;
 import android.util.Base64;
+import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Toast;
 import java.io.File;
@@ -45,7 +46,7 @@ public class MainActivity extends Activity {
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.MATCH_PARENT
         ));
-        swipeRefreshLayout.setColorSchemeColors(0xFF38BDF8, 0xFF0EA5E9, 0xFF2563EB);
+        applyNativeTheme("dark");
         swipeRefreshLayout.setEnabled(false);
         swipeRefreshLayout.setOnRefreshListener(() -> webView.reload());
 
@@ -133,6 +134,28 @@ public class MainActivity extends Activity {
         }
     }
 
+    private void applyNativeTheme(String mode) {
+        boolean light = "light".equals(mode);
+        int barColor = light ? 0xFFE2E8F0 : 0xFF151515;
+        int refreshPrimary = light ? 0xFF64748B : 0xFFE5E5E5;
+        int refreshSecondary = light ? 0xFF94A3B8 : 0xFF737373;
+        int refreshTertiary = light ? 0xFFCBD5E1 : 0xFF404040;
+        getWindow().setStatusBarColor(barColor);
+        getWindow().setNavigationBarColor(barColor);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            int flags = getWindow().getDecorView().getSystemUiVisibility();
+            flags = light ? (flags | View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR) : (flags & ~View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                flags = light ? (flags | View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR) : (flags & ~View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR);
+            }
+            getWindow().getDecorView().setSystemUiVisibility(flags);
+        }
+        if (swipeRefreshLayout != null) {
+            swipeRefreshLayout.setColorSchemeColors(refreshPrimary, refreshSecondary, refreshTertiary);
+            swipeRefreshLayout.setProgressBackgroundColorSchemeColor(barColor);
+        }
+    }
+
     private void installScrollReporter() {
         webView.evaluateJavascript(
             "(function(){" +
@@ -183,6 +206,11 @@ public class MainActivity extends Activity {
                 webView.clearFormData();
                 Toast.makeText(MainActivity.this, "캐시를 삭제했습니다. 설정은 유지됩니다.", Toast.LENGTH_SHORT).show();
             });
+        }
+
+        @JavascriptInterface
+        public void setThemeMode(String mode) {
+            runOnUiThread(() -> applyNativeTheme(mode));
         }
     }
 

@@ -2,7 +2,7 @@ const STORAGE_KEY = 'openclaw-web-channel-settings-v1';
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
 const COMPOSER_DRAFT_KEY_PREFIX = 'openclaw-web-channel-composer-draft-v1';
 const SIDEBAR_WIDTH_KEY = 'openclaw-web-channel-sidebar-width-v1';
-const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-03-027';
+const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-03-030';
 const CLIENT_API_VERSION = 1;
 const VERSION_CHECK_DISMISSED_KEY = 'openclaw-web-channel-version-dismissed-v1';
 const MAX_ATTACHMENTS = 3;
@@ -277,9 +277,31 @@ function syncConversationUrl(conversationId, options = {}) {
 }
 
 
+function resolvedThemeMode(themeMode) {
+  if (themeMode === 'light' || themeMode === 'dark') {
+    return themeMode;
+  }
+  return window.matchMedia?.('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+}
+
+function syncNativeTheme(themeMode) {
+  const resolved = resolvedThemeMode(themeMode);
+  const themeColor = resolved === 'light' ? '#e2e8f0' : '#151515';
+  document.querySelector('meta[name="theme-color"]')?.setAttribute('content', themeColor);
+  window.OpenClawAndroid?.setThemeMode?.(resolved);
+  window.webkit?.messageHandlers?.openClawTheme?.postMessage?.({ mode: resolved, color: themeColor });
+}
+
 function applyTheme(themeMode) {
   document.documentElement.dataset.theme = ['light', 'dark'].includes(themeMode) ? themeMode : 'system';
+  syncNativeTheme(themeMode);
 }
+
+window.matchMedia?.('(prefers-color-scheme: light)').addEventListener?.('change', () => {
+  if (!['light', 'dark'].includes(settings.themeMode)) {
+    syncNativeTheme(settings.themeMode || 'system');
+  }
+});
 
 function normalizeFontSize(value) {
   const size = Number(value);
@@ -4432,6 +4454,6 @@ elements.messageInput.addEventListener('keydown', (event) => {
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-03-027').catch(() => {});
+    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-03-030').catch(() => {});
   });
 }

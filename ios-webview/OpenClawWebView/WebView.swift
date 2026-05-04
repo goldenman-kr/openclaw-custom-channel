@@ -13,16 +13,19 @@ struct WebView: UIViewRepresentable {
         configuration.websiteDataStore = .default()
         configuration.allowsInlineMediaPlayback = true
         configuration.defaultWebpagePreferences.allowsContentJavaScript = true
+        configuration.userContentController.add(context.coordinator, name: "openClawTheme")
 
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = context.coordinator
         webView.uiDelegate = context.coordinator
         webView.allowsBackForwardNavigationGestures = true
+        webView.isOpaque = false
+        context.coordinator.applyTheme("dark", to: webView)
         webView.scrollView.keyboardDismissMode = .interactive
         webView.scrollView.contentInsetAdjustmentBehavior = .never
 
         let refreshControl = UIRefreshControl()
-        refreshControl.tintColor = UIColor.systemCyan
+        refreshControl.tintColor = UIColor(white: 0.82, alpha: 1)
         refreshControl.addTarget(context.coordinator, action: #selector(Coordinator.refresh(_:)), for: .valueChanged)
         webView.scrollView.refreshControl = refreshControl
         context.coordinator.webView = webView
@@ -34,9 +37,30 @@ struct WebView: UIViewRepresentable {
 
     func updateUIView(_ webView: WKWebView, context: Context) {}
 
-    final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
+    final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
         weak var webView: WKWebView?
         weak var refreshControl: UIRefreshControl?
+
+        func applyTheme(_ mode: String, to webView: WKWebView? = nil) {
+            let light = mode == "light"
+            let background = light
+                ? UIColor(red: 226 / 255, green: 232 / 255, blue: 240 / 255, alpha: 1)
+                : UIColor(red: 21 / 255, green: 21 / 255, blue: 21 / 255, alpha: 1)
+            let tint = light ? UIColor(red: 100 / 255, green: 116 / 255, blue: 139 / 255, alpha: 1) : UIColor(white: 0.82, alpha: 1)
+            let targetWebView = webView ?? self.webView
+            targetWebView?.backgroundColor = background
+            targetWebView?.scrollView.backgroundColor = background
+            refreshControl?.tintColor = tint
+        }
+
+        func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+            guard message.name == "openClawTheme" else { return }
+            if let payload = message.body as? [String: Any], let mode = payload["mode"] as? String {
+                applyTheme(mode)
+            } else if let mode = message.body as? String {
+                applyTheme(mode)
+            }
+        }
 
         @objc func refresh(_ sender: UIRefreshControl) {
             webView?.reload()
