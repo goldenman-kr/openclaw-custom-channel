@@ -2,7 +2,7 @@ const STORAGE_KEY = 'openclaw-web-channel-settings-v1';
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
 const COMPOSER_DRAFT_KEY_PREFIX = 'openclaw-web-channel-composer-draft-v1';
 const SIDEBAR_WIDTH_KEY = 'openclaw-web-channel-sidebar-width-v1';
-const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-03-012';
+const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-03-027';
 const CLIENT_API_VERSION = 1;
 const VERSION_CHECK_DISMISSED_KEY = 'openclaw-web-channel-version-dismissed-v1';
 const MAX_ATTACHMENTS = 3;
@@ -240,6 +240,7 @@ let conversationSearchRunId = 0;
 let sidebarResizeState = null;
 const conversationSearchCache = new Map();
 let settingsPanelHistoryActive = false;
+let mobileDrawerHistoryActive = false;
 let authUser = null;
 
 function conversationIdFromPath(pathname = window.location.pathname) {
@@ -771,14 +772,31 @@ function isDesktopLayout() {
   return window.matchMedia('(min-width: 900px)').matches;
 }
 
-function openMobileDrawer() {
+function openMobileDrawer(options = {}) {
+  if (isDesktopLayout()) {
+    return;
+  }
+  const wasOpen = document.body.classList.contains('drawer-open');
   document.body.classList.add('drawer-open');
   elements.mobileMenuButton?.setAttribute('aria-expanded', 'true');
+  if (!wasOpen && options.pushHistory !== false && window.history?.pushState) {
+    window.history.pushState({ ...(window.history.state || {}), mobileDrawerOpen: true }, '', window.location.href);
+    mobileDrawerHistoryActive = true;
+  }
 }
 
-function closeMobileDrawer() {
+function closeMobileDrawer(options = {}) {
+  const wasOpen = document.body.classList.contains('drawer-open');
   document.body.classList.remove('drawer-open');
   elements.mobileMenuButton?.setAttribute('aria-expanded', 'false');
+  if (options.syncHistory && wasOpen && mobileDrawerHistoryActive && window.history?.back) {
+    mobileDrawerHistoryActive = false;
+    window.history.back();
+    return;
+  }
+  if (wasOpen || options.syncHistory === false) {
+    mobileDrawerHistoryActive = false;
+  }
 }
 
 function toggleMobileDrawer() {
@@ -788,7 +806,7 @@ function toggleMobileDrawer() {
     return;
   }
   if (document.body.classList.contains('drawer-open')) {
-    closeMobileDrawer();
+    closeMobileDrawer({ syncHistory: true });
   } else {
     openMobileDrawer();
   }
@@ -831,8 +849,9 @@ function handleDrawerSwipeEnd(event) {
   if (Math.abs(deltaX) < 90 || Math.abs(deltaY) > 70 || elapsed > 800) {
     return;
   }
+  event.preventDefault?.();
   if (deltaX > 0) {
-    openMobileDrawer();
+    elements.mobileMenuButton?.click();
   } else {
     openSettingsPanel();
   }
@@ -2021,7 +2040,7 @@ async function renderHistory(options = {}) {
 }
 
 function appendInlineMarkdown(parent, text) {
-  const pattern = /((?<![\p{L}\p{N}])\*\*([^*\n]+)\*\*(?![\p{L}\p{N}.]))|((?<![\p{L}\p{N}])\*([^*\n]+)\*(?![\p{L}\p{N}.]))|((?<![\p{L}\p{N}])_([^_\n]+)_(?![\p{L}\p{N}.]))|(`([^`\n]+)`)|(\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\))|(https?:\/\/[^\s<)]+)/gu;
+  const pattern = /(?<strong>(?<![\p{L}\p{N}_*])\*\*(?<strongText>[^*\n]+)\*\*(?!\*))|(?<starEm>(?<![\p{L}\p{N}_*])\*(?<starEmText>[^*\n]+)\*(?![\p{L}\p{N}_*]))|(?<underscoreEm>(?<![\p{L}\p{N}_])_(?<underscoreEmText>[^_\n]+)_(?![\p{L}\p{N}_]))|(?<code>`(?<codeText>[^`\n]+)`)|(?<link>\[(?<linkLabel>[^\]\n]+)\]\((?<linkUrl>https?:\/\/[^\s)]+)\))|(?<url>https?:\/\/[^\s<)]+)/gu;
   let lastIndex = 0;
   let match;
 
@@ -2030,21 +2049,21 @@ function appendInlineMarkdown(parent, text) {
       parent.append(document.createTextNode(text.slice(lastIndex, match.index)));
     }
 
-    if (match[2]) {
+    if (match.groups.strongText) {
       const strong = document.createElement('strong');
-      strong.textContent = match[2];
+      strong.textContent = match.groups.strongText;
       parent.append(strong);
-    } else if (match[4] || match[6]) {
+    } else if (match.groups.starEmText || match.groups.underscoreEmText) {
       const emphasis = document.createElement('em');
-      emphasis.textContent = match[4] || match[6];
+      emphasis.textContent = match.groups.starEmText || match.groups.underscoreEmText;
       parent.append(emphasis);
-    } else if (match[8]) {
+    } else if (match.groups.codeText) {
       const code = document.createElement('code');
-      code.textContent = match[8];
+      code.textContent = match.groups.codeText;
       parent.append(code);
     } else {
-      const label = match[10] || match[12];
-      const url = match[11] || match[12];
+      const label = match.groups.linkLabel || match.groups.url;
+      const url = match.groups.linkUrl || match.groups.url;
       const anchor = document.createElement('a');
       anchor.href = url;
       anchor.textContent = label;
@@ -4130,9 +4149,9 @@ elements.modelPickerButton?.addEventListener('click', (event) => {
   event.stopPropagation();
   toggleModelPicker();
 });
-elements.mobileDrawerBackdrop?.addEventListener('click', closeMobileDrawer);
+elements.mobileDrawerBackdrop?.addEventListener('click', () => closeMobileDrawer({ syncHistory: true }));
 elements.chatPanel?.addEventListener('touchstart', handleDrawerSwipeStart, { passive: true });
-elements.chatPanel?.addEventListener('touchend', handleDrawerSwipeEnd, { passive: true });
+elements.chatPanel?.addEventListener('touchend', handleDrawerSwipeEnd, { passive: false });
 
 document.addEventListener('click', (event) => {
   const target = event.target;
@@ -4302,6 +4321,10 @@ elements.mediaViewer.addEventListener('click', (event) => {
   }
 });
 window.addEventListener('popstate', () => {
+  if (document.body.classList.contains('drawer-open')) {
+    closeMobileDrawer({ syncHistory: false });
+    return;
+  }
   if (!elements.settingsPanel.classList.contains('hidden')) {
     closeSettingsPanel({ syncHistory: false });
     return;
@@ -4336,7 +4359,7 @@ document.addEventListener('keydown', (event) => {
     return;
   }
   if (event.key === 'Escape' && document.body.classList.contains('drawer-open')) {
-    closeMobileDrawer();
+    closeMobileDrawer({ syncHistory: true });
   }
 });
 renderModelPicker();
@@ -4409,6 +4432,6 @@ elements.messageInput.addEventListener('keydown', (event) => {
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-03-012').catch(() => {});
+    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-03-027').catch(() => {});
   });
 }
