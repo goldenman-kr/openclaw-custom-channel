@@ -51,3 +51,25 @@ export function setCancelJobButtonBusy(button, busy) {
   button.disabled = busy;
   button.setAttribute('aria-label', busy ? '응답 작업 중지 중' : '이 응답 작업 중지');
 }
+
+export function isPendingAssistantJobMessage({ role, text, pending, jobId }) {
+  const normalizedRole = String(role || '').split(/\s+/)[0];
+  const rawText = typeof text === 'string' ? text.trim() : '';
+  const looksPending = pending || rawText === '응답 대기 중입니다…' || rawText === '응답을 처리 중입니다…' || /^응답을 처리 중입니다\s*\(\d+초\)$/.test(rawText);
+  return looksPending && normalizedRole === 'assistant' && String(jobId || '').startsWith('job_');
+}
+
+export function mergeMediaRefs(primaryRefs = [], fallbackRefs = [], keyForRef = (ref) => ref) {
+  const mediaRefs = [];
+  const seenMediaRefs = new Set();
+  for (const ref of [...primaryRefs, ...fallbackRefs]) {
+    const refPath = typeof ref === 'string' ? ref : ref?.path;
+    const refKey = keyForRef(refPath);
+    if (!refKey || seenMediaRefs.has(refKey)) {
+      continue;
+    }
+    seenMediaRefs.add(refKey);
+    mediaRefs.push(ref);
+  }
+  return mediaRefs;
+}

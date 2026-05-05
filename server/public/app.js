@@ -1,12 +1,14 @@
+import { attachmentSummary as summarizeAttachments, buildAttachmentPayload, filesFromDataTransfer, hasDraggedFiles, validateAttachmentFile } from './modules/attachment-input.js';
 import { createAttachmentPreview } from './modules/attachment-preview.js';
-import { MAX_ATTACHMENTS, MAX_ATTACHMENT_BYTES, ALLOWED_ATTACHMENT_TYPES, formatBytes, inferAttachmentMimeType } from './modules/attachments.js';
+import { renderAttachmentTray as renderAttachmentTrayView } from './modules/attachment-tray.js';
+import { MAX_ATTACHMENTS, formatBytes } from './modules/attachments.js';
 import { createConversationListItem } from './modules/conversation-list-item.js';
 import { conversationListEmptyMessage as getConversationListEmptyMessage, createConversationListEmptyState, updateArchiveToggleButton as updateArchiveToggleButtonView, updateSidebarSummary as updateSidebarSummaryView } from './modules/conversation-list-view.js';
 import { baseVisibleConversations as filterBaseVisibleConversations, conversationMatchesTitle as matchesConversationTitle, isConversationArchived, normalizeConversationSearchQuery, sortConversations, visibleConversations as filterVisibleConversations } from './modules/conversation-list.js';
 import { searchConversationContent } from './modules/conversation-search.js';
 import { applyComposerAvailability, composerAvailabilityState } from './modules/composer-availability.js';
 import { clearComposerDraft as clearStoredComposerDraft, loadComposerDraft, saveComposerDraft as saveStoredComposerDraft } from './modules/composer-draft.js';
-import { apiUrl as buildApiUrl, assertValidApiKey, normalizeApiKey } from './modules/api-client.js';
+import { apiUrl as buildApiUrl, assertValidApiKey } from './modules/api-client.js';
 import { blobToBase64 } from './modules/blob-utils.js';
 import { copyTextToClipboard } from './modules/clipboard.js';
 import { createPlainCodeBlock } from './modules/code-block.js';
@@ -22,7 +24,7 @@ import { createHomeScreen } from './modules/home-screen.js';
 import { isMobileLikeInput, slashCommandUsesCurrentLocation } from './modules/input-context.js';
 import { hideLoginScreen as hideLoginScreenView, showLoginScreen as showLoginScreenView } from './modules/login-screen.js';
 import { getCurrentLocationMetadata } from './modules/location.js';
-import { renderedHistorySignature } from './modules/history-render-signature.js';
+import { messageTextWithoutAttachmentPreview, renderedHistorySignature } from './modules/history-render-signature.js';
 import { isPendingHistoryMessage, isPlaceholderPendingText, isRunningJobHistoryMessage, shouldRerenderHistory as shouldRerenderHistorySnapshot } from './modules/history-state.js';
 import { delay, isTerminalJobState, parseSseBlock } from './modules/job-utils.js';
 import { appendInlineMarkdown, countLeadingSpaces } from './modules/markdown-inline.js';
@@ -30,14 +32,18 @@ import { isMarkdownTableRow, isMarkdownTableSeparator, splitMarkdownTableRow } f
 import { appendMarkdownTable } from './modules/markdown-table-render.js';
 import { canonicalMediaRefKey, extractMediaRefs, isImageRef, isPlaceholderMediaRef, mediaRefsFromHistoryAttachments, normalizeMediaRefPath, shortenFileName } from './modules/media.js';
 import { clamp, pointerDistance, pointerMidpoint } from './modules/media-viewer-geometry.js';
-import { createCancelJobButton, createCopyButton, createRetryButton, ensureMessageActions, setCancelJobButtonBusy } from './modules/message-actions.js';
+import { collectBlobUrlsInUse, pruneMediaUrlCache as pruneMediaUrlCacheEntries, revokeCachedMediaUrl as revokeCachedMediaUrlEntry } from './modules/media-url-cache.js';
+import { createCancelJobButton, createCopyButton, createRetryButton, ensureMessageActions, isPendingAssistantJobMessage, mergeMediaRefs, setCancelJobButtonBusy } from './modules/message-actions.js';
 import { renderModelPicker as renderModelPickerView, updateModelPickerButtonState as updateModelPickerButtonStateView } from './modules/model-picker.js';
 import { closeDrawer, drawerSwipeGesture, isDesktopLayout as isDesktopViewport, isDrawerOpen, openDrawer, shouldIgnoreDrawerSwipe as shouldIgnoreDrawerSwipeTarget, toggleDesktopSidebar } from './modules/mobile-drawer.js';
 import { notificationsSupported, notifyReplyReady as notifyReplyReadyBrowser, requestNotificationPermission, updateNotificationButton as updateNotificationButtonView } from './modules/notifications.js';
 import { conversationIdFromPath, syncConversationUrl } from './modules/navigation.js';
+import { loadPendingJobFromStorage, pendingJobStorageKey as buildPendingJobStorageKey, pendingJobStoragePrefix as buildPendingJobStoragePrefix, prunePendingJobStorage } from './modules/pending-job-storage.js';
+import { applySettingsToFormControls, readSettingsFromFormControls } from './modules/settings-form.js';
 import { openSettingsPanel as openSettingsPanelView, closeSettingsPanel as closeSettingsPanelView } from './modules/settings-panel.js';
-import { loadSettings, normalizeHistoryPageSize, randomDeviceId, saveSettings } from './modules/settings.js';
+import { loadSettings, normalizeHistoryPageSize, saveSettings } from './modules/settings.js';
 import { isNearBottom as isMessagesNearBottom, hideMessagesScrollIndicator, hideScrollToLatestButton as hideScrollButton, showScrollToLatestButton as showScrollButton, updateMessagesScrollIndicator as updateMessagesScrollIndicatorUi } from './modules/scroll-ui.js';
+import { canResizeSidebar as canResizeSidebarView, sidebarResizeStateFromEvent, sidebarResizeWidth } from './modules/sidebar-resize.js';
 import { applyStoredSidebarWidth, clampSidebarWidth, saveSidebarWidth, SIDEBAR_RESIZE_MEDIA } from './modules/sidebar-width.js';
 import { matchingSlashCommands as findMatchingSlashCommands } from './modules/slash-commands.js';
 import { showToast } from './modules/toast.js';
@@ -48,7 +54,7 @@ import './plugins/spot-order-card.js';
 import './plugins/spot-wallet-intent.js';
 
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
-const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-084';
+const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-090';
 const CLIENT_API_VERSION = 1;
 const elements = {
   loginScreen: document.querySelector('#loginScreen'),
@@ -186,25 +192,7 @@ function applyDisplaySettings() {
 }
 
 function applySettingsToForm() {
-  if (elements.apiUrlInput) {
-    elements.apiUrlInput.value = settings.apiUrl || window.location.origin;
-  }
-  if (elements.apiKeyInput) {
-    elements.apiKeyInput.value = settings.apiKey || '';
-  }
-  if (elements.deviceIdInput) {
-    elements.deviceIdInput.value = settings.deviceId || randomDeviceId();
-  }
-  if (elements.themeModeInput) {
-    elements.themeModeInput.value = settings.themeMode || 'dark';
-  }
-  if (elements.autoLocationOnHereInput) {
-    elements.autoLocationOnHereInput.checked = settings.autoLocationOnHere !== false;
-  }
-  if (elements.historyPageSizeInput) {
-    settings.historyPageSize = normalizeHistoryPageSize(settings.historyPageSize);
-    elements.historyPageSizeInput.value = String(settings.historyPageSize);
-  }
+  settings = applySettingsToFormControls(elements, settings, window.location.origin);
   updateNotificationButton();
   applyTheme(settings.themeMode || 'dark');
   applyDisplaySettings();
@@ -231,36 +219,13 @@ function notifyReplyReady(title = 'OpenClaw 응답 도착', body = '새 답변�
 }
 
 function renderAttachmentTray() {
-  elements.attachmentTray.replaceChildren();
-  elements.attachmentTray.classList.toggle('hidden', selectedAttachments.length === 0);
-
-  for (const [index, file] of selectedAttachments.entries()) {
-    const item = document.createElement('div');
-    item.className = 'attachment-chip';
-    const label = document.createElement('span');
-    label.textContent = `${file.name} · ${formatBytes(file.size)}`;
-    const removeButton = document.createElement('button');
-    removeButton.type = 'button';
-    removeButton.className = 'attachment-remove';
-    removeButton.setAttribute('aria-label', `${file.name} 첨부 제거`);
-    removeButton.textContent = '×';
-    removeButton.addEventListener('click', () => {
+  renderAttachmentTrayView(elements.attachmentTray, selectedAttachments, {
+    formatBytes,
+    onRemove: (index) => {
       selectedAttachments = selectedAttachments.filter((_, itemIndex) => itemIndex !== index);
       renderAttachmentTray();
-    });
-    item.append(label, removeButton);
-    elements.attachmentTray.append(item);
-  }
-}
-
-function validateAttachmentFile(file) {
-  const mimeType = inferAttachmentMimeType(file.name, file.type);
-  if (!ALLOWED_ATTACHMENT_TYPES.has(mimeType)) {
-    throw new Error(`${file.name}: 지원하지 않는 파일 형식입니다.`);
-  }
-  if (file.size > MAX_ATTACHMENT_BYTES) {
-    throw new Error(`${file.name}: 파일은 ${formatBytes(MAX_ATTACHMENT_BYTES)} 이하만 첨부할 수 있습니다.`);
-  }
+    },
+  });
 }
 
 function addAttachmentFiles(files) {
@@ -302,20 +267,6 @@ function addAttachmentFilesSafely(files, sourceLabel = '첨부') {
   return true;
 }
 
-function filesFromDataTransfer(dataTransfer) {
-  if (!dataTransfer) {
-    return [];
-  }
-  const itemFiles = Array.from(dataTransfer.items || [])
-    .filter((item) => item.kind === 'file')
-    .map((item) => item.getAsFile())
-    .filter(Boolean);
-  if (itemFiles.length > 0) {
-    return itemFiles;
-  }
-  return Array.from(dataTransfer.files || []);
-}
-
 function handleMessagePaste(event) {
   const files = filesFromDataTransfer(event.clipboardData);
   if (files.length === 0) {
@@ -332,10 +283,6 @@ function setComposerDragOver(active) {
 function resetComposerDragState() {
   composerDragDepth = 0;
   setComposerDragOver(false);
-}
-
-function hasDraggedFiles(event) {
-  return Array.from(event.dataTransfer?.types || []).includes('Files');
 }
 
 function handleComposerDragEnter(event) {
@@ -377,48 +324,16 @@ function handleComposerDrop(event) {
   addAttachmentFilesSafely(filesFromDataTransfer(event.dataTransfer), '드래그 앤 드롭');
 }
 
-function fileToBase64(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.addEventListener('load', () => {
-      const result = String(reader.result || '');
-      resolve(result.includes(',') ? result.split(',').pop() : result);
-    });
-    reader.addEventListener('error', () => reject(reader.error || new Error('파일을 읽지 못했습니다.')));
-    reader.readAsDataURL(file);
-  });
-}
-
 async function buildAttachmentsPayload() {
-  return Promise.all(
-    selectedAttachments.map(async (file) => {
-      const mimeType = inferAttachmentMimeType(file.name, file.type);
-      return {
-        type: mimeType.startsWith('image/') ? 'image' : 'file',
-        name: file.name,
-        mime_type: mimeType,
-        content_base64: await fileToBase64(file),
-      };
-    }),
-  );
+  return Promise.all(selectedAttachments.map((file) => buildAttachmentPayload(file)));
 }
 
 function attachmentSummary(files = selectedAttachments) {
-  if (files.length === 0) {
-    return '';
-  }
-  return `\n\n첨부 파일:\n${files.map((file) => `- ${file.name} (${inferAttachmentMimeType(file.name, file.type) || 'unknown'}, ${formatBytes(file.size)})`).join('\n')}`;
+  return summarizeAttachments(files);
 }
 
 function readSettingsFromForm() {
-  const apiUrl = elements.apiUrlInput?.value.trim().replace(/\/+$/, '') || window.location.origin;
-  const apiKey = elements.apiKeyInput ? normalizeApiKey(elements.apiKeyInput.value) : settings.apiKey;
-  const deviceId = elements.deviceIdInput?.value.trim() || settings.deviceId || randomDeviceId();
-  const themeMode = elements.themeModeInput?.value || settings.themeMode || 'dark';
-  const fontSize = normalizeFontSize(elements.fontSizeInput?.value || settings.fontSize);
-  const autoLocationOnHere = elements.autoLocationOnHereInput ? elements.autoLocationOnHereInput.checked : settings.autoLocationOnHere !== false;
-  const historyPageSize = normalizeHistoryPageSize(elements.historyPageSizeInput?.value || settings.historyPageSize);
-  return { ...settings, apiUrl, apiKey, deviceId, themeMode, fontSize, autoLocationOnHere, historyPageSize };
+  return readSettingsFromFormControls(elements, settings, window.location.origin);
 }
 
 function setStatus(message) {
@@ -568,46 +483,20 @@ function persistMessage() {
 }
 
 function currentMediaUrlsInUse() {
-  const urls = new Set();
-  if (mediaViewerCurrentUrl) {
-    urls.add(mediaViewerCurrentUrl);
-  }
-  for (const node of elements.messages.querySelectorAll('[src^="blob:"], [href^="blob:"]')) {
-    const url = node.getAttribute('src') || node.getAttribute('href');
-    if (url) {
-      urls.add(url);
-    }
-  }
-  return urls;
+  return collectBlobUrlsInUse({ mediaViewerUrl: mediaViewerCurrentUrl, messagesRoot: elements.messages });
 }
 
 function revokeCachedMediaUrl(ref, url) {
-  if (mediaUrlCache.get(ref) !== url) {
-    return;
-  }
-  mediaUrlCache.delete(ref);
-  try {
-    URL.revokeObjectURL(url);
-  } catch {
-    // ignore revoke failures
-  }
+  revokeCachedMediaUrlEntry(mediaUrlCache, ref, url);
 }
 
 function pruneMediaUrlCache(options = {}) {
   const limit = Number.isFinite(options.limit) ? Number(options.limit) : MEDIA_URL_CACHE_LIMIT;
-  if (mediaUrlCache.size <= limit && !options.force) {
-    return;
-  }
-  const inUse = currentMediaUrlsInUse();
-  for (const [ref, url] of mediaUrlCache) {
-    if (!options.force && mediaUrlCache.size <= limit) {
-      break;
-    }
-    if (inUse.has(url)) {
-      continue;
-    }
-    revokeCachedMediaUrl(ref, url);
-  }
+  pruneMediaUrlCacheEntries(mediaUrlCache, {
+    limit,
+    force: options.force,
+    urlsInUse: currentMediaUrlsInUse(),
+  });
 }
 
 function clearRenderedMessages() {
@@ -2291,10 +2180,7 @@ function appendRetryAction(node, role, text) {
 
 function appendCancelJobAction(node, role, text, options = {}) {
   const jobId = node.dataset.messageId;
-  const normalizedRole = String(role || '').split(/\s+/)[0];
-  const rawText = typeof text === 'string' ? text.trim() : '';
-  const looksPending = options.pending || rawText === '응답 대기 중입니다…' || rawText === '응답을 처리 중입니다…' || /^응답을 처리 중입니다\s*\(\d+초\)$/.test(rawText);
-  if (!looksPending || normalizedRole !== 'assistant' || !jobId?.startsWith('job_')) {
+  if (!isPendingAssistantJobMessage({ role, text, pending: options.pending, jobId })) {
     return;
   }
   const button = createCancelJobButton(async () => {
@@ -2333,17 +2219,7 @@ function renderMessageNode(node, role, text, options = {}) {
   node.className = `message ${role}${options.pending ? ' pending' : ''}`;
   node.replaceChildren();
   appendMarkdown(node, media.text);
-  const mediaRefs = [];
-  const seenMediaRefs = new Set();
-  for (const ref of [...media.refs, ...(node._mediaRefs || [])]) {
-    const refPath = typeof ref === 'string' ? ref : ref?.path;
-    const refKey = canonicalMediaRefKey(refPath);
-    if (!refKey || seenMediaRefs.has(refKey)) {
-      continue;
-    }
-    seenMediaRefs.add(refKey);
-    mediaRefs.push(ref);
-  }
+  const mediaRefs = mergeMediaRefs(media.refs, node._mediaRefs || [], canonicalMediaRefKey);
   for (const ref of mediaRefs) {
     appendMediaRef(node, ref);
   }
@@ -2427,7 +2303,7 @@ function isActiveConversation(conversationId) {
 }
 
 function canResizeSidebar() {
-  return window.matchMedia(SIDEBAR_RESIZE_MEDIA).matches && !document.body.classList.contains('sidebar-collapsed');
+  return canResizeSidebarView({ mediaQuery: SIDEBAR_RESIZE_MEDIA });
 }
 
 function startSidebarResize(event) {
@@ -2435,11 +2311,7 @@ function startSidebarResize(event) {
     return;
   }
   event.preventDefault();
-  sidebarResizeState = {
-    pointerId: event.pointerId,
-    startX: event.clientX,
-    startWidth: elements.conversationSidebar.getBoundingClientRect().width,
-  };
+  sidebarResizeState = sidebarResizeStateFromEvent(event, elements.conversationSidebar);
   elements.sidebarResizeHandle?.setPointerCapture?.(event.pointerId);
   document.body.classList.add('sidebar-resizing');
 }
@@ -2448,7 +2320,7 @@ function moveSidebarResize(event) {
   if (!sidebarResizeState || event.pointerId !== sidebarResizeState.pointerId) {
     return;
   }
-  const nextWidth = sidebarResizeState.startWidth + event.clientX - sidebarResizeState.startX;
+  const nextWidth = sidebarResizeWidth(sidebarResizeState, event.clientX);
   document.documentElement.style.setProperty('--sidebar-width', `${clampSidebarWidth(nextWidth)}px`);
 }
 
@@ -2456,7 +2328,7 @@ function finishSidebarResize(event) {
   if (!sidebarResizeState || event.pointerId !== sidebarResizeState.pointerId) {
     return;
   }
-  const nextWidth = sidebarResizeState.startWidth + event.clientX - sidebarResizeState.startX;
+  const nextWidth = sidebarResizeWidth(sidebarResizeState, event.clientX);
   saveSidebarWidth(nextWidth);
   elements.sidebarResizeHandle?.releasePointerCapture?.(event.pointerId);
   sidebarResizeState = null;
@@ -2494,8 +2366,17 @@ async function sendMessage(message, attachments = [], metadata = undefined) {
   return body;
 }
 
+function pendingJobStorageScope() {
+  return {
+    storageKey: PENDING_JOB_KEY,
+    apiUrl: settings.apiUrl,
+    apiKey: settings.apiKey,
+    authUserId: authUser?.id,
+  };
+}
+
 function pendingJobStorageKey(conversationId = activeConversationId()) {
-  return `${PENDING_JOB_KEY}:${settings.apiUrl}:${authUser?.id || settings.apiKey || 'anonymous'}:${conversationId || 'no-conversation'}`;
+  return buildPendingJobStorageKey(pendingJobStorageScope(), conversationId);
 }
 
 function savePendingJob(job, conversationId = activeConversationId()) {
@@ -2524,12 +2405,7 @@ function ensurePendingJobBubble(jobId, conversationId = activeConversationId()) 
 }
 
 function loadPendingJob(conversationId = activeConversationId()) {
-  try {
-    const parsed = JSON.parse(localStorage.getItem(pendingJobStorageKey(conversationId)) || 'null');
-    return parsed?.job_id ? parsed : null;
-  } catch {
-    return null;
-  }
+  return loadPendingJobFromStorage(localStorage, pendingJobStorageKey(conversationId));
 }
 
 function clearPendingJob(conversationId = activeConversationId()) {
@@ -2540,44 +2416,17 @@ function clearPendingJob(conversationId = activeConversationId()) {
 }
 
 function pendingJobStoragePrefix() {
-  return `${PENDING_JOB_KEY}:${settings.apiUrl}:${authUser?.id || settings.apiKey || 'anonymous'}:`;
+  return buildPendingJobStoragePrefix(pendingJobStorageScope());
 }
 
 async function pruneStoredPendingJobs(conversationList = conversations) {
-  const prefix = pendingJobStoragePrefix();
-  const knownConversationIds = new Set((conversationList || []).map((conversation) => conversation?.id).filter(Boolean));
-  const keys = [];
-  for (let index = 0; index < localStorage.length; index += 1) {
-    const key = localStorage.key(index);
-    if (key?.startsWith(prefix)) {
-      keys.push(key);
-    }
-  }
-
-  for (const key of keys) {
-    const conversationId = key.slice(prefix.length);
-    let pendingJob = null;
-    try {
-      pendingJob = JSON.parse(localStorage.getItem(key) || 'null');
-    } catch {
-      localStorage.removeItem(key);
-      continue;
-    }
-    if (!conversationId || !pendingJob?.job_id || (knownConversationIds.size > 0 && !knownConversationIds.has(conversationId))) {
-      localStorage.removeItem(key);
-      continue;
-    }
-    try {
-      const job = await fetchJob(pendingJob.job_id, conversationId);
-      if (isTerminalJobState(job.state)) {
-        localStorage.removeItem(key);
-      }
-    } catch (error) {
-      if (error?.status === 404) {
-        localStorage.removeItem(key);
-      }
-    }
-  }
+  await prunePendingJobStorage({
+    storage: localStorage,
+    prefix: pendingJobStoragePrefix(),
+    conversationIds: new Set((conversationList || []).map((conversation) => conversation?.id).filter(Boolean)),
+    fetchJob,
+    isTerminalJobState,
+  });
 }
 
 async function fetchConversationHistory(conversationId) {
@@ -3600,6 +3449,6 @@ elements.messageInput.addEventListener('keydown', (event) => {
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-04-084').catch(() => {});
+    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-04-090').catch(() => {});
   });
 }
