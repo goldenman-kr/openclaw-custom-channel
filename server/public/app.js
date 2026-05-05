@@ -18,6 +18,7 @@ import { createHistoryLoadMoreControl, resetHistoryLoadMoreButton } from './modu
 import { createHomeScreen } from './modules/home-screen.js';
 import { hideLoginScreen as hideLoginScreenView, showLoginScreen as showLoginScreenView } from './modules/login-screen.js';
 import { isPendingHistoryMessage, isPlaceholderPendingText, isRunningJobHistoryMessage, shouldRerenderHistory as shouldRerenderHistorySnapshot } from './modules/history-state.js';
+import { isMarkdownTableRow, isMarkdownTableSeparator, splitMarkdownTableRow, tableAlignments } from './modules/markdown-table.js';
 import { canonicalMediaRefKey, isImageRef, isPlaceholderMediaRef, normalizeMediaRefPath, shortenFileName } from './modules/media.js';
 import { createCancelJobButton, createCopyButton, createRetryButton, ensureMessageActions, setCancelJobButtonBusy } from './modules/message-actions.js';
 import { renderModelPicker as renderModelPickerView, updateModelPickerButtonState as updateModelPickerButtonStateView } from './modules/model-picker.js';
@@ -37,7 +38,7 @@ import './plugins/spot-order-card.js';
 import './plugins/spot-wallet-intent.js';
 
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
-const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-076';
+const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-077';
 const CLIENT_API_VERSION = 1;
 const elements = {
   loginScreen: document.querySelector('#loginScreen'),
@@ -1539,35 +1540,6 @@ function appendInlineMarkdown(parent, text) {
   if (lastIndex < text.length) {
     parent.append(document.createTextNode(text.slice(lastIndex)));
   }
-}
-
-function isMarkdownTableRow(line) {
-  const trimmed = line.trim();
-  return trimmed.startsWith('|') && trimmed.endsWith('|') && trimmed.slice(1, -1).includes('|');
-}
-
-function isMarkdownTableSeparator(line) {
-  if (!isMarkdownTableRow(line)) {
-    return false;
-  }
-  return splitMarkdownTableRow(line).every((cell) => /^:?-{3,}:?$/.test(cell.trim()));
-}
-
-function splitMarkdownTableRow(line) {
-  return line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map((cell) => cell.trim());
-}
-
-function tableAlignments(separatorLine) {
-  return splitMarkdownTableRow(separatorLine).map((cell) => {
-    const trimmed = cell.trim();
-    if (trimmed.startsWith(':') && trimmed.endsWith(':')) {
-      return 'center';
-    }
-    if (trimmed.endsWith(':')) {
-      return 'right';
-    }
-    return '';
-  });
 }
 
 function appendMarkdownTable(parent, headerCells, separatorLine, bodyRows) {
