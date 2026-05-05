@@ -4,6 +4,8 @@ import type { ConversationRecord, ConversationStore, MessageStore } from "../ses
 import type { SpotOrderStore } from "../session/SpotOrderStore.js";
 
 const RELAY_URL = "https://agents-sink.orbs.network/orders/new";
+const RELAY_QUERY_URL = "https://agents-sink.orbs.network/orders";
+const RELAY_TERMINAL_STATUSES = new Set(["filled", "completed", "partially_completed", "cancelled", "expired", "failed", "rejected"]);
 
 export interface SpotPluginRouteDeps {
   conversationStore: ConversationStore & MessageStore;
@@ -105,6 +107,9 @@ export async function handleSpotPluginRoute(
     ].join("\n");
     const saved = deps.conversationStore.addMessage({ conversationId, role: "system", text, createdAt: new Date().toISOString() });
     deps.publishConversationEvent?.({ id: saved.id, type: "message", messageId: saved.id, conversationId, createdAt: saved.createdAt });
+    if (relayOrderHash) {
+      void pollRelayResult({ deps, spotOrderId: record.id, conversationId, relayOrderHash });
+    }
     deps.sendJson(response, 200, { ok: true, spot_order_id: record.id, relay_order_hash: relayOrderHash || null });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -122,6 +127,92 @@ export async function handleSpotPluginRoute(
   }
 
   return true;
+}
+
+async function pollRelayResult(input: { deps: SpotPluginRouteDeps; spotOrderId: string; conversationId: string; relayOrderHash: string }): Promise<void> {
+  const { deps, spotOrderId, conversationId, relayOrderHash } = input;
+  const startedAt = Date.now();
+  const maxMs = 6 * 60_000;
+  let lastBody: unknown = null;
+  let lastStatus = "pending";
+
+  while (Date.now() - startedAt < maxMs) {
+    try {
+      const body = await queryRelayOrder(relayOrderHash);
+      lastBody = body;
+      lastStatus = extractRelayStatus(body);
+      deps.spotOrderStore.updateRelayResult(spotOrderId, { relayStatus: lastStatus, relayResult: body, error: null });
+      if (RELAY_TERMINAL_STATUSES.has(lastStatus)) {
+        publishRelayResultMessage(deps, conversationId, spotOrderId, relayOrderHash, lastStatus, body);
+        return;
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      deps.spotOrderStore.updateRelayResult(spotOrderId, { relayStatus: lastStatus, relayResult: lastBody, error: message });
+    }
+    await delay(5_000);
+  }
+
+  publishRelayResultMessage(deps, conversationId, spotOrderId, relayOrderHash, lastStatus, lastBody, "폴링 제한 시간 내 최종 상태에 도달하지 않았습니다.");
+}
+
+async function queryRelayOrder(relayOrderHash: string): Promise<unknown> {
+  const url = `${RELAY_QUERY_URL}?hash=${encodeURIComponent(relayOrderHash)}`;
+  const response = await fetch(url, { signal: AbortSignal.timeout(15_000) });
+  const body = await response.json().catch(async () => ({ text: await response.text().catch(() => "") }));
+  if (!response.ok) {
+    throw new Error(`Relay query HTTP ${response.status}: ${JSON.stringify(body)}`);
+  }
+  return body;
+}
+
+function publishRelayResultMessage(
+  deps: SpotPluginRouteDeps,
+  conversationId: string,
+  spotOrderId: string,
+  relayOrderHash: string,
+  status: string,
+  body: unknown,
+  note?: string,
+): void {
+  const firstOrder = readFirstOrder(body);
+  const metadata = firstOrder && typeof firstOrder === "object" ? (firstOrder as Record<string, unknown>).metadata : undefined;
+  const summary = metadata && typeof metadata === "object" ? metadata as Record<string, unknown> : {};
+  const text = [
+    "Spot 주문 서버 처리 결과",
+    "",
+    `- 내부 기록 ID: ${spotOrderId}`,
+    `- Relay orderHash: ${relayOrderHash}`,
+    `- Status: ${status}`,
+    ...(typeof summary.displayOnlyStatus === "string" ? [`- Display status: ${summary.displayOnlyStatus}`] : []),
+    ...(typeof summary.displayOnlyStatusDescription === "string" ? [`- Description: ${summary.displayOnlyStatusDescription}`] : []),
+    ...(typeof summary.orderType === "string" ? [`- Order type: ${summary.orderType}`] : []),
+    ...(typeof summary.displayOnlyOrderTotalUSD === "string" ? [`- Order total USD: ${summary.displayOnlyOrderTotalUSD}`] : []),
+    ...(note ? [`- Note: ${note}`] : []),
+    "",
+    "폴링 원문 결과는 서버 DB spot_orders.relay_result_json 에 저장했습니다.",
+  ].join("\n");
+  const saved = deps.conversationStore.addMessage({ conversationId, role: "system", text, createdAt: new Date().toISOString() });
+  deps.publishConversationEvent?.({ id: saved.id, type: "message", messageId: saved.id, conversationId, createdAt: saved.createdAt });
+}
+
+function extractRelayStatus(body: unknown): string {
+  const order = readFirstOrder(body);
+  const metadataStatus = readPath(order, ["metadata", "status"]);
+  const orderStatus = readPath(order, ["status"]);
+  return String(metadataStatus ?? orderStatus ?? "pending");
+}
+
+function readFirstOrder(body: unknown): unknown {
+  if (!body || typeof body !== "object") {
+    return undefined;
+  }
+  const orders = (body as { orders?: unknown }).orders;
+  return Array.isArray(orders) ? orders[0] : undefined;
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function readPath(value: unknown, path: string[]): string | number | undefined {

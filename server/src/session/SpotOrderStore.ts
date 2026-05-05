@@ -16,6 +16,9 @@ export interface SpotOrderRecord {
   signature: string;
   relayPayloadJson: string;
   relayOrderHash?: string;
+  relayStatus?: string;
+  relayResultJson?: string;
+  relayPolledAt?: string;
   state: SpotOrderState;
   error?: string;
   createdAt: string;
@@ -33,6 +36,9 @@ interface SpotOrderRow {
   signature: string;
   relay_payload_json: string;
   relay_order_hash: string | null;
+  relay_status: string | null;
+  relay_result_json: string | null;
+  relay_polled_at: string | null;
   state: SpotOrderState;
   error: string | null;
   created_at: string;
@@ -126,6 +132,28 @@ export class SpotOrderStore {
     return this.get(id);
   }
 
+  updateRelayResult(id: string, patch: { relayStatus?: string | null; relayResult?: unknown; error?: string | null; now?: string }): SpotOrderRecord | null {
+    const current = this.get(id);
+    if (!current) {
+      return null;
+    }
+    const now = patch.now ?? new Date().toISOString();
+    this.db
+      .prepare(
+        `UPDATE spot_orders
+         SET relay_status = @relayStatus, relay_result_json = @relayResultJson, relay_polled_at = @now, error = @error, updated_at = @now
+         WHERE id = @id`,
+      )
+      .run({
+        id,
+        relayStatus: patch.relayStatus ?? current.relayStatus ?? null,
+        relayResultJson: patch.relayResult === undefined ? current.relayResultJson ?? null : stableJson(patch.relayResult),
+        error: patch.error === undefined ? current.error ?? null : patch.error,
+        now,
+      });
+    return this.get(id);
+  }
+
   private migrate(): void {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS spot_orders (
@@ -139,6 +167,9 @@ export class SpotOrderStore {
         signature TEXT NOT NULL,
         relay_payload_json TEXT NOT NULL,
         relay_order_hash TEXT,
+        relay_status TEXT,
+        relay_result_json TEXT,
+        relay_polled_at TEXT,
         state TEXT NOT NULL CHECK (state IN ('signed', 'submitted', 'failed')),
         error TEXT,
         created_at TEXT NOT NULL,
@@ -150,6 +181,16 @@ export class SpotOrderStore {
       CREATE INDEX IF NOT EXISTS idx_spot_orders_relay_hash
         ON spot_orders(relay_order_hash);
     `);
+    this.addColumnIfMissing("spot_orders", "relay_status", "TEXT");
+    this.addColumnIfMissing("spot_orders", "relay_result_json", "TEXT");
+    this.addColumnIfMissing("spot_orders", "relay_polled_at", "TEXT");
+  }
+
+  private addColumnIfMissing(table: string, column: string, definition: string): void {
+    const rows = this.db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+    if (!rows.some((row) => row.name === column)) {
+      this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+    }
   }
 }
 
@@ -187,6 +228,9 @@ function mapSpotOrder(row: SpotOrderRow): SpotOrderRecord {
     signature: row.signature,
     relayPayloadJson: row.relay_payload_json,
     ...(row.relay_order_hash ? { relayOrderHash: row.relay_order_hash } : {}),
+    ...(row.relay_status ? { relayStatus: row.relay_status } : {}),
+    ...(row.relay_result_json ? { relayResultJson: row.relay_result_json } : {}),
+    ...(row.relay_polled_at ? { relayPolledAt: row.relay_polled_at } : {}),
     state: row.state,
     ...(row.error ? { error: row.error } : {}),
     createdAt: row.created_at,

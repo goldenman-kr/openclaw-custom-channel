@@ -187,6 +187,12 @@ async function signTypedData(account, typedData) {
   if (!window.ethereum?.request) {
     throw new Error('브라우저 지갑을 찾지 못했습니다.');
   }
+  typedData.types.EIP712Domain = [
+    { name: 'name', type: 'string' },
+    { name: 'version', type: 'string' },
+    { name: 'chainId', type: 'uint256' },
+    { name: 'verifyingContract', type: 'address' },
+  ];
   return window.ethereum.request({
     method: 'eth_signTypedData_v4',
     params: [account, JSON.stringify(typedData)],
