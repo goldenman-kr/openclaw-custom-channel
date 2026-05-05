@@ -30,6 +30,7 @@ import { isMobileLikeInput, slashCommandUsesCurrentLocation } from './modules/in
 import { hideLoginScreen as hideLoginScreenView, showLoginScreen as showLoginScreenView } from './modules/login-screen.js';
 import { getCurrentLocationMetadata } from './modules/location.js';
 import { messageTextWithoutAttachmentPreview, renderedHistorySignature } from './modules/history-render-signature.js';
+import { sendMessage as sendMessageToApi } from './modules/message-api.js';
 import { isPendingHistoryMessage, isPlaceholderPendingText, isRunningJobHistoryMessage, shouldRerenderHistory as shouldRerenderHistorySnapshot } from './modules/history-state.js';
 import { cancelJobById, fetchJobById, isAlreadyFinishedJobError, isJobResolvedInHistory as isJobResolvedInHistoryFromApi, waitForJobPolling } from './modules/job-api.js';
 import { waitForJobEventStream } from './modules/job-events.js';
@@ -43,6 +44,7 @@ import { applyMediaViewerTransform as applyMediaViewerTransformView, closeMediaV
 import { initialMediaViewerTransform, mediaViewerGestureStartFromPointers, mediaViewerTransformFromGesture, mediaViewerTransformStyle, mediaViewerWheelTransform, toggledMediaViewerZoomTransform } from './modules/media-viewer-geometry.js';
 import { collectBlobUrlsInUse, pruneMediaUrlCache as pruneMediaUrlCacheEntries, revokeCachedMediaUrl as revokeCachedMediaUrlEntry } from './modules/media-url-cache.js';
 import { appendCancelJobAction as appendCancelJobActionView, appendCopyAction as appendCopyActionView, appendRetryAction as appendRetryActionView } from './modules/message-action-renderer.js';
+import { appendAttachmentPreview as appendAttachmentPreviewView, createMessageNode } from './modules/message-dom.js';
 import { mergeMediaRefs } from './modules/message-actions.js';
 import { renderModelPicker as renderModelPickerView, updateModelPickerButtonState as updateModelPickerButtonStateView } from './modules/model-picker.js';
 import { closeDrawer, drawerSwipeGesture, isDesktopLayout as isDesktopViewport, isDrawerOpen, openDrawer, shouldIgnoreDrawerSwipe as shouldIgnoreDrawerSwipeTarget, toggleDesktopSidebar } from './modules/mobile-drawer.js';
@@ -50,7 +52,7 @@ import { notificationsSupported, notifyReplyReady as notifyReplyReadyBrowser, re
 import { clearConversationEventRefreshTimer, closeConversationEventSource, conversationEventsSupported, createConversationEventSource } from './modules/conversation-events.js';
 import { conversationIdFromPath, syncConversationUrl } from './modules/navigation.js';
 import { startIntervalIfNeeded, stopIntervalIfNeeded, syncVisiblePagePolling } from './modules/page-lifecycle.js';
-import { loadPendingJobFromStorage, pendingJobStorageKey as buildPendingJobStorageKey, pendingJobStoragePrefix as buildPendingJobStoragePrefix, prunePendingJobStorage } from './modules/pending-job-storage.js';
+import { clearPendingJobFromStorage, loadPendingJobFromStorage, pendingJobStorageKey as buildPendingJobStorageKey, pendingJobStoragePrefix as buildPendingJobStoragePrefix, pendingJobStorageScope as buildPendingJobStorageScope, prunePendingJobStorage, savePendingJobToStorage } from './modules/pending-job-storage.js';
 import { promptPasswordChange } from './modules/password-flow.js';
 import { applySettingsToFormControls, readSettingsFromFormControls } from './modules/settings-form.js';
 import { openSettingsPanel as openSettingsPanelView, closeSettingsPanel as closeSettingsPanelView } from './modules/settings-panel.js';
@@ -69,7 +71,7 @@ import './plugins/spot-order-card.js';
 import './plugins/spot-wallet-intent.js';
 
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
-const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-05-102';
+const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-05-103';
 const CLIENT_API_VERSION = 1;
 const elements = {
   loginScreen: document.querySelector('#loginScreen'),
@@ -1903,37 +1905,25 @@ function renderMessageNode(node, role, text, options = {}) {
 }
 
 function appendAttachmentPreview(parent, files) {
-  const preview = createAttachmentPreview(files, { formatBytes });
-  if (preview) {
-    parent.append(preview);
-  }
+  appendAttachmentPreviewView(parent, files, createAttachmentPreview, formatBytes);
 }
 
 function appendMessage(role, text, options = {}) {
-  const node = document.createElement('article');
-  if (options.id) {
-    node.dataset.messageId = options.id;
-  }
-  const timestamp = options.pending ? '' : formatMessageTimestamp(options.completedAt || options.savedAt);
-  if (timestamp && (role === 'user' || role === 'assistant')) {
-    node.dataset.messageTime = timestamp;
-  }
-  node._mediaRefs = options.mediaRefs || [];
-  renderMessageNode(node, role, text, options);
-  appendAttachmentPreview(node, options.files || []);
-  if (options.pending) {
-    node.classList.add('pending');
-  }
-  elements.messages.append(node);
+  const node = createMessageNode({
+    role,
+    text,
+    options: { ...options, formatTimestamp: formatMessageTimestamp },
+    renderMessageNode,
+    appendAttachmentPreview,
+    persistMessage,
+    appendTo: elements.messages,
+  });
   if (options.autoScroll === false) {
     if (!isNearBottom() && !options.pending && !options.suppressScrollButton) {
       showScrollToLatestButton();
     }
   } else {
     scrollToBottom(options);
-  }
-  if (options.persist !== false) {
-    persistMessage(role, text);
   }
   return node;
 }
@@ -2016,30 +2006,16 @@ function syncSidebarWidthToViewport() {
 
 async function sendMessage(message, attachments = [], metadata = undefined) {
   const conversation = await ensureActiveConversation();
-  const response = await apiFetch('/v1/message', {
-    method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      ...(await historyHeaders()),
-    },
-    body: JSON.stringify({ conversation_id: conversation.id, message, attachments, ...(metadata ? { metadata } : {}) }),
-  });
-
-  const body = await response.json().catch(() => null);
-  if (!response.ok) {
-    const detail = body?.error?.message || `HTTP ${response.status}`;
-    throw new Error(detail);
-  }
-  return body;
+  return sendMessageToApi({ apiFetch, historyHeaders, conversationId: conversation.id, message, attachments, metadata });
 }
 
 function pendingJobStorageScope() {
-  return {
+  return buildPendingJobStorageScope({
     storageKey: PENDING_JOB_KEY,
     apiUrl: settings.apiUrl,
     apiKey: settings.apiKey,
     authUserId: authUser?.id,
-  };
+  });
 }
 
 function pendingJobStorageKey(conversationId = activeConversationId()) {
@@ -2047,7 +2023,7 @@ function pendingJobStorageKey(conversationId = activeConversationId()) {
 }
 
 function savePendingJob(job, conversationId = activeConversationId()) {
-  localStorage.setItem(pendingJobStorageKey(conversationId), JSON.stringify(job));
+  savePendingJobToStorage(localStorage, pendingJobStorageKey(conversationId), job);
   if (isActiveConversation(conversationId)) {
     ensurePendingJobBubble(job.job_id, conversationId);
     updateComposerAvailability();
@@ -2076,7 +2052,7 @@ function loadPendingJob(conversationId = activeConversationId()) {
 }
 
 function clearPendingJob(conversationId = activeConversationId()) {
-  localStorage.removeItem(pendingJobStorageKey(conversationId));
+  clearPendingJobFromStorage(localStorage, pendingJobStorageKey(conversationId));
   if (isActiveConversation(conversationId)) {
     updateComposerAvailability();
   }
@@ -2921,6 +2897,6 @@ elements.messageInput.addEventListener('keydown', (event) => {
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-05-102').catch(() => {});
+    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-05-103').catch(() => {});
   });
 }

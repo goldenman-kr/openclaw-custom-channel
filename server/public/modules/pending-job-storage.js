@@ -15,6 +15,23 @@ export function loadPendingJobFromStorage(storage, key) {
   }
 }
 
+export function pendingJobStorageScope({ storageKey, apiUrl, apiKey, authUserId }) {
+  return {
+    storageKey,
+    apiUrl,
+    apiKey,
+    authUserId,
+  };
+}
+
+export function savePendingJobToStorage(storage, key, job) {
+  storage.setItem(key, JSON.stringify(job));
+}
+
+export function clearPendingJobFromStorage(storage, key) {
+  storage.removeItem(key);
+}
+
 export function pendingJobKeys(storage, prefix) {
   const keys = [];
   for (let index = 0; index < storage.length; index += 1) {
