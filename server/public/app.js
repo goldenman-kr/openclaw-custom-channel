@@ -7,6 +7,7 @@ import { applyComposerAvailability, composerAvailabilityState } from './modules/
 import { clearComposerDraft as clearStoredComposerDraft, loadComposerDraft, saveComposerDraft as saveStoredComposerDraft } from './modules/composer-draft.js';
 import { apiUrl as buildApiUrl, assertValidApiKey, normalizeApiKey } from './modules/api-client.js';
 import { copyTextToClipboard } from './modules/clipboard.js';
+import { createPlainCodeBlock } from './modules/code-block.js';
 import { autoResizeTextarea as resizeComposerTextarea, updateClearMessageInputButton as updateComposerClearButton } from './modules/composer-input.js';
 import { openDeleteDialog as openDeleteDialogView, openRenameDialog as openRenameDialogView } from './modules/conversation-dialogs.js';
 import { conversationTitle, formatConversationDate, formatMessageTimestamp } from './modules/conversation-format.js';
@@ -36,7 +37,7 @@ import './plugins/spot-order-card.js';
 import './plugins/spot-wallet-intent.js';
 
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
-const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-075';
+const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-076';
 const CLIENT_API_VERSION = 1;
 const elements = {
   loginScreen: document.querySelector('#loginScreen'),
@@ -1665,47 +1666,11 @@ function appendCodeBlock(parent, codeText, language = '', options = {}) {
 }
 
 function appendPlainCodeBlock(parent, codeText, language = '', options = {}) {
-  const { showHeader = true, showCopyButton = true } = options;
-  const wrapper = document.createElement('div');
-  wrapper.className = `code-block${showHeader ? '' : ' compact'}`;
-
-  if (showHeader) {
-    const header = document.createElement('div');
-    header.className = 'code-block-header';
-    const label = document.createElement('span');
-    label.textContent = language || 'code';
-    header.append(label);
-
-    if (showCopyButton) {
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.className = 'code-copy-button';
-      button.textContent = '복사';
-      button.addEventListener('click', async () => {
-        const originalText = button.textContent;
-        try {
-          await copyTextToClipboard(codeText);
-          button.textContent = '복사됨';
-          window.setTimeout(() => { button.textContent = originalText; }, 1200);
-        } catch {
-          button.textContent = '실패';
-          window.setTimeout(() => { button.textContent = originalText; }, 1200);
-        }
-      });
-      header.append(button);
-    }
-
-    wrapper.append(header);
-  }
-
-  const pre = document.createElement('pre');
-  const code = document.createElement('code');
-  code.textContent = codeText;
-  pre.append(code);
-  wrapper.append(pre);
-  parent.append(wrapper);
+  parent.append(createPlainCodeBlock(codeText, language, {
+    ...options,
+    copyTextToClipboard,
+  }));
 }
-
 function appendBlockquote(parent, lines) {
   const quote = document.createElement('blockquote');
   appendMarkdown(quote, lines.join('\n'));
