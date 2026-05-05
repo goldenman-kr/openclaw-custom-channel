@@ -18,6 +18,7 @@ import { isPendingHistoryMessage, isPlaceholderPendingText, isRunningJobHistoryM
 import { canonicalMediaRefKey, isImageRef, isPlaceholderMediaRef, normalizeMediaRefPath, shortenFileName } from './modules/media.js';
 import { renderModelPicker as renderModelPickerView, updateModelPickerButtonState as updateModelPickerButtonStateView } from './modules/model-picker.js';
 import { closeDrawer, drawerSwipeGesture, isDesktopLayout as isDesktopViewport, isDrawerOpen, openDrawer, shouldIgnoreDrawerSwipe as shouldIgnoreDrawerSwipeTarget, toggleDesktopSidebar } from './modules/mobile-drawer.js';
+import { notificationsSupported, notifyReplyReady as notifyReplyReadyBrowser, requestNotificationPermission, updateNotificationButton as updateNotificationButtonView } from './modules/notifications.js';
 import { conversationIdFromPath, syncConversationUrl } from './modules/navigation.js';
 import { openSettingsPanel as openSettingsPanelView, closeSettingsPanel as closeSettingsPanelView } from './modules/settings-panel.js';
 import { loadSettings, normalizeHistoryPageSize, randomDeviceId, saveSettings } from './modules/settings.js';
@@ -32,7 +33,7 @@ import './plugins/spot-order-card.js';
 import './plugins/spot-wallet-intent.js';
 
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
-const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-070';
+const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-071';
 const CLIENT_API_VERSION = 1;
 const elements = {
   loginScreen: document.querySelector('#loginScreen'),
@@ -207,28 +208,8 @@ function applySettingsToForm() {
   applyDisplaySettings();
 }
 
-function notificationsSupported() {
-  return 'Notification' in window;
-}
-
 function updateNotificationButton() {
-  if (!elements.notificationButton) {
-    return;
-  }
-  if (!notificationsSupported()) {
-    elements.notificationButton.textContent = '알림 미지원';
-    elements.notificationButton.disabled = true;
-    return;
-  }
-  if (Notification.permission === 'granted' && settings.notificationsEnabled) {
-    elements.notificationButton.textContent = '알림 켜짐';
-    return;
-  }
-  if (Notification.permission === 'denied') {
-    elements.notificationButton.textContent = '알림 차단됨';
-    return;
-  }
-  elements.notificationButton.textContent = '알림 허용';
+  updateNotificationButtonView(elements.notificationButton, settings.notificationsEnabled);
 }
 
 async function enableNotifications() {
@@ -236,7 +217,7 @@ async function enableNotifications() {
     appendMessage('system', '이 환경은 브라우저 알림을 지원하지 않습니다.', { persist: false });
     return;
   }
-  const permission = await Notification.requestPermission();
+  const permission = await requestNotificationPermission();
   settings.notificationsEnabled = permission === 'granted';
   saveSettings(settings);
   updateNotificationButton();
@@ -244,26 +225,7 @@ async function enableNotifications() {
 }
 
 function notifyReplyReady(title = 'OpenClaw 응답 도착', body = '새 답변이 도착했습니다.') {
-  if (!settings.notificationsEnabled || !notificationsSupported() || Notification.permission !== 'granted') {
-    return;
-  }
-  if (!document.hidden && document.hasFocus()) {
-    return;
-  }
-  try {
-    const notification = new Notification(title, {
-      body,
-      tag: 'openclaw-reply-ready',
-      renotify: true,
-      silent: false,
-    });
-    notification.onclick = () => {
-      window.focus();
-      notification.close();
-    };
-  } catch {
-    // Some WebView builds expose Notification but do not allow constructing it.
-  }
+  notifyReplyReadyBrowser({ enabled: settings.notificationsEnabled, title, body });
 }
 
 function renderAttachmentTray() {
