@@ -1,3 +1,4 @@
+import { createAttachmentPreview } from './modules/attachment-preview.js';
 import { MAX_ATTACHMENTS, MAX_ATTACHMENT_BYTES, ALLOWED_ATTACHMENT_TYPES, formatBytes, inferAttachmentMimeType } from './modules/attachments.js';
 import { createConversationListItem } from './modules/conversation-list-item.js';
 import { conversationListEmptyMessage as getConversationListEmptyMessage, createConversationListEmptyState, updateArchiveToggleButton as updateArchiveToggleButtonView, updateSidebarSummary as updateSidebarSummaryView } from './modules/conversation-list-view.js';
