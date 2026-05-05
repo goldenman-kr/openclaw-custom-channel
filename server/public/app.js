@@ -10,7 +10,7 @@ import { createConversation as createConversationFromApi, destroyConversation as
 import { createConversationListItem } from './modules/conversation-list-item.js';
 import { conversationListEmptyMessage as getConversationListEmptyMessage, createConversationListEmptyState, updateArchiveToggleButton as updateArchiveToggleButtonView, updateSidebarSummary as updateSidebarSummaryView } from './modules/conversation-list-view.js';
 import { baseVisibleConversations as filterBaseVisibleConversations, conversationMatchesTitle as matchesConversationTitle, isConversationArchived, normalizeConversationSearchQuery, sortConversations, visibleConversations as filterVisibleConversations } from './modules/conversation-list.js';
-import { fetchConversationModelMenu as fetchConversationModelMenuFromApi, patchConversationModel as patchConversationModelFromApi } from './modules/conversation-model-api.js';
+import { fetchConversationModelMenu as fetchConversationModelMenuFromApi, patchConversationModel as patchConversationModelFromApi, patchConversationThinking as patchConversationThinkingFromApi } from './modules/conversation-model-api.js';
 import { searchConversationContent } from './modules/conversation-search.js';
 import { applyComposerAvailability, composerAvailabilityState } from './modules/composer-availability.js';
 import { clearComposerDraft as clearStoredComposerDraft, loadComposerDraft, saveComposerDraft as saveStoredComposerDraft } from './modules/composer-draft.js';
@@ -73,7 +73,7 @@ import './plugins/spot-order-card.js';
 import './plugins/spot-wallet-intent.js';
 
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
-const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-05-112';
+const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-05-115';
 const CLIENT_API_VERSION = 1;
 const elements = {
   loginScreen: document.querySelector('#loginScreen'),
@@ -191,6 +191,7 @@ const modelPicker = createModelPickerController({
   hasConversation: () => Boolean(activeConversation?.id),
   fetchMenu: fetchConversationModelMenu,
   patchModel: patchConversationModel,
+  patchThinking: patchConversationThinking,
   renderModelPicker: renderModelPickerView,
   updateModelPickerButtonState: updateModelPickerButtonStateView,
   showToast,
@@ -1082,12 +1083,20 @@ async function patchConversationModel(conversationId, model) {
   return patchConversationModelFromApi({ apiFetch, apiHeaders, conversationId, model });
 }
 
+async function patchConversationThinking(conversationId, thinking) {
+  return patchConversationThinkingFromApi({ apiFetch, apiHeaders, conversationId, thinking });
+}
+
 async function openModelPicker() {
   return modelPicker.open(activeConversation?.id);
 }
 
 async function applyConversationModel(modelRef) {
   return modelPicker.apply(activeConversation?.id, modelRef);
+}
+
+async function applyConversationThinking(thinkingRef) {
+  return modelPicker.applyThinking(activeConversation?.id, thinkingRef);
 }
 
 async function toggleModelPicker() {
@@ -2304,6 +2313,6 @@ renderModelPicker();
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-05-112').catch(() => {});
+    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-05-115').catch(() => {});
   });
 }

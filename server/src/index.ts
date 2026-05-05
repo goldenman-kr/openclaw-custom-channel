@@ -17,7 +17,7 @@ import { conversationIdFromPath, handleConversationRoute } from "./http/conversa
 import { handleHistoryRoute } from "./http/historyRoutes.js";
 import { handleJobRoute } from "./http/jobRoutes.js";
 import { handleMessageRoute } from "./http/messageRoutes.js";
-import { applyNativeModelSelection, getNativeModelMenu } from "./http/nativeCommands.js";
+import { applyNativeModelSelection, applyNativeThinkingSelection, getNativeModelMenu } from "./http/nativeCommands.js";
 import { handleSpotPluginRoute, resumeSpotOrderPolling } from "./http/spotPluginRoutes.js";
 import { handleMediaRoute, handleStaticRoute } from "./http/staticRoutes.js";
 import { GatewayAutonomousAnnounceBridge } from "./openclaw/GatewayAutonomousAnnounceBridge.js";
@@ -736,8 +736,18 @@ const server = createServer(async (request, response) => {
     }
 
     const payload = await readJsonBody(request).catch(() => ({}));
+    const requestedThinking = typeof (payload as { thinking?: unknown }).thinking === "string" ? (payload as { thinking: string }).thinking : "";
     const requestedModel = typeof (payload as { model?: unknown }).model === "string" ? (payload as { model: string }).model : "";
     try {
+      if (requestedThinking) {
+        const result = await applyNativeThinkingSelection(requestedThinking, modelContext);
+        sendJson(response, 200, {
+          ok: true,
+          current_thinking: result.currentThinking,
+          reset: result.reset,
+        });
+        return;
+      }
       const result = await applyNativeModelSelection(requestedModel, modelContext);
       sendJson(response, 200, {
         ok: true,

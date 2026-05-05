@@ -467,11 +467,19 @@ export interface NativeModelMenuEntry {
   selected: boolean;
 }
 
+export interface NativeThinkingMenuEntry {
+  ref: string;
+  label: string;
+  selected: boolean;
+}
+
 export interface NativeModelMenuState {
   currentModel: string;
   gatewayModel: string;
+  currentThinking: string;
   canChange: boolean;
   models: NativeModelMenuEntry[];
+  thinkingLevels: NativeThinkingMenuEntry[];
 }
 
 function modelLabel(modelRef: string): string {
@@ -481,16 +489,24 @@ function modelLabel(modelRef: string): string {
 
 export async function getNativeModelMenu(context: NativeCommandContext): Promise<NativeModelMenuState> {
   const currentModel = await resolveSessionSelectedModel(context.sessionKey);
+  const currentThinking = resolveSessionThinkingLevel(context.sessionKey);
   const configuredModels = await loadConfiguredModels().catch(() => [] as string[]);
   const refs = [...new Set([...(configuredModels.length > 0 ? configuredModels : []), currentModel].filter(Boolean))];
+  const thinkingLevels = ["off", "low", "medium", "high"];
   return {
     currentModel,
     gatewayModel: activeGatewayModel(),
+    currentThinking,
     canChange: context.userRole === "admin",
     models: refs.map((ref) => ({
       ref,
       label: modelLabel(ref),
       selected: ref === currentModel,
+    })),
+    thinkingLevels: thinkingLevels.map((ref) => ({
+      ref,
+      label: ref,
+      selected: ref === currentThinking,
     })),
   };
 }

@@ -3,6 +3,7 @@ export function createModelPickerController({
   hasConversation,
   fetchMenu,
   patchModel,
+  patchThinking,
   renderModelPicker,
   updateModelPickerButtonState,
   showToast,
@@ -10,6 +11,7 @@ export function createModelPickerController({
   let expanded = false;
   let loading = false;
   let state = null;
+  let activeConversationId = null;
 
   function render() {
     renderModelPicker(elements, {
@@ -17,9 +19,14 @@ export function createModelPickerController({
       loading,
       canChange: state?.canChange,
       models: state?.models,
+      thinkingLevels: state?.thinkingLevels,
       hasConversation: hasConversation(),
     }, (modelRef) => {
-      apply(modelRef).catch((error) => {
+      apply(activeConversationId, modelRef).catch((error) => {
+        showToast(error instanceof Error ? error.message : String(error), { kind: 'error', durationMs: 3200 });
+      });
+    }, (thinkingRef) => {
+      applyThinking(activeConversationId, thinkingRef).catch((error) => {
         showToast(error instanceof Error ? error.message : String(error), { kind: 'error', durationMs: 3200 });
       });
     });
@@ -36,6 +43,7 @@ export function createModelPickerController({
     expanded = false;
     loading = false;
     state = null;
+    activeConversationId = null;
     render();
   }
 
@@ -51,6 +59,7 @@ export function createModelPickerController({
     if (!conversationId || loading) {
       return;
     }
+    activeConversationId = conversationId;
     expanded = true;
     loading = true;
     state = null;
@@ -75,10 +84,31 @@ export function createModelPickerController({
     render();
     try {
       const result = await patchModel(conversationId, modelRef);
-      showToast(`모델을 ${String(result.current_model || modelRef).split('/').pop()}로 변경했습니다.`, { kind: 'success' });
+      showToast(`모델 변경 완료: ${String(result.current_model || modelRef).split('/').pop()}`, { kind: 'success' });
       if (result.warning) {
         showToast(result.warning, { kind: 'info', durationMs: 3200 });
       }
+      state = null;
+      setExpanded(false);
+    } finally {
+      loading = false;
+      render();
+    }
+  }
+
+  async function applyThinking(conversationId, thinkingRef) {
+    if (!conversationId || loading) {
+      return;
+    }
+    if (state?.thinkingLevels?.find((entry) => entry.ref === thinkingRef)?.selected) {
+      setExpanded(false);
+      return;
+    }
+    loading = true;
+    render();
+    try {
+      const result = await patchThinking(conversationId, thinkingRef);
+      showToast(`Think level 변경 완료: ${result.current_thinking || thinkingRef}`, { kind: 'success' });
       state = null;
       setExpanded(false);
     } finally {
@@ -110,6 +140,7 @@ export function createModelPickerController({
     setExpanded,
     open,
     apply,
+    applyThinking,
     toggle,
   };
 }

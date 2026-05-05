@@ -48,9 +48,12 @@ test("/model changes are admin-only", async () => {
 test("model menu hides provider in labels and marks current selection", async () => {
   const menu = await getNativeModelMenu({ userRole: "admin", sessionKey: "web-conv_test" });
   assert.equal(menu.currentModel, "openai-codex/gpt-5.5");
+  assert.equal(menu.currentThinking, "medium");
   assert.equal(menu.canChange, true);
   assert.deepEqual(menu.models.map((entry) => entry.label), ["gpt-5.4", "gpt-5.5"]);
   assert.equal(menu.models.find((entry) => entry.ref === "openai-codex/gpt-5.5")?.selected, true);
+  assert.deepEqual(menu.thinkingLevels.map((entry) => entry.ref), ["off", "low", "medium", "high"]);
+  assert.equal(menu.thinkingLevels.find((entry) => entry.ref === "medium")?.selected, true);
 });
 
 test("/model admin response updates current chat session only", async () => {

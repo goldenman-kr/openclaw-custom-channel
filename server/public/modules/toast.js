@@ -1,7 +1,7 @@
 export function showToast(message, options = {}) {
-  const container = document.querySelector('.toast-container') || (() => {
+  const container = document.querySelector('.toast-stack') || (() => {
     const node = document.createElement('div');
-    node.className = 'toast-container';
+    node.className = 'toast-stack';
     document.body.append(node);
     return node;
   })();
