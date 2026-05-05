@@ -45,3 +45,30 @@ export function attachmentSummary(files) {
   }
   return `\n\n첨부 파일:\n${files.map((file) => `- ${file.name} (${inferAttachmentMimeType(file.name, file.type) || 'unknown'}, ${formatBytes(file.size)})`).join('\n')}`;
 }
+
+export function addAttachmentFilesToSelection(currentFiles, files, { maxAttachments = Infinity, validateFile = validateAttachmentFile } = {}) {
+  const nextFiles = [...currentFiles];
+  for (const file of files) {
+    validateFile(file);
+    if (nextFiles.length >= maxAttachments) {
+      throw new Error(`첨부 파일은 최대 ${maxAttachments}개까지 가능합니다.`);
+    }
+    nextFiles.push(file);
+  }
+  return nextFiles;
+}
+
+export function filesFromUnknownList(files) {
+  return Array.from(files || []).filter(Boolean);
+}
+
+export function updateComposerDragOver(messageForm, active) {
+  messageForm.classList.toggle('drag-over', active);
+}
+
+export function nextComposerDragDepth(currentDepth, event, delta) {
+  if (!hasDraggedFiles(event)) {
+    return currentDepth;
+  }
+  return Math.max(0, currentDepth + delta);
+}

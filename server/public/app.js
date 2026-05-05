@@ -1,13 +1,15 @@
 import { clearBrowserCaches, downloadUrlThroughAndroidClient, runConnectionHealthCheck } from './modules/app-maintenance.js';
 import { bootstrapInitialConversation } from './modules/app-startup.js';
-import { attachmentSummary as summarizeAttachments, buildAttachmentPayload, filesFromDataTransfer, hasDraggedFiles, validateAttachmentFile } from './modules/attachment-input.js';
+import { addAttachmentFilesToSelection, attachmentSummary as summarizeAttachments, buildAttachmentPayload, filesFromDataTransfer, filesFromUnknownList, hasDraggedFiles, nextComposerDragDepth, updateComposerDragOver } from './modules/attachment-input.js';
 import { createAttachmentPreview } from './modules/attachment-preview.js';
 import { changePassword, fetchCurrentUser, loginUser, logoutUser } from './modules/auth-api.js';
 import { renderAttachmentTray as renderAttachmentTrayView } from './modules/attachment-tray.js';
 import { MAX_ATTACHMENTS, formatBytes } from './modules/attachments.js';
+import { createConversation as createConversationFromApi, destroyConversation as destroyConversationFromApi, fetchConversations as fetchConversationsFromApi, patchConversation as patchConversationFromApi, updateConversationTitle as updateConversationTitleFromApi } from './modules/conversation-api.js';
 import { createConversationListItem } from './modules/conversation-list-item.js';
 import { conversationListEmptyMessage as getConversationListEmptyMessage, createConversationListEmptyState, updateArchiveToggleButton as updateArchiveToggleButtonView, updateSidebarSummary as updateSidebarSummaryView } from './modules/conversation-list-view.js';
 import { baseVisibleConversations as filterBaseVisibleConversations, conversationMatchesTitle as matchesConversationTitle, isConversationArchived, normalizeConversationSearchQuery, sortConversations, visibleConversations as filterVisibleConversations } from './modules/conversation-list.js';
+import { fetchConversationModelMenu as fetchConversationModelMenuFromApi, patchConversationModel as patchConversationModelFromApi } from './modules/conversation-model-api.js';
 import { searchConversationContent } from './modules/conversation-search.js';
 import { applyComposerAvailability, composerAvailabilityState } from './modules/composer-availability.js';
 import { clearComposerDraft as clearStoredComposerDraft, loadComposerDraft, saveComposerDraft as saveStoredComposerDraft } from './modules/composer-draft.js';
@@ -66,7 +68,7 @@ import './plugins/spot-order-card.js';
 import './plugins/spot-wallet-intent.js';
 
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
-const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-05-100';
+const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-05-101';
 const CLIENT_API_VERSION = 1;
 const elements = {
   loginScreen: document.querySelector('#loginScreen'),
@@ -241,20 +243,12 @@ function renderAttachmentTray() {
 }
 
 function addAttachmentFiles(files) {
-  const nextFiles = [...selectedAttachments];
-  for (const file of files) {
-    validateAttachmentFile(file);
-    if (nextFiles.length >= MAX_ATTACHMENTS) {
-      throw new Error(`첨부 파일은 최대 ${MAX_ATTACHMENTS}개까지 가능합니다.`);
-    }
-    nextFiles.push(file);
-  }
-  selectedAttachments = nextFiles;
+  selectedAttachments = addAttachmentFilesToSelection(selectedAttachments, files, { maxAttachments: MAX_ATTACHMENTS });
   renderAttachmentTray();
 }
 
 function addAttachmentFilesSafely(files, sourceLabel = '첨부') {
-  const fileList = Array.from(files || []).filter(Boolean);
+  const fileList = filesFromUnknownList(files);
   if (fileList.length === 0) {
     return false;
   }
@@ -289,7 +283,7 @@ function handleMessagePaste(event) {
 }
 
 function setComposerDragOver(active) {
-  elements.messageForm.classList.toggle('drag-over', active);
+  updateComposerDragOver(elements.messageForm, active);
 }
 
 function resetComposerDragState() {
@@ -302,7 +296,7 @@ function handleComposerDragEnter(event) {
     return;
   }
   event.preventDefault();
-  composerDragDepth += 1;
+  composerDragDepth = nextComposerDragDepth(composerDragDepth, event, 1);
   setComposerDragOver(true);
 }
 
@@ -321,7 +315,7 @@ function handleComposerDragLeave(event) {
   if (!hasDraggedFiles(event)) {
     return;
   }
-  composerDragDepth = Math.max(0, composerDragDepth - 1);
+  composerDragDepth = nextComposerDragDepth(composerDragDepth, event, -1);
   if (composerDragDepth === 0) {
     setComposerDragOver(false);
   }
@@ -864,61 +858,23 @@ async function selectConversation(conversationId, options = {}) {
 }
 
 async function fetchConversations() {
-  const response = await apiFetch('/v1/conversations', {
-    params: { include_archived: 1 },
-    headers: await historyHeaders(),
-  });
-  if (!response.ok) {
-    throw new Error(`대화 목록을 불러오지 못했습니다: HTTP ${response.status}`);
-  }
-  const body = await response.json();
-  return Array.isArray(body.conversations) ? body.conversations : [];
+  return fetchConversationsFromApi({ apiFetch, historyHeaders });
 }
 
 async function createConversation(title = '새 대화') {
-  const response = await apiFetch('/v1/conversations', {
-    method: 'POST',
-    headers: await apiHeaders({ 'content-type': 'application/json' }),
-    body: JSON.stringify({ title }),
-  });
-  const body = await response.json().catch(() => null);
-  if (!response.ok) {
-    throw new Error(body?.error?.message || `대화 생성을 실패했습니다: HTTP ${response.status}`);
-  }
-  return body.conversation;
+  return createConversationFromApi({ apiFetch, apiHeaders, title });
 }
 
 async function patchConversation(conversationId, patch) {
-  const response = await apiFetch(`/v1/conversations/${encodeURIComponent(conversationId)}`, {
-    method: 'PATCH',
-    headers: await apiHeaders({ 'content-type': 'application/json' }),
-    body: JSON.stringify(patch),
-  });
-  const body = await response.json().catch(() => null);
-  if (!response.ok) {
-    throw new Error(body?.error?.message || `대화 수정을 실패했습니다: HTTP ${response.status}`);
-  }
-  return body.conversation;
+  return patchConversationFromApi({ apiFetch, apiHeaders, conversationId, patch });
 }
 
 async function updateConversationTitle(conversationId, title) {
-  try {
-    return await patchConversation(conversationId, { title });
-  } catch (error) {
-    throw new Error(error instanceof Error ? error.message.replace('대화 수정을', '대화 이름 변경을') : String(error));
-  }
+  return updateConversationTitleFromApi({ apiFetch, apiHeaders, conversationId, title });
 }
 
 async function destroyConversation(conversationId) {
-  const response = await apiFetch(`/v1/conversations/${encodeURIComponent(conversationId)}`, {
-    method: 'DELETE',
-    headers: await apiHeaders(),
-  });
-  const body = await response.json().catch(() => null);
-  if (!response.ok) {
-    throw new Error(body?.error?.message || `대화 삭제를 실패했습니다: HTTP ${response.status}`);
-  }
-  return body;
+  return destroyConversationFromApi({ apiFetch, apiHeaders, conversationId });
 }
 
 function openRenameDialog(currentTitle) {
@@ -1097,27 +1053,11 @@ function setModelPickerExpanded(expanded) {
 }
 
 async function fetchConversationModelMenu(conversationId) {
-  const response = await apiFetch(`/v1/conversations/${encodeURIComponent(conversationId)}/model`, {
-    headers: await apiHeaders(),
-  });
-  const body = await response.json().catch(() => null);
-  if (!response.ok) {
-    throw new Error(body?.error?.message || `모델 목록을 불러오지 못했습니다: HTTP ${response.status}`);
-  }
-  return body;
+  return fetchConversationModelMenuFromApi({ apiFetch, apiHeaders, conversationId });
 }
 
 async function patchConversationModel(conversationId, model) {
-  const response = await apiFetch(`/v1/conversations/${encodeURIComponent(conversationId)}/model`, {
-    method: 'PATCH',
-    headers: await apiHeaders({ 'content-type': 'application/json' }),
-    body: JSON.stringify({ model }),
-  });
-  const body = await response.json().catch(() => null);
-  if (!response.ok) {
-    throw new Error(body?.error?.message || `모델 변경을 실패했습니다: HTTP ${response.status}`);
-  }
-  return body;
+  return patchConversationModelFromApi({ apiFetch, apiHeaders, conversationId, model });
 }
 
 async function openModelPicker() {
@@ -3021,6 +2961,6 @@ elements.messageInput.addEventListener('keydown', (event) => {
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-05-100').catch(() => {});
+    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-05-101').catch(() => {});
   });
 }
