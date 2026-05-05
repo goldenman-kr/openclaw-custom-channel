@@ -33,12 +33,13 @@ import { delay, isTerminalJobState, parseSseBlock } from './modules/job-utils.js
 import { appendInlineMarkdown, countLeadingSpaces } from './modules/markdown-inline.js';
 import { isMarkdownTableRow, isMarkdownTableSeparator, splitMarkdownTableRow } from './modules/markdown-table.js';
 import { appendMarkdownTable } from './modules/markdown-table-render.js';
-import { canonicalMediaRefKey, extractMediaRefs, isImageRef, isPlaceholderMediaRef, mediaRefsFromHistoryAttachments, normalizeMediaRefPath, shortenFileName } from './modules/media.js';
-import { createMediaAttachmentItem, ensureMediaAttachmentPreview, replaceMediaAttachmentWithWarning } from './modules/media-attachment-view.js';
+import { canonicalMediaRefKey, extractMediaRefs, mediaRefsFromHistoryAttachments } from './modules/media.js';
+import { appendMediaRef as appendMediaRefView } from './modules/media-ref-renderer.js';
 import { applyMediaViewerTransform as applyMediaViewerTransformView, closeMediaViewerView, isMediaViewerHidden, openMediaViewerView } from './modules/media-viewer-view.js';
 import { initialMediaViewerTransform, mediaViewerGestureStartFromPointers, mediaViewerTransformFromGesture, mediaViewerTransformStyle, mediaViewerWheelTransform, toggledMediaViewerZoomTransform } from './modules/media-viewer-geometry.js';
 import { collectBlobUrlsInUse, pruneMediaUrlCache as pruneMediaUrlCacheEntries, revokeCachedMediaUrl as revokeCachedMediaUrlEntry } from './modules/media-url-cache.js';
-import { createCancelJobButton, createCopyButton, createRetryButton, ensureMessageActions, isPendingAssistantJobMessage, mergeMediaRefs, setCancelJobButtonBusy } from './modules/message-actions.js';
+import { appendCancelJobAction as appendCancelJobActionView, appendCopyAction as appendCopyActionView, appendRetryAction as appendRetryActionView } from './modules/message-action-renderer.js';
+import { mergeMediaRefs } from './modules/message-actions.js';
 import { renderModelPicker as renderModelPickerView, updateModelPickerButtonState as updateModelPickerButtonStateView } from './modules/model-picker.js';
 import { closeDrawer, drawerSwipeGesture, isDesktopLayout as isDesktopViewport, isDrawerOpen, openDrawer, shouldIgnoreDrawerSwipe as shouldIgnoreDrawerSwipeTarget, toggleDesktopSidebar } from './modules/mobile-drawer.js';
 import { notificationsSupported, notifyReplyReady as notifyReplyReadyBrowser, requestNotificationPermission, updateNotificationButton as updateNotificationButtonView } from './modules/notifications.js';
@@ -63,7 +64,7 @@ import './plugins/spot-order-card.js';
 import './plugins/spot-wallet-intent.js';
 
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
-const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-098';
+const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-05-100';
 const CLIENT_API_VERSION = 1;
 const elements = {
   loginScreen: document.querySelector('#loginScreen'),
@@ -1427,34 +1428,40 @@ function appendMarkdown(parent, text) {
   let list = null;
   let inCodeBlock = false;
   let codeLanguage = '';
+  let codeFenceIndent = 0;
   let codeLines = [];
 
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index];
-    const singleLineFence = line.match(/^```([^`\n]+)```\s*$/);
+    // CommonMark allows fenced code blocks to be indented by up to 3 spaces.
+    // This matters for code blocks shown under ordered-list text, where markdown
+    // often carries list-continuation indentation before the backticks.
+    const singleLineFence = line.match(/^( {0,3})```([^`\n]+)```\s*$/);
     if (singleLineFence) {
       list = null;
-      appendCodeBlock(parent, singleLineFence[1], '', { showHeader: false, showCopyButton: false });
+      appendCodeBlock(parent, singleLineFence[2], '', { showHeader: false, showCopyButton: false });
       continue;
     }
-    const fence = line.match(/^```\s*([^`]*)\s*$/);
+    const fence = line.match(/^( {0,3})```\s*([^`]*)\s*$/);
     if (fence) {
       list = null;
       if (inCodeBlock) {
         appendCodeBlock(parent, codeLines.join('\n'), codeLanguage);
         inCodeBlock = false;
         codeLanguage = '';
+        codeFenceIndent = 0;
         codeLines = [];
       } else {
         inCodeBlock = true;
-        codeLanguage = fence[1]?.trim() || '';
+        codeLanguage = fence[2]?.trim() || '';
+        codeFenceIndent = fence[1]?.length || 0;
         codeLines = [];
       }
       continue;
     }
 
     if (inCodeBlock) {
-      codeLines.push(line);
+      codeLines.push(codeFenceIndent > 0 && line.startsWith(' '.repeat(codeFenceIndent)) ? line.slice(codeFenceIndent) : line);
       continue;
     }
 
@@ -1499,7 +1506,7 @@ function appendMarkdown(parent, text) {
           index += 1;
           continue;
         }
-        if (/^```\s*([^`]*)\s*$/.test(nextLine) || /^(#{1,3})\s+(.+)$/.test(nextLine) || /^\s*[-*]\s+(.+)$/.test(nextLine) || /^\s*(\d+)[.)]\s+(.+)$/.test(nextLine) || (isMarkdownTableRow(nextLine) && isMarkdownTableSeparator(lines[index + 2] || ''))) {
+        if (/^ {0,3}```\s*([^`]*)\s*$/.test(nextLine) || /^(#{1,3})\s+(.+)$/.test(nextLine) || /^\s*[-*]\s+(.+)$/.test(nextLine) || /^\s*(\d+)[.)]\s+(.+)$/.test(nextLine) || (isMarkdownTableRow(nextLine) && isMarkdownTableSeparator(lines[index + 2] || ''))) {
           break;
         }
         quoteLines.push(nextLine);
@@ -1924,169 +1931,39 @@ async function getAuthorizedMediaUrl(ref) {
 }
 
 function appendMediaRef(parent, rawRef) {
-  const refInfo = typeof rawRef === 'string' ? { path: rawRef } : rawRef;
-  const ref = normalizeMediaRefPath(refInfo?.path);
-  if (!ref || isPlaceholderMediaRef(ref)) {
-    return;
-  }
-  const refKey = canonicalMediaRefKey(ref);
-  if (!refKey) {
-    return;
-  }
-
-  const preview = ensureMediaAttachmentPreview(parent, refKey);
-  if (!preview) {
-    return;
-  }
-
-  const isRemote = /^https?:\/\//i.test(ref);
-  const fileName = refInfo.name || ref.split('/').pop() || ref;
-  const displayName = shortenFileName(fileName);
-  const captionText = refInfo.size ? `${displayName} · ${formatBytes(refInfo.size)}` : displayName;
-  const { item, image, caption, downloadLink } = createMediaAttachmentItem({
-    refKey,
-    fileName,
-    captionText,
-    image: isImageRef(ref) || refInfo.type?.startsWith('image/'),
+  appendMediaRefView(parent, rawRef, {
+    getCachedMediaUrl: (ref) => mediaUrlCache.get(ref) || '',
+    getAuthorizedMediaUrl,
+    openMediaViewer,
+    downloadUrlThroughClient,
   });
-  preview.append(item);
-
-  const wireImageViewer = (url) => {
-    if (!image) {
-      return;
-    }
-    const open = (event) => {
-      event.preventDefault();
-      openMediaViewer(url, fileName);
-    };
-    image.addEventListener('click', open);
-    caption.addEventListener('click', open);
-  };
-
-  const wireDownload = (url) => {
-    if (!downloadLink) {
-      return;
-    }
-    downloadLink.href = url;
-    downloadLink.removeAttribute('aria-disabled');
-    downloadLink.addEventListener('click', (event) => {
-      downloadUrlThroughClient(url, fileName, downloadLink, event);
-    }, { once: false });
-  };
-
-  if (isRemote) {
-    caption.href = ref;
-    wireDownload(ref);
-    if (image) {
-      image.src = ref;
-      wireImageViewer(ref);
-    }
-    return;
-  }
-
-  if (mediaUrlCache.has(ref)) {
-    const cachedUrl = mediaUrlCache.get(ref);
-    caption.href = cachedUrl;
-    caption.textContent = captionText;
-    wireDownload(cachedUrl);
-    if (image) {
-      image.src = cachedUrl;
-      wireImageViewer(cachedUrl);
-    }
-    return;
-  }
-
-  caption.removeAttribute('href');
-  caption.textContent = `${captionText} · 불러오는 중`;
-  getAuthorizedMediaUrl(ref)
-    .then((url) => {
-      caption.href = url;
-      caption.textContent = captionText;
-      wireDownload(url);
-      if (image) {
-        image.src = url;
-        wireImageViewer(url);
-      }
-    })
-    .catch(() => {
-      caption.textContent = `${captionText} · 불러오기 실패`;
-      if (image) {
-        replaceMediaAttachmentWithWarning(item, caption);
-      }
-    });
-}
-
-function retryTextForNode(node) {
-  let current = node.previousElementSibling;
-  while (current) {
-    if (current.classList?.contains('user')) {
-      return messageTextWithoutAttachmentPreview(current).replace(/\n\n첨부 파일:\n[\s\S]*$/, '').trim();
-    }
-    current = current.previousElementSibling;
-  }
-  return '';
 }
 
 function appendCopyAction(node, role, text, options = {}) {
-  if (options.pending || !['user', 'assistant', 'system'].includes(role)) {
-    return;
-  }
-  const copyText = extractMediaRefs(text).text.trim();
-  if (!copyText) {
-    return;
-  }
-  node.append(createCopyButton(copyText, copyTextToClipboard));
+  appendCopyActionView(node, role, text, options, copyTextToClipboard);
 }
 
 function appendRetryAction(node, role, text) {
-  if (role !== 'system' || !text.startsWith('전송 실패:')) {
-    return;
-  }
-  const retryText = retryTextForNode(node);
-  if (!retryText) {
-    return;
-  }
-  ensureMessageActions(node).append(createRetryButton(() => {
-    elements.messageInput.value = retryText;
-    saveComposerDraft();
-    autoResizeTextarea();
-    elements.messageInput.focus();
-  }));
+  appendRetryActionView(node, role, text, {
+    messageTextWithoutAttachmentPreview,
+    messageInput: elements.messageInput,
+    saveComposerDraft,
+    autoResizeTextarea,
+  });
 }
 
 function appendCancelJobAction(node, role, text, options = {}) {
-  const jobId = node.dataset.messageId;
-  if (!isPendingAssistantJobMessage({ role, text, pending: options.pending, jobId })) {
-    return;
-  }
-  const button = createCancelJobButton(async () => {
-    const conversationId = activeConversationId();
-    setCancelJobButtonBusy(button, true);
-    setStatus('응답을 중지하는 중입니다...');
-    try {
-      await cancelJob(jobId, conversationId);
-      clearPendingJob(conversationId);
-      await refreshHistoryIfChanged();
-      await refreshConversations().catch(() => {});
-      showToast('응답을 중지했습니다.', { kind: 'success' });
-      setStatus('');
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
-      if (isAlreadyFinishedJobError(error)) {
-        clearPendingJob(conversationId);
-        node.remove();
-        await refreshHistoryIfChanged().catch(() => {});
-        await refreshConversations().catch(() => {});
-        showToast('이미 끝난 작업이라 남아 있던 처리중 표시를 정리했습니다.', { kind: 'success' });
-        setStatus('');
-        return;
-      }
-      setCancelJobButtonBusy(button, false);
-      appendMessage('system', detail, { persist: false });
-      setStatus('');
-    }
+  appendCancelJobActionView(node, role, text, options, {
+    activeConversationId,
+    cancelJob,
+    clearPendingJob,
+    refreshHistoryIfChanged,
+    refreshConversations,
+    showToast,
+    setStatus,
+    appendMessage,
+    isAlreadyFinishedJobError,
   });
-  node.append(button);
 }
 
 function renderMessageNode(node, role, text, options = {}) {
@@ -3178,6 +3055,6 @@ elements.messageInput.addEventListener('keydown', (event) => {
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-04-098').catch(() => {});
+    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-05-100').catch(() => {});
   });
 }
