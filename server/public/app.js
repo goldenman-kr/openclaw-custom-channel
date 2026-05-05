@@ -1,6 +1,7 @@
-import { clearBrowserCaches, runConnectionHealthCheck } from './modules/app-maintenance.js';
+import { clearBrowserCaches, downloadUrlThroughAndroidClient, runConnectionHealthCheck } from './modules/app-maintenance.js';
 import { attachmentSummary as summarizeAttachments, buildAttachmentPayload, filesFromDataTransfer, hasDraggedFiles, validateAttachmentFile } from './modules/attachment-input.js';
 import { createAttachmentPreview } from './modules/attachment-preview.js';
+import { fetchCurrentUser, loginUser, logoutUser } from './modules/auth-api.js';
 import { renderAttachmentTray as renderAttachmentTrayView } from './modules/attachment-tray.js';
 import { MAX_ATTACHMENTS, formatBytes } from './modules/attachments.js';
 import { createConversationListItem } from './modules/conversation-list-item.js';
@@ -10,7 +11,6 @@ import { searchConversationContent } from './modules/conversation-search.js';
 import { applyComposerAvailability, composerAvailabilityState } from './modules/composer-availability.js';
 import { clearComposerDraft as clearStoredComposerDraft, loadComposerDraft, saveComposerDraft as saveStoredComposerDraft } from './modules/composer-draft.js';
 import { apiUrl as buildApiUrl, assertValidApiKey } from './modules/api-client.js';
-import { blobToBase64 } from './modules/blob-utils.js';
 import { copyTextToClipboard } from './modules/clipboard.js';
 import { createPlainCodeBlock } from './modules/code-block.js';
 import { autoResizeTextarea as resizeComposerTextarea, updateClearMessageInputButton as updateComposerClearButton } from './modules/composer-input.js';
@@ -27,19 +27,23 @@ import { hideLoginScreen as hideLoginScreenView, showLoginScreen as showLoginScr
 import { getCurrentLocationMetadata } from './modules/location.js';
 import { messageTextWithoutAttachmentPreview, renderedHistorySignature } from './modules/history-render-signature.js';
 import { isPendingHistoryMessage, isPlaceholderPendingText, isRunningJobHistoryMessage, shouldRerenderHistory as shouldRerenderHistorySnapshot } from './modules/history-state.js';
+import { waitForJobEventStream } from './modules/job-events.js';
 import { delay, isTerminalJobState, parseSseBlock } from './modules/job-utils.js';
 import { appendInlineMarkdown, countLeadingSpaces } from './modules/markdown-inline.js';
 import { isMarkdownTableRow, isMarkdownTableSeparator, splitMarkdownTableRow } from './modules/markdown-table.js';
 import { appendMarkdownTable } from './modules/markdown-table-render.js';
 import { canonicalMediaRefKey, extractMediaRefs, isImageRef, isPlaceholderMediaRef, mediaRefsFromHistoryAttachments, normalizeMediaRefPath, shortenFileName } from './modules/media.js';
 import { createMediaAttachmentItem, ensureMediaAttachmentPreview, replaceMediaAttachmentWithWarning } from './modules/media-attachment-view.js';
-import { clamp, pointerDistance, pointerMidpoint } from './modules/media-viewer-geometry.js';
+import { applyMediaViewerTransform as applyMediaViewerTransformView, closeMediaViewerView, isMediaViewerHidden, openMediaViewerView } from './modules/media-viewer-view.js';
+import { initialMediaViewerTransform, mediaViewerGestureStartFromPointers, mediaViewerTransformFromGesture, mediaViewerTransformStyle, mediaViewerWheelTransform, toggledMediaViewerZoomTransform } from './modules/media-viewer-geometry.js';
 import { collectBlobUrlsInUse, pruneMediaUrlCache as pruneMediaUrlCacheEntries, revokeCachedMediaUrl as revokeCachedMediaUrlEntry } from './modules/media-url-cache.js';
 import { createCancelJobButton, createCopyButton, createRetryButton, ensureMessageActions, isPendingAssistantJobMessage, mergeMediaRefs, setCancelJobButtonBusy } from './modules/message-actions.js';
 import { renderModelPicker as renderModelPickerView, updateModelPickerButtonState as updateModelPickerButtonStateView } from './modules/model-picker.js';
 import { closeDrawer, drawerSwipeGesture, isDesktopLayout as isDesktopViewport, isDrawerOpen, openDrawer, shouldIgnoreDrawerSwipe as shouldIgnoreDrawerSwipeTarget, toggleDesktopSidebar } from './modules/mobile-drawer.js';
 import { notificationsSupported, notifyReplyReady as notifyReplyReadyBrowser, requestNotificationPermission, updateNotificationButton as updateNotificationButtonView } from './modules/notifications.js';
+import { clearConversationEventRefreshTimer, closeConversationEventSource, conversationEventsSupported, createConversationEventSource } from './modules/conversation-events.js';
 import { conversationIdFromPath, syncConversationUrl } from './modules/navigation.js';
+import { startIntervalIfNeeded, stopIntervalIfNeeded } from './modules/page-lifecycle.js';
 import { loadPendingJobFromStorage, pendingJobStorageKey as buildPendingJobStorageKey, pendingJobStoragePrefix as buildPendingJobStoragePrefix, prunePendingJobStorage } from './modules/pending-job-storage.js';
 import { applySettingsToFormControls, readSettingsFromFormControls } from './modules/settings-form.js';
 import { openSettingsPanel as openSettingsPanelView, closeSettingsPanel as closeSettingsPanelView } from './modules/settings-panel.js';
@@ -48,6 +52,8 @@ import { isNearBottom as isMessagesNearBottom, hideMessagesScrollIndicator, hide
 import { canResizeSidebar as canResizeSidebarView, sidebarResizeStateFromEvent, sidebarResizeWidth } from './modules/sidebar-resize.js';
 import { applyStoredSidebarWidth, clampSidebarWidth, saveSidebarWidth, SIDEBAR_RESIZE_MEDIA } from './modules/sidebar-width.js';
 import { matchingSlashCommands as findMatchingSlashCommands, renderSlashCommandPalette as renderSlashCommandPaletteView } from './modules/slash-commands.js';
+import { nextPartialSegmentId as nextPartialSegmentIdForMessages, streamingNodeText as getStreamingNodeText } from './modules/streaming-ui.js';
+import { outgoingMessageForSubmit, resetComposerAfterSubmit, restoreComposerAfterSubmitFailure, shouldIncludeLocationForMessage } from './modules/submit-flow.js';
 import { showToast } from './modules/toast.js';
 import { currentUserDisplayName as getCurrentUserDisplayName, sharedUserId as getSharedUserId } from './modules/user-identity.js';
 import { checkClientServerVersion as checkClientServerVersionWithDeps } from './modules/version-check.js';
@@ -56,7 +62,7 @@ import './plugins/spot-order-card.js';
 import './plugins/spot-wallet-intent.js';
 
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
-const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-093';
+const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-097';
 const CLIENT_API_VERSION = 1;
 const elements = {
   loginScreen: document.querySelector('#loginScreen'),
@@ -164,7 +170,7 @@ let conversations = [];
 let showingArchived = false;
 let mediaViewerCurrentUrl = '';
 let mediaViewerCurrentName = 'openclaw-image.png';
-let mediaViewerTransform = { scale: 1, x: 0, y: 0 };
+let mediaViewerTransform = initialMediaViewerTransform();
 const mediaViewerPointers = new Map();
 let mediaViewerGestureStart = null;
 let mediaViewerHistoryActive = false;
@@ -562,37 +568,23 @@ function hideLoginScreen() {
 }
 
 async function loadCurrentUser() {
-  const response = await apiFetch('/v1/auth/me');
-  if (!response.ok) {
-    authUser = null;
+  authUser = await fetchCurrentUser(apiFetch);
+  if (!authUser) {
     showLoginScreen();
     return null;
   }
-  const body = await response.json().catch(() => null);
-  authUser = body?.user || null;
-  if (authUser) {
-    hideLoginScreen();
-  }
+  hideLoginScreen();
   return authUser;
 }
 
 async function login(username, password) {
-  const response = await apiFetch('/v1/auth/login', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ username, password }),
-  });
-  const body = await response.json().catch(() => null);
-  if (!response.ok) {
-    throw new Error(body?.error?.message || `로그인 실패: HTTP ${response.status}`);
-  }
-  authUser = body?.user || null;
+  authUser = await loginUser(apiFetch, username, password);
   hideLoginScreen();
   return authUser;
 }
 
 async function logout() {
-  await apiFetch('/v1/auth/logout', { method: 'POST' }).catch(() => null);
+  await logoutUser(apiFetch);
   authUser = null;
   conversations = [];
   activeConversation = null;
@@ -1725,18 +1717,11 @@ function shouldPollHistory() {
 }
 
 function startHistoryPolling() {
-  if (historyPollTimer || !shouldPollHistory()) {
-    return;
-  }
-  historyPollTimer = window.setInterval(refreshHistoryIfChanged, 5000);
+  historyPollTimer = startIntervalIfNeeded(historyPollTimer, refreshHistoryIfChanged, 5000, shouldPollHistory());
 }
 
 function stopHistoryPolling() {
-  if (!historyPollTimer) {
-    return;
-  }
-  window.clearInterval(historyPollTimer);
-  historyPollTimer = null;
+  historyPollTimer = stopIntervalIfNeeded(historyPollTimer);
 }
 
 function syncHistoryPolling() {
@@ -1748,19 +1733,13 @@ function syncHistoryPolling() {
 }
 
 function stopConversationEvents() {
-  if (conversationEventRefreshTimer) {
-    clearTimeout(conversationEventRefreshTimer);
-    conversationEventRefreshTimer = null;
-  }
-  if (conversationEventSource) {
-    conversationEventSource.close();
-  }
-  conversationEventSource = null;
+  conversationEventRefreshTimer = clearConversationEventRefreshTimer(conversationEventRefreshTimer);
+  conversationEventSource = closeConversationEventSource(conversationEventSource);
   conversationEventConversationId = '';
 }
 
 function startConversationEvents(conversationId = activeConversationId()) {
-  if (!canUseApi() || !conversationId || typeof EventSource === 'undefined') {
+  if (!canUseApi() || !conversationId || !conversationEventsSupported()) {
     stopConversationEvents();
     return;
   }
@@ -1770,26 +1749,21 @@ function startConversationEvents(conversationId = activeConversationId()) {
   stopConversationEvents();
   conversationEventConversationId = conversationId;
   const eventsUrl = apiUrl(`/v1/conversations/${encodeURIComponent(conversationId)}/events`);
-  const source = new EventSource(eventsUrl, { withCredentials: true });
-  conversationEventSource = source;
-  source.addEventListener('conversation', (event) => {
-    if (conversationEventConversationId !== conversationId) {
-      return;
-    }
-    scheduleConversationEventRefresh(conversationId);
+  conversationEventSource = createConversationEventSource(eventsUrl, {
+    onConversation: () => {
+      if (conversationEventConversationId !== conversationId) {
+        return;
+      }
+      scheduleConversationEventRefresh(conversationId);
+    },
   });
-  source.onerror = () => {
-    // EventSource reconnects automatically. History polling remains the durable fallback.
-  };
 }
 
 function scheduleConversationEventRefresh(conversationId = activeConversationId()) {
   if (!conversationId) {
     return;
   }
-  if (conversationEventRefreshTimer) {
-    clearTimeout(conversationEventRefreshTimer);
-  }
+  conversationEventRefreshTimer = clearConversationEventRefreshTimer(conversationEventRefreshTimer);
   conversationEventRefreshTimer = window.setTimeout(async () => {
     conversationEventRefreshTimer = null;
     await refreshConversations().catch(() => {});
@@ -1800,71 +1774,30 @@ function scheduleConversationEventRefresh(conversationId = activeConversationId(
 }
 
 function applyMediaViewerTransform() {
-  const { scale, x, y } = mediaViewerTransform;
-  elements.mediaViewerImage.style.transform = `translate3d(${x}px, ${y}px, 0) scale(${scale})`;
-  elements.mediaViewerImage.classList.toggle('zoomed', scale > 1.01);
+  applyMediaViewerTransformView(elements.mediaViewerImage, mediaViewerTransformStyle(mediaViewerTransform), mediaViewerTransform.scale > 1.01);
 }
 
 function resetMediaViewerZoom() {
-  mediaViewerTransform = { scale: 1, x: 0, y: 0 };
+  mediaViewerTransform = initialMediaViewerTransform();
   mediaViewerPointers.clear();
   mediaViewerGestureStart = null;
   applyMediaViewerTransform();
 }
 
 function beginMediaViewerGesture() {
-  const pointers = [...mediaViewerPointers.values()];
-  if (pointers.length >= 2) {
-    const [first, second] = pointers;
-    mediaViewerGestureStart = {
-      mode: 'pinch',
-      distance: Math.max(1, pointerDistance(first, second)),
-      midpoint: pointerMidpoint(first, second),
-      scale: mediaViewerTransform.scale,
-      x: mediaViewerTransform.x,
-      y: mediaViewerTransform.y,
-    };
-    return;
-  }
-  if (pointers.length === 1) {
-    const [pointer] = pointers;
-    mediaViewerGestureStart = {
-      mode: 'pan',
-      clientX: pointer.clientX,
-      clientY: pointer.clientY,
-      x: mediaViewerTransform.x,
-      y: mediaViewerTransform.y,
-    };
-  }
+  mediaViewerGestureStart = mediaViewerGestureStartFromPointers([...mediaViewerPointers.values()], mediaViewerTransform);
 }
 
 function updateMediaViewerGesture() {
-  const pointers = [...mediaViewerPointers.values()];
-  if (pointers.length >= 2 && mediaViewerGestureStart?.mode === 'pinch') {
-    const [first, second] = pointers;
-    const midpoint = pointerMidpoint(first, second);
-    const scale = clamp(mediaViewerGestureStart.scale * (pointerDistance(first, second) / mediaViewerGestureStart.distance), 1, 5);
-    mediaViewerTransform = {
-      scale,
-      x: scale <= 1.01 ? 0 : mediaViewerGestureStart.x + midpoint.x - mediaViewerGestureStart.midpoint.x,
-      y: scale <= 1.01 ? 0 : mediaViewerGestureStart.y + midpoint.y - mediaViewerGestureStart.midpoint.y,
-    };
-    applyMediaViewerTransform();
-    return;
-  }
-  if (pointers.length === 1 && mediaViewerGestureStart?.mode === 'pan' && mediaViewerTransform.scale > 1.01) {
-    const [pointer] = pointers;
-    mediaViewerTransform = {
-      ...mediaViewerTransform,
-      x: mediaViewerGestureStart.x + pointer.clientX - mediaViewerGestureStart.clientX,
-      y: mediaViewerGestureStart.y + pointer.clientY - mediaViewerGestureStart.clientY,
-    };
+  const nextTransform = mediaViewerTransformFromGesture([...mediaViewerPointers.values()], mediaViewerGestureStart, mediaViewerTransform);
+  if (nextTransform !== mediaViewerTransform) {
+    mediaViewerTransform = nextTransform;
     applyMediaViewerTransform();
   }
 }
 
 function handleMediaViewerPointerDown(event) {
-  if (elements.mediaViewer.classList.contains('hidden')) {
+  if (isMediaViewerHidden(elements.mediaViewer)) {
     return;
   }
   event.preventDefault();
@@ -1896,29 +1829,19 @@ function handleMediaViewerPointerEnd(event) {
 }
 
 function handleMediaViewerWheel(event) {
-  if (elements.mediaViewer.classList.contains('hidden')) {
+  if (isMediaViewerHidden(elements.mediaViewer)) {
     return;
   }
   event.preventDefault();
-  const nextScale = clamp(mediaViewerTransform.scale + (event.deltaY < 0 ? 0.25 : -0.25), 1, 5);
-  mediaViewerTransform = {
-    scale: nextScale,
-    x: nextScale <= 1.01 ? 0 : mediaViewerTransform.x,
-    y: nextScale <= 1.01 ? 0 : mediaViewerTransform.y,
-  };
+  mediaViewerTransform = mediaViewerWheelTransform(mediaViewerTransform, event.deltaY);
   applyMediaViewerTransform();
 }
 
 function toggleMediaViewerZoom() {
-  if (elements.mediaViewer.classList.contains('hidden')) {
+  if (isMediaViewerHidden(elements.mediaViewer)) {
     return;
   }
-  const nextScale = mediaViewerTransform.scale > 1.01 ? 1 : 2.5;
-  mediaViewerTransform = {
-    scale: nextScale,
-    x: 0,
-    y: 0,
-  };
+  mediaViewerTransform = toggledMediaViewerZoomTransform(mediaViewerTransform);
   applyMediaViewerTransform();
 }
 
@@ -1926,11 +1849,10 @@ function openMediaViewer(url, fileName = 'openclaw-image.png') {
   mediaViewerCurrentUrl = url;
   mediaViewerCurrentName = fileName || 'openclaw-image.png';
   resetMediaViewerZoom();
-  elements.mediaViewerImage.src = url;
-  elements.mediaViewerImage.alt = mediaViewerCurrentName;
-  elements.mediaViewerDownload.href = url;
-  elements.mediaViewerDownload.download = mediaViewerCurrentName;
-  elements.mediaViewer.classList.remove('hidden');
+  openMediaViewerView({ viewer: elements.mediaViewer, image: elements.mediaViewerImage, download: elements.mediaViewerDownload }, {
+    url,
+    fileName: mediaViewerCurrentName,
+  });
   if (!mediaViewerHistoryActive) {
     window.history.pushState({ openclawMediaViewer: true }, '');
     mediaViewerHistoryActive = true;
@@ -1943,9 +1865,7 @@ function closeMediaViewer(options = {}) {
     window.history.back();
     return;
   }
-  elements.mediaViewer.classList.add('hidden');
-  elements.mediaViewerImage.removeAttribute('src');
-  elements.mediaViewerDownload.removeAttribute('href');
+  closeMediaViewerView({ viewer: elements.mediaViewer, image: elements.mediaViewerImage, download: elements.mediaViewerDownload });
   mediaViewerCurrentUrl = '';
   mediaViewerHistoryActive = false;
   resetMediaViewerZoom();
@@ -1961,14 +1881,7 @@ async function downloadUrlThroughClient(url, fileName, trigger, event) {
     trigger.textContent = '저장 중…';
   }
   try {
-    const response = await fetch(url);
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
-    }
-    const blob = await response.blob();
-    const base64 = await blobToBase64(blob);
-    window.OpenClawAndroid.downloadBlob(fileName, blob.type || 'application/octet-stream', base64);
-    return true;
+    return await downloadUrlThroughAndroidClient(url, fileName);
   } catch (error) {
     appendMessage('system', `다운로드 실패: ${error instanceof Error ? error.message : String(error)}`, { persist: false });
     return false;
@@ -2485,15 +2398,11 @@ function applyStreamingToken(jobId, token, conversationId = activeConversationId
 }
 
 function streamingNodeText(node) {
-  if (!node) {
-    return '';
-  }
-  const visibleText = messageTextWithoutAttachmentPreview(node);
-  const bufferedText = streamingTextByJob.get(node.dataset.messageId || '') || (typeof node._streamingText === 'string' ? node._streamingText : '');
-  if (visibleText.length > bufferedText.length && !isPlaceholderPendingText(visibleText)) {
-    return visibleText;
-  }
-  return bufferedText;
+  return getStreamingNodeText(node, {
+    streamingTextByJob,
+    messageText: messageTextWithoutAttachmentPreview,
+    isPlaceholderPendingText,
+  });
 }
 
 function clearStreamingState(jobId) {
@@ -2506,16 +2415,7 @@ function clearStreamingState(jobId) {
 }
 
 function nextPartialSegmentId(jobId) {
-  const nodes = [...elements.messages.querySelectorAll(`[data-message-id^="${jobId}:partial:"]`)];
-  let maxIndex = 0;
-  for (const node of nodes) {
-    const rawId = node.dataset.messageId || '';
-    const index = Number(rawId.split(':').pop());
-    if (Number.isFinite(index)) {
-      maxIndex = Math.max(maxIndex, index);
-    }
-  }
-  return `${jobId}:partial:${maxIndex + 1}`;
+  return nextPartialSegmentIdForMessages(elements.messages, jobId);
 }
 
 function flushStreamingCheckpointNow(jobId, conversationId = activeConversationId()) {
@@ -2555,71 +2455,25 @@ function scheduleStreamingIdleCheckpoint(jobId, conversationId = activeConversat
 }
 
 async function waitForJobViaSse(jobId, onTick = () => {}, conversationId = activeConversationId(), onToken = () => {}) {
-  if (!window.ReadableStream || !window.TextDecoder || !window.AbortController) {
-    throw new Error('이 브라우저는 SSE fetch stream을 지원하지 않습니다.');
-  }
-
-  const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), 720_000);
-  try {
-    const response = await apiFetch(`/v1/jobs/${encodeURIComponent(jobId)}/events`, {
-    params: { conversation_id: conversationId },
-      headers: await historyHeaders(),
-      signal: controller.signal,
-    });
-    if (!response.ok || !response.body) {
-      const body = await response.json().catch(() => null);
-      const error = new Error(body?.error?.message || `SSE HTTP ${response.status}`);
-      error.status = response.status;
-      throw error;
-    }
-
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-    while (true) {
-      const { value, done } = await reader.read();
-      buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
-
-      let separatorIndex;
-      while ((separatorIndex = buffer.search(/\r?\n\r?\n/)) >= 0) {
-        const block = buffer.slice(0, separatorIndex);
-        const match = buffer.slice(separatorIndex).match(/^\r?\n\r?\n/);
-        buffer = buffer.slice(separatorIndex + (match ? match[0].length : 2));
-        const message = parseSseBlock(block);
-        if (message.event === 'expired') {
-          clearStreamingState(jobId);
-          clearPendingJob(conversationId);
-          return { id: jobId, state: 'expired' };
-        }
-        if (message.event === 'token' && message.data?.token) {
-          onToken(String(message.data.token));
-          continue;
-        }
-        if (message.event === 'agent' && message.data?.stream === 'tool' && message.data?.data?.phase === 'start') {
-          flushStreamingCheckpointNow(jobId, conversationId);
-          continue;
-        }
-        if (message.event === 'job' && message.data) {
-          const job = message.data;
-          onTick(job);
-          if (isTerminalJobState(job.state)) {
-            clearStreamingState(jobId);
-            clearPendingJob(conversationId);
-            return job;
-          }
-        }
-      }
-
-      if (done) {
-        break;
-      }
-    }
-  } finally {
-    window.clearTimeout(timeout);
-  }
-
-  throw new Error('SSE 응답이 완료 상태 없이 종료되었습니다.');
+  return waitForJobEventStream({
+    jobId,
+    conversationId,
+    apiFetch,
+    historyHeaders,
+    parseSseBlock,
+    isTerminalJobState,
+    onTick,
+    onToken,
+    onExpired: () => {
+      clearStreamingState(jobId);
+      clearPendingJob(conversationId);
+    },
+    onToolStart: () => flushStreamingCheckpointNow(jobId, conversationId),
+    onTerminal: () => {
+      clearStreamingState(jobId);
+      clearPendingJob(conversationId);
+    },
+  });
 }
 
 async function isJobResolvedInHistory(jobId, conversationId = activeConversationId()) {
@@ -2733,10 +2587,13 @@ async function handleSubmit(event) {
 
   try {
     const conversation = await ensureActiveConversation();
-    const outgoingMessage = rawMessage || '첨부 파일을 확인하고 사용자의 의도에 맞게 분석해주세요.';
-    const isSlashCommand = rawMessage.startsWith('/');
-    const autoLocationOnHere = settings.autoLocationOnHere !== false;
-    const shouldIncludeLocation = elements.includeLocationInput.checked || slashCommandUsesCurrentLocation(rawMessage) || (autoLocationOnHere && !isSlashCommand && rawMessage.includes('여기'));
+    const outgoingMessage = outgoingMessageForSubmit(rawMessage, selectedAttachments.length > 0);
+    const shouldIncludeLocation = shouldIncludeLocationForMessage({
+      rawMessage,
+      includeLocationChecked: elements.includeLocationInput.checked,
+      autoLocationOnHere: settings.autoLocationOnHere,
+      slashCommandUsesCurrentLocation,
+    });
     let metadata;
     if (shouldIncludeLocation) {
       setStatus('현재 위치를 가져오는 중입니다...');
@@ -2748,13 +2605,9 @@ async function handleSubmit(event) {
     const attachments = await buildAttachmentsPayload();
     const displayedUserText = `${outgoingMessage}${attachmentSummary(attachedFiles)}`;
     appendMessage('user', displayedUserText, { files: attachedFiles, savedAt: new Date().toISOString() });
-    elements.messageInput.value = '';
-    clearComposerDraft(conversation.id);
-    autoResizeTextarea();
+    resetComposerAfterSubmit({ elements, conversationId: conversation.id, clearComposerDraft, autoResizeTextarea });
     selectedAttachments = [];
     renderAttachmentTray();
-    elements.attachmentInput.value = '';
-    elements.includeLocationInput.checked = false;
     setStatus('OpenClaw 응답을 기다리는 중입니다...');
 
     let activeJobId = null;
@@ -2812,9 +2665,7 @@ async function handleSubmit(event) {
         window.setTimeout(refreshHistoryIfChanged, 800);
         return;
       }
-      elements.messageInput.value = rawMessage;
-      saveComposerDraft(conversation.id);
-      autoResizeTextarea();
+      restoreComposerAfterSubmitFailure({ elements, rawMessage, conversationId: conversation.id, saveComposerDraft, autoResizeTextarea });
       appendMessage('system', errorMessage, { persist: false });
       setStatus('');
     }
@@ -2938,18 +2789,11 @@ renderHome();
 updateChatTitle();
 updateConversationSearchClearButton();
 function startClientServerVersionPolling() {
-  if (versionCheckTimer || document.hidden) {
-    return;
-  }
-  versionCheckTimer = window.setInterval(checkClientServerVersion, 10 * 60 * 1000);
+  versionCheckTimer = startIntervalIfNeeded(versionCheckTimer, checkClientServerVersion, 10 * 60 * 1000, !document.hidden);
 }
 
 function stopClientServerVersionPolling() {
-  if (!versionCheckTimer) {
-    return;
-  }
-  window.clearInterval(versionCheckTimer);
-  versionCheckTimer = null;
+  versionCheckTimer = stopIntervalIfNeeded(versionCheckTimer);
 }
 
 function syncPageLifecyclePolling() {
@@ -3360,6 +3204,6 @@ elements.messageInput.addEventListener('keydown', (event) => {
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-04-093').catch(() => {});
+    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-04-097').catch(() => {});
   });
 }

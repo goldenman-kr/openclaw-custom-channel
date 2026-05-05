@@ -1,3 +1,5 @@
+import { blobToBase64 } from './blob-utils.js';
+
 export async function clearBrowserCaches({ unregisterServiceWorkers = true, clearAndroidWebCache = true } = {}) {
   if (unregisterServiceWorkers && navigator.serviceWorker?.getRegistrations) {
     const registrations = await navigator.serviceWorker.getRegistrations();
@@ -12,6 +14,20 @@ export async function clearBrowserCaches({ unregisterServiceWorkers = true, clea
     return { androidCacheCleared: true };
   }
   return { androidCacheCleared: false };
+}
+
+export async function downloadUrlThroughAndroidClient(url, fileName) {
+  if (!url || !window.OpenClawAndroid?.downloadBlob) {
+    return false;
+  }
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+  const blob = await response.blob();
+  const base64 = await blobToBase64(blob);
+  window.OpenClawAndroid.downloadBlob(fileName, blob.type || 'application/octet-stream', base64);
+  return true;
 }
 
 export async function runConnectionHealthCheck({ settings, sharedUserId, apiFetch, assertValidApiKey }) {
