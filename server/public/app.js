@@ -38,9 +38,8 @@ import { waitForJobEventStream } from './modules/job-events.js';
 import { delay, isTerminalJobState, parseSseBlock } from './modules/job-utils.js';
 import { appendMarkdown as appendMarkdownView } from './modules/markdown-renderer.js';
 import { canonicalMediaRefKey, extractMediaRefs, mediaRefsFromHistoryAttachments } from './modules/media.js';
+import { createMediaViewerController } from './modules/media-viewer-controller.js';
 import { appendMediaRef as appendMediaRefView } from './modules/media-ref-renderer.js';
-import { applyMediaViewerTransform as applyMediaViewerTransformView, closeMediaViewerView, isMediaViewerHidden, openMediaViewerView } from './modules/media-viewer-view.js';
-import { initialMediaViewerTransform, mediaViewerGestureStartFromPointers, mediaViewerTransformFromGesture, mediaViewerTransformStyle, mediaViewerWheelTransform, toggledMediaViewerZoomTransform } from './modules/media-viewer-geometry.js';
 import { collectBlobUrlsInUse, pruneMediaUrlCache as pruneMediaUrlCacheEntries, revokeCachedMediaUrl as revokeCachedMediaUrlEntry } from './modules/media-url-cache.js';
 import { appendCancelJobAction as appendCancelJobActionView, appendCopyAction as appendCopyActionView, appendRetryAction as appendRetryActionView } from './modules/message-action-renderer.js';
 import { appendAttachmentPreview as appendAttachmentPreviewView, createMessageNode } from './modules/message-dom.js';
@@ -73,7 +72,7 @@ import './plugins/spot-order-card.js';
 import './plugins/spot-wallet-intent.js';
 
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
-const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-05-108';
+const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-05-109';
 const CLIENT_API_VERSION = 1;
 const elements = {
   loginScreen: document.querySelector('#loginScreen'),
@@ -176,12 +175,6 @@ let openConversationMenuId = null;
 let floatingActionsExpanded = false;
 let conversations = [];
 let showingArchived = false;
-let mediaViewerCurrentUrl = '';
-let mediaViewerCurrentName = 'openclaw-image.png';
-let mediaViewerTransform = initialMediaViewerTransform();
-const mediaViewerPointers = new Map();
-let mediaViewerGestureStart = null;
-let mediaViewerHistoryActive = false;
 let messagesScrollIndicatorTimer = null;
 let drawerSwipeStart = null;
 const mediaUrlCache = new Map();
@@ -213,6 +206,7 @@ const sidebarResize = createSidebarResizeController({
   saveWidth: saveSidebarWidth,
   applyStoredWidth: applyStoredSidebarWidth,
 });
+const mediaViewer = createMediaViewerController({ elements });
 
 window.matchMedia?.('(prefers-color-scheme: light)').addEventListener?.('change', () => {
   if (!['light', 'dark'].includes(settings.themeMode)) {
@@ -496,7 +490,7 @@ function persistMessage() {
 }
 
 function currentMediaUrlsInUse() {
-  return collectBlobUrlsInUse({ mediaViewerUrl: mediaViewerCurrentUrl, messagesRoot: elements.messages });
+  return collectBlobUrlsInUse({ mediaViewerUrl: mediaViewer.currentUrl(), messagesRoot: elements.messages });
 }
 
 function revokeCachedMediaUrl(ref, url) {
@@ -1480,101 +1474,47 @@ function scheduleConversationEventRefresh(conversationId = activeConversationId(
 }
 
 function applyMediaViewerTransform() {
-  applyMediaViewerTransformView(elements.mediaViewerImage, mediaViewerTransformStyle(mediaViewerTransform), mediaViewerTransform.scale > 1.01);
+  mediaViewer.applyTransform();
 }
 
 function resetMediaViewerZoom() {
-  mediaViewerTransform = initialMediaViewerTransform();
-  mediaViewerPointers.clear();
-  mediaViewerGestureStart = null;
-  applyMediaViewerTransform();
+  mediaViewer.resetZoom();
 }
 
 function beginMediaViewerGesture() {
-  mediaViewerGestureStart = mediaViewerGestureStartFromPointers([...mediaViewerPointers.values()], mediaViewerTransform);
+  mediaViewer.beginGesture();
 }
 
 function updateMediaViewerGesture() {
-  const nextTransform = mediaViewerTransformFromGesture([...mediaViewerPointers.values()], mediaViewerGestureStart, mediaViewerTransform);
-  if (nextTransform !== mediaViewerTransform) {
-    mediaViewerTransform = nextTransform;
-    applyMediaViewerTransform();
-  }
+  mediaViewer.updateGesture();
 }
 
 function handleMediaViewerPointerDown(event) {
-  if (isMediaViewerHidden(elements.mediaViewer)) {
-    return;
-  }
-  event.preventDefault();
-  elements.mediaViewer.classList.add('gesturing');
-  elements.mediaViewerImage.setPointerCapture?.(event.pointerId);
-  mediaViewerPointers.set(event.pointerId, event);
-  beginMediaViewerGesture();
+  mediaViewer.handlePointerDown(event);
 }
 
 function handleMediaViewerPointerMove(event) {
-  if (!mediaViewerPointers.has(event.pointerId)) {
-    return;
-  }
-  event.preventDefault();
-  mediaViewerPointers.set(event.pointerId, event);
-  updateMediaViewerGesture();
+  mediaViewer.handlePointerMove(event);
 }
 
 function handleMediaViewerPointerEnd(event) {
-  if (!mediaViewerPointers.has(event.pointerId)) {
-    return;
-  }
-  mediaViewerPointers.delete(event.pointerId);
-  elements.mediaViewerImage.releasePointerCapture?.(event.pointerId);
-  if (mediaViewerPointers.size === 0) {
-    elements.mediaViewer.classList.remove('gesturing');
-  }
-  beginMediaViewerGesture();
+  mediaViewer.handlePointerEnd(event);
 }
 
 function handleMediaViewerWheel(event) {
-  if (isMediaViewerHidden(elements.mediaViewer)) {
-    return;
-  }
-  event.preventDefault();
-  mediaViewerTransform = mediaViewerWheelTransform(mediaViewerTransform, event.deltaY);
-  applyMediaViewerTransform();
+  mediaViewer.handleWheel(event);
 }
 
 function toggleMediaViewerZoom() {
-  if (isMediaViewerHidden(elements.mediaViewer)) {
-    return;
-  }
-  mediaViewerTransform = toggledMediaViewerZoomTransform(mediaViewerTransform);
-  applyMediaViewerTransform();
+  mediaViewer.toggleZoom();
 }
 
 function openMediaViewer(url, fileName = 'openclaw-image.png') {
-  mediaViewerCurrentUrl = url;
-  mediaViewerCurrentName = fileName || 'openclaw-image.png';
-  resetMediaViewerZoom();
-  openMediaViewerView({ viewer: elements.mediaViewer, image: elements.mediaViewerImage, download: elements.mediaViewerDownload }, {
-    url,
-    fileName: mediaViewerCurrentName,
-  });
-  if (!mediaViewerHistoryActive) {
-    window.history.pushState({ openclawMediaViewer: true }, '');
-    mediaViewerHistoryActive = true;
-  }
+  mediaViewer.open(url, fileName);
 }
 
 function closeMediaViewer(options = {}) {
-  const { syncHistory = true } = options;
-  if (syncHistory && mediaViewerHistoryActive) {
-    window.history.back();
-    return;
-  }
-  closeMediaViewerView({ viewer: elements.mediaViewer, image: elements.mediaViewerImage, download: elements.mediaViewerDownload });
-  mediaViewerCurrentUrl = '';
-  mediaViewerHistoryActive = false;
-  resetMediaViewerZoom();
+  mediaViewer.close(options);
 }
 
 async function downloadUrlThroughClient(url, fileName, trigger, event) {
@@ -1599,10 +1539,10 @@ async function downloadUrlThroughClient(url, fileName, trigger, event) {
 }
 
 async function downloadCurrentMedia(event) {
-  if (!mediaViewerCurrentUrl) {
+  if (!mediaViewer.currentUrl()) {
     return;
   }
-  await downloadUrlThroughClient(mediaViewerCurrentUrl, mediaViewerCurrentName, elements.mediaViewerDownload, event);
+  await downloadUrlThroughClient(mediaViewer.currentUrl(), mediaViewer.currentName(), elements.mediaViewerDownload, event);
 }
 
 async function getAuthorizedMediaUrl(ref) {
@@ -2402,7 +2342,7 @@ bindAppEventListeners({
         closeSettingsPanel({ syncHistory: false });
         return;
       }
-      if (mediaViewerHistoryActive && !elements.mediaViewer.classList.contains('hidden')) {
+      if (mediaViewer.isHistoryActive() && !mediaViewer.isHidden()) {
         closeMediaViewer({ syncHistory: false });
         return;
       }
@@ -2501,6 +2441,6 @@ renderModelPicker();
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-05-108').catch(() => {});
+    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-05-109').catch(() => {});
   });
 }
