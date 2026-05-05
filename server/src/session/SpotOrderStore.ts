@@ -186,8 +186,7 @@ export class SpotOrderStore {
         state TEXT NOT NULL CHECK (state IN ('signed', 'submitted', 'failed')),
         error TEXT,
         created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL,
-        FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+        updated_at TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS idx_spot_orders_conversation_created
         ON spot_orders(conversation_id, created_at);
@@ -197,6 +196,53 @@ export class SpotOrderStore {
     this.addColumnIfMissing("spot_orders", "relay_status", "TEXT");
     this.addColumnIfMissing("spot_orders", "relay_result_json", "TEXT");
     this.addColumnIfMissing("spot_orders", "relay_polled_at", "TEXT");
+    this.removeConversationCascadeIfPresent();
+  }
+
+  private removeConversationCascadeIfPresent(): void {
+    const foreignKeys = this.db.prepare("PRAGMA foreign_key_list(spot_orders)").all() as Array<{ table: string; on_delete: string }>;
+    if (!foreignKeys.some((key) => key.table === "conversations" && key.on_delete.toUpperCase() === "CASCADE")) {
+      return;
+    }
+    this.db.exec(`
+      PRAGMA foreign_keys = OFF;
+      ALTER TABLE spot_orders RENAME TO spot_orders_old;
+      CREATE TABLE spot_orders (
+        id TEXT PRIMARY KEY,
+        conversation_id TEXT NOT NULL,
+        signer TEXT NOT NULL,
+        swapper TEXT NOT NULL,
+        chain_id TEXT NOT NULL,
+        typed_data_hash TEXT NOT NULL,
+        typed_data_json TEXT NOT NULL,
+        signature TEXT NOT NULL,
+        relay_payload_json TEXT NOT NULL,
+        relay_order_hash TEXT,
+        relay_status TEXT,
+        relay_result_json TEXT,
+        relay_polled_at TEXT,
+        state TEXT NOT NULL CHECK (state IN ('signed', 'submitted', 'failed')),
+        error TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      INSERT INTO spot_orders (
+        id, conversation_id, signer, swapper, chain_id, typed_data_hash, typed_data_json,
+        signature, relay_payload_json, relay_order_hash, relay_status, relay_result_json,
+        relay_polled_at, state, error, created_at, updated_at
+      )
+      SELECT
+        id, conversation_id, signer, swapper, chain_id, typed_data_hash, typed_data_json,
+        signature, relay_payload_json, relay_order_hash, relay_status, relay_result_json,
+        relay_polled_at, state, error, created_at, updated_at
+      FROM spot_orders_old;
+      DROP TABLE spot_orders_old;
+      CREATE INDEX IF NOT EXISTS idx_spot_orders_conversation_created
+        ON spot_orders(conversation_id, created_at);
+      CREATE INDEX IF NOT EXISTS idx_spot_orders_relay_hash
+        ON spot_orders(relay_order_hash);
+      PRAGMA foreign_keys = ON;
+    `);
   }
 
   private addColumnIfMissing(table: string, column: string, definition: string): void {
