@@ -11,3 +11,14 @@ export function stopIntervalIfNeeded(currentTimer) {
   }
   return null;
 }
+
+export function syncVisiblePagePolling({ syncHistoryPolling, stopVersionPolling, startVersionPolling, checkVersion, refreshHistory }) {
+  syncHistoryPolling();
+  if (document.hidden) {
+    stopVersionPolling();
+    return;
+  }
+  startVersionPolling();
+  checkVersion();
+  refreshHistory().catch(() => {});
+}

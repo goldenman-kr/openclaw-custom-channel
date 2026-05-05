@@ -1,7 +1,8 @@
 import { clearBrowserCaches, downloadUrlThroughAndroidClient, runConnectionHealthCheck } from './modules/app-maintenance.js';
+import { bootstrapInitialConversation } from './modules/app-startup.js';
 import { attachmentSummary as summarizeAttachments, buildAttachmentPayload, filesFromDataTransfer, hasDraggedFiles, validateAttachmentFile } from './modules/attachment-input.js';
 import { createAttachmentPreview } from './modules/attachment-preview.js';
-import { fetchCurrentUser, loginUser, logoutUser } from './modules/auth-api.js';
+import { changePassword, fetchCurrentUser, loginUser, logoutUser } from './modules/auth-api.js';
 import { renderAttachmentTray as renderAttachmentTrayView } from './modules/attachment-tray.js';
 import { MAX_ATTACHMENTS, formatBytes } from './modules/attachments.js';
 import { createConversationListItem } from './modules/conversation-list-item.js';
@@ -45,12 +46,13 @@ import { closeDrawer, drawerSwipeGesture, isDesktopLayout as isDesktopViewport, 
 import { notificationsSupported, notifyReplyReady as notifyReplyReadyBrowser, requestNotificationPermission, updateNotificationButton as updateNotificationButtonView } from './modules/notifications.js';
 import { clearConversationEventRefreshTimer, closeConversationEventSource, conversationEventsSupported, createConversationEventSource } from './modules/conversation-events.js';
 import { conversationIdFromPath, syncConversationUrl } from './modules/navigation.js';
-import { startIntervalIfNeeded, stopIntervalIfNeeded } from './modules/page-lifecycle.js';
+import { startIntervalIfNeeded, stopIntervalIfNeeded, syncVisiblePagePolling } from './modules/page-lifecycle.js';
 import { loadPendingJobFromStorage, pendingJobStorageKey as buildPendingJobStorageKey, pendingJobStoragePrefix as buildPendingJobStoragePrefix, prunePendingJobStorage } from './modules/pending-job-storage.js';
+import { promptPasswordChange } from './modules/password-flow.js';
 import { applySettingsToFormControls, readSettingsFromFormControls } from './modules/settings-form.js';
 import { openSettingsPanel as openSettingsPanelView, closeSettingsPanel as closeSettingsPanelView } from './modules/settings-panel.js';
 import { loadSettings, normalizeHistoryPageSize, saveSettings } from './modules/settings.js';
-import { isNearBottom as isMessagesNearBottom, hideMessagesScrollIndicator, hideScrollToLatestButton as hideScrollButton, showScrollToLatestButton as showScrollButton, updateMessagesScrollIndicator as updateMessagesScrollIndicatorUi } from './modules/scroll-ui.js';
+import { isNearBottom as isMessagesNearBottom, hideMessagesScrollIndicator, hideScrollToLatestButton as hideScrollButton, preserveScrollAfterRender as preserveMessagesScrollAfterRender, scheduleScrollToBottom, showScrollToLatestButton as showScrollButton, updateMessagesScrollIndicator as updateMessagesScrollIndicatorUi } from './modules/scroll-ui.js';
 import { canResizeSidebar as canResizeSidebarView, sidebarResizeStateFromEvent, sidebarResizeWidth } from './modules/sidebar-resize.js';
 import { applyStoredSidebarWidth, clampSidebarWidth, saveSidebarWidth, SIDEBAR_RESIZE_MEDIA } from './modules/sidebar-width.js';
 import { matchingSlashCommands as findMatchingSlashCommands, renderSlashCommandPalette as renderSlashCommandPaletteView } from './modules/slash-commands.js';
@@ -383,27 +385,15 @@ function hideMessagesScrollIndicatorSoon() {
 }
 
 function scrollToBottom(options = {}) {
-  const { force = false, autoScroll = true, smooth = false } = options;
-  if (!autoScroll) {
-    return;
-  }
-  if (!force && !isNearBottom()) {
-    showScrollToLatestButton();
-    return;
-  }
-  requestAnimationFrame(() => {
-    elements.messages.scrollTo({ top: elements.messages.scrollHeight, behavior: smooth ? 'smooth' : 'auto' });
-    hideScrollToLatestButton();
+  scheduleScrollToBottom(elements.messages, {
+    ...options,
+    wasNearBottom: isNearBottom(),
+    onBlocked: showScrollToLatestButton,
+    onComplete: hideScrollToLatestButton,
   });
 }
 function preserveScrollAfterRender(previousBottomOffset) {
-  const restore = () => {
-    elements.messages.scrollTop = Math.max(0, elements.messages.scrollHeight - previousBottomOffset);
-  };
-  restore();
-  requestAnimationFrame(restore);
-  window.setTimeout(restore, 80);
-  window.setTimeout(restore, 250);
+  preserveMessagesScrollAfterRender(elements.messages, previousBottomOffset);
 }
 
 function isDesktopLayout() {
@@ -2547,32 +2537,16 @@ async function clearAppCacheAndReload() {
 }
 
 async function resetPassword() {
-  const currentPassword = window.prompt('현재 비밀번호를 입력하세요.');
-  if (currentPassword === null) {
+  const input = promptPasswordChange();
+  if (!input) {
     return;
   }
-  const newPassword = window.prompt('새 비밀번호를 입력하세요. 8자 이상이어야 합니다.');
-  if (newPassword === null) {
-    return;
-  }
-  const confirmPassword = window.prompt('새 비밀번호를 한 번 더 입력하세요.');
-  if (confirmPassword === null) {
-    return;
-  }
-  if (newPassword !== confirmPassword) {
-    appendMessage('system', '새 비밀번호가 서로 일치하지 않습니다.', { persist: false });
+  if (input.error) {
+    appendMessage('system', input.error, { persist: false });
     return;
   }
   try {
-    const response = await apiFetch('/v1/auth/password', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
-    });
-    const body = await response.json().catch(() => null);
-    if (!response.ok) {
-      throw new Error(body?.error?.message || `비밀번호 재설정 실패: HTTP ${response.status}`);
-    }
+    await changePassword(apiFetch, input.currentPassword, input.newPassword);
     showToast('비밀번호를 변경했습니다.', { kind: 'success' });
   } catch (error) {
     appendMessage('system', error instanceof Error ? error.message : String(error), { persist: false });
@@ -2648,40 +2622,32 @@ function stopClientServerVersionPolling() {
 }
 
 function syncPageLifecyclePolling() {
-  syncHistoryPolling();
-  if (document.hidden) {
-    stopClientServerVersionPolling();
-    return;
-  }
-  startClientServerVersionPolling();
-  checkClientServerVersion();
-  refreshHistoryIfChanged().catch(() => {});
+  syncVisiblePagePolling({
+    syncHistoryPolling,
+    stopVersionPolling: stopClientServerVersionPolling,
+    startVersionPolling: startClientServerVersionPolling,
+    checkVersion: checkClientServerVersion,
+    refreshHistory: refreshHistoryIfChanged,
+  });
 }
 
 document.addEventListener('visibilitychange', syncPageLifecyclePolling);
 checkClientServerVersion();
 startClientServerVersionPolling();
 const initialConversationId = conversationIdFromPath();
-(async () => {
-  const user = await loadCurrentUser();
-  if (!user && !settings.apiKey) {
-    return;
-  }
-  await refreshConversations();
-  if (user && !initialConversationId && !activeConversation?.id && conversations.length === 0) {
-    await startNewConversation();
-    return;
-  }
-  if (!initialConversationId) {
-    renderHome();
-    renderConversationList();
-    return;
-  }
-  const selected = await selectConversation(initialConversationId, { replaceUrl: true });
-  if (!selected) {
-    goHome({ replaceUrl: true });
-  }
-})().catch((error) => appendMessage('system', error instanceof Error ? error.message : String(error), { persist: false }));
+bootstrapInitialConversation({
+  loadCurrentUser,
+  settings,
+  initialConversationId,
+  refreshConversations,
+  startNewConversation,
+  activeConversationId,
+  conversations: () => conversations,
+  renderHome,
+  renderConversationList,
+  selectConversation,
+  goHome,
+}).catch((error) => appendMessage('system', error instanceof Error ? error.message : String(error), { persist: false }));
 startHistoryPolling();
 
 function persistSettingsFromForm(options = {}) {

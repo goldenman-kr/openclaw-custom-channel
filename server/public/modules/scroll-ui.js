@@ -39,3 +39,27 @@ export function hideMessagesScrollIndicator(messages, indicator) {
   messages.classList.remove('is-scrolling');
   indicator?.classList.remove('visible');
 }
+
+export function scheduleScrollToBottom(messages, { force = false, autoScroll = true, smooth = false, wasNearBottom = false, onBlocked = () => {}, onComplete = () => {} } = {}) {
+  if (!autoScroll) {
+    return;
+  }
+  if (!force && !wasNearBottom) {
+    onBlocked();
+    return;
+  }
+  requestAnimationFrame(() => {
+    messages.scrollTo({ top: messages.scrollHeight, behavior: smooth ? 'smooth' : 'auto' });
+    onComplete();
+  });
+}
+
+export function preserveScrollAfterRender(messages, previousBottomOffset) {
+  const restore = () => {
+    messages.scrollTop = Math.max(0, messages.scrollHeight - previousBottomOffset);
+  };
+  restore();
+  requestAnimationFrame(restore);
+  window.setTimeout(restore, 80);
+  window.setTimeout(restore, 250);
+}
