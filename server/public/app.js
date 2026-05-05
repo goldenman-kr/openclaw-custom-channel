@@ -6,6 +6,7 @@ import { searchConversationContent } from './modules/conversation-search.js';
 import { applyComposerAvailability, composerAvailabilityState } from './modules/composer-availability.js';
 import { clearComposerDraft as clearStoredComposerDraft, loadComposerDraft, saveComposerDraft as saveStoredComposerDraft } from './modules/composer-draft.js';
 import { apiUrl as buildApiUrl, assertValidApiKey, normalizeApiKey } from './modules/api-client.js';
+import { copyTextToClipboard } from './modules/clipboard.js';
 import { autoResizeTextarea as resizeComposerTextarea, updateClearMessageInputButton as updateComposerClearButton } from './modules/composer-input.js';
 import { openDeleteDialog as openDeleteDialogView, openRenameDialog as openRenameDialogView } from './modules/conversation-dialogs.js';
 import { conversationTitle, formatConversationDate, formatMessageTimestamp } from './modules/conversation-format.js';
@@ -35,7 +36,7 @@ import './plugins/spot-order-card.js';
 import './plugins/spot-wallet-intent.js';
 
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
-const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-074';
+const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-075';
 const CLIENT_API_VERSION = 1;
 const elements = {
   loginScreen: document.querySelector('#loginScreen'),
@@ -1537,22 +1538,6 @@ function appendInlineMarkdown(parent, text) {
   if (lastIndex < text.length) {
     parent.append(document.createTextNode(text.slice(lastIndex)));
   }
-}
-
-function copyTextToClipboard(text) {
-  if (navigator.clipboard?.writeText) {
-    return navigator.clipboard.writeText(text);
-  }
-  const textarea = document.createElement('textarea');
-  textarea.value = text;
-  textarea.setAttribute('readonly', '');
-  textarea.style.position = 'fixed';
-  textarea.style.opacity = '0';
-  document.body.append(textarea);
-  textarea.select();
-  const copied = document.execCommand('copy');
-  textarea.remove();
-  return copied ? Promise.resolve() : Promise.reject(new Error('복사하지 못했습니다.'));
 }
 
 function isMarkdownTableRow(line) {
