@@ -16,6 +16,7 @@ import { createHomeScreen } from './modules/home-screen.js';
 import { hideLoginScreen as hideLoginScreenView, showLoginScreen as showLoginScreenView } from './modules/login-screen.js';
 import { isPendingHistoryMessage, isPlaceholderPendingText, isRunningJobHistoryMessage, shouldRerenderHistory as shouldRerenderHistorySnapshot } from './modules/history-state.js';
 import { canonicalMediaRefKey, isImageRef, isPlaceholderMediaRef, normalizeMediaRefPath, shortenFileName } from './modules/media.js';
+import { createCancelJobButton, createCopyButton, createRetryButton, ensureMessageActions, setCancelJobButtonBusy } from './modules/message-actions.js';
 import { renderModelPicker as renderModelPickerView, updateModelPickerButtonState as updateModelPickerButtonStateView } from './modules/model-picker.js';
 import { closeDrawer, drawerSwipeGesture, isDesktopLayout as isDesktopViewport, isDrawerOpen, openDrawer, shouldIgnoreDrawerSwipe as shouldIgnoreDrawerSwipeTarget, toggleDesktopSidebar } from './modules/mobile-drawer.js';
 import { notificationsSupported, notifyReplyReady as notifyReplyReadyBrowser, requestNotificationPermission, updateNotificationButton as updateNotificationButtonView } from './modules/notifications.js';
@@ -33,7 +34,7 @@ import './plugins/spot-order-card.js';
 import './plugins/spot-wallet-intent.js';
 
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
-const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-071';
+const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-072';
 const CLIENT_API_VERSION = 1;
 const elements = {
   loginScreen: document.querySelector('#loginScreen'),
@@ -2621,16 +2622,6 @@ function retryTextForNode(node) {
   return '';
 }
 
-function ensureMessageActions(node) {
-  let actions = node.querySelector(':scope > .message-actions');
-  if (!actions) {
-    actions = document.createElement('div');
-    actions.className = 'message-actions';
-    node.append(actions);
-  }
-  return actions;
-}
-
 function appendCopyAction(node, role, text, options = {}) {
   if (options.pending || !['user', 'assistant', 'system'].includes(role)) {
     return;
@@ -2639,23 +2630,7 @@ function appendCopyAction(node, role, text, options = {}) {
   if (!copyText) {
     return;
   }
-  const button = document.createElement('button');
-  button.type = 'button';
-  button.className = 'message-copy-button';
-  button.setAttribute('aria-label', '메시지 원문 복사');
-  button.title = '메시지 원문 복사';
-  button.innerHTML = '<svg class="message-copy-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 7.5V5.75A2.75 2.75 0 0 1 10.75 3h6.5A2.75 2.75 0 0 1 20 5.75v8.5A2.75 2.75 0 0 1 17.25 17H15.5"/><path d="M3.75 7h7.5A2.75 2.75 0 0 1 14 9.75v8.5A2.75 2.75 0 0 1 11.25 21h-7.5A2.75 2.75 0 0 1 1 18.25v-8.5A2.75 2.75 0 0 1 3.75 7Z"/></svg>';
-  button.addEventListener('click', async () => {
-    try {
-      await copyTextToClipboard(copyText);
-      button.classList.add('copied');
-      window.setTimeout(() => { button.classList.remove('copied'); }, 900);
-    } catch {
-      button.classList.add('copy-failed');
-      window.setTimeout(() => { button.classList.remove('copy-failed'); }, 900);
-    }
-  });
-  node.append(button);
+  node.append(createCopyButton(copyText, copyTextToClipboard));
 }
 
 function appendRetryAction(node, role, text) {
@@ -2666,17 +2641,12 @@ function appendRetryAction(node, role, text) {
   if (!retryText) {
     return;
   }
-  const button = document.createElement('button');
-  button.type = 'button';
-  button.className = 'message-action-button';
-  button.textContent = '다시 시도';
-  button.addEventListener('click', () => {
+  ensureMessageActions(node).append(createRetryButton(() => {
     elements.messageInput.value = retryText;
     saveComposerDraft();
     autoResizeTextarea();
     elements.messageInput.focus();
-  });
-  ensureMessageActions(node).append(button);
+  }));
 }
 
 function appendCancelJobAction(node, role, text, options = {}) {
@@ -2687,15 +2657,9 @@ function appendCancelJobAction(node, role, text, options = {}) {
   if (!looksPending || normalizedRole !== 'assistant' || !jobId?.startsWith('job_')) {
     return;
   }
-  const button = document.createElement('button');
-  button.type = 'button';
-  button.className = 'message-cancel-button';
-  button.title = '이 응답 작업 중지';
-  button.setAttribute('aria-label', '이 응답 작업 중지');
-  button.addEventListener('click', async () => {
+  const button = createCancelJobButton(async () => {
     const conversationId = activeConversationId();
-    button.disabled = true;
-    button.setAttribute('aria-label', '응답 작업 중지 중');
+    setCancelJobButtonBusy(button, true);
     setStatus('응답을 중지하는 중입니다...');
     try {
       await cancelJob(jobId, conversationId);
@@ -2715,8 +2679,7 @@ function appendCancelJobAction(node, role, text, options = {}) {
         setStatus('');
         return;
       }
-      button.disabled = false;
-      button.setAttribute('aria-label', '이 응답 작업 중지');
+      setCancelJobButtonBusy(button, false);
       appendMessage('system', detail, { persist: false });
       setStatus('');
     }
