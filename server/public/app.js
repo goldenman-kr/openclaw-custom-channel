@@ -22,7 +22,7 @@ import { hideLoginScreen as hideLoginScreenView, showLoginScreen as showLoginScr
 import { getCurrentLocationMetadata } from './modules/location.js';
 import { isPendingHistoryMessage, isPlaceholderPendingText, isRunningJobHistoryMessage, shouldRerenderHistory as shouldRerenderHistorySnapshot } from './modules/history-state.js';
 import { isMarkdownTableRow, isMarkdownTableSeparator, splitMarkdownTableRow, tableAlignments } from './modules/markdown-table.js';
-import { canonicalMediaRefKey, isImageRef, isPlaceholderMediaRef, normalizeMediaRefPath, shortenFileName } from './modules/media.js';
+import { canonicalMediaRefKey, extractMediaRefs, isImageRef, isPlaceholderMediaRef, mediaRefsFromHistoryAttachments, normalizeMediaRefPath, shortenFileName } from './modules/media.js';
 import { createCancelJobButton, createCopyButton, createRetryButton, ensureMessageActions, setCancelJobButtonBusy } from './modules/message-actions.js';
 import { renderModelPicker as renderModelPickerView, updateModelPickerButtonState as updateModelPickerButtonStateView } from './modules/model-picker.js';
 import { closeDrawer, drawerSwipeGesture, isDesktopLayout as isDesktopViewport, isDrawerOpen, openDrawer, shouldIgnoreDrawerSwipe as shouldIgnoreDrawerSwipeTarget, toggleDesktopSidebar } from './modules/mobile-drawer.js';
@@ -41,7 +41,7 @@ import './plugins/spot-order-card.js';
 import './plugins/spot-wallet-intent.js';
 
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
-const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-079';
+const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-080';
 const CLIENT_API_VERSION = 1;
 const elements = {
   loginScreen: document.querySelector('#loginScreen'),
@@ -2006,34 +2006,6 @@ function scheduleConversationEventRefresh(conversationId = activeConversationId(
   }, 150);
 }
 
-function extractMediaRefs(text) {
-  const refs = [];
-  const visibleLines = [];
-  let inCodeBlock = false;
-
-  for (const line of text.split('\n')) {
-    const fenceMatch = line.match(/^\s*```/);
-    if (fenceMatch) {
-      inCodeBlock = !inCodeBlock;
-      visibleLines.push(line);
-      continue;
-    }
-
-    if (!inCodeBlock) {
-      const mediaMatch = line.match(/^\s*MEDIA:\s*(.+?)\s*$/);
-      if (mediaMatch) {
-        refs.push(mediaMatch[1].trim());
-        continue;
-      }
-    }
-
-    visibleLines.push(line);
-  }
-
-  const visibleText = visibleLines.join('\n').trim();
-  return { text: visibleText || (refs.length > 0 ? '' : text), refs };
-}
-
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
@@ -2243,20 +2215,6 @@ async function downloadCurrentMedia(event) {
     return;
   }
   await downloadUrlThroughClient(mediaViewerCurrentUrl, mediaViewerCurrentName, elements.mediaViewerDownload, event);
-}
-
-function mediaRefsFromHistoryAttachments(attachments) {
-  if (!Array.isArray(attachments)) {
-    return [];
-  }
-  return attachments
-    .filter((attachment) => typeof attachment?.path === 'string')
-    .map((attachment) => ({
-      path: attachment.path,
-      name: attachment.name,
-      type: attachment.mime_type,
-      size: attachment.size,
-    }));
 }
 
 async function getAuthorizedMediaUrl(ref) {
@@ -3799,6 +3757,6 @@ elements.messageInput.addEventListener('keydown', (event) => {
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-04-079').catch(() => {});
+    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-04-080').catch(() => {});
   });
 }

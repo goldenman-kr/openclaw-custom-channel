@@ -35,3 +35,46 @@ export function normalizeMediaRefPath(ref) {
 export function canonicalMediaRefKey(ref) {
   return normalizeMediaRefPath(ref).trim().replace(/\/+$/, '');
 }
+
+
+export function extractMediaRefs(text) {
+  const refs = [];
+  const visibleLines = [];
+  let inCodeBlock = false;
+
+  for (const line of String(text || '').split('\n')) {
+    const fenceMatch = line.match(/^\s*```/);
+    if (fenceMatch) {
+      inCodeBlock = !inCodeBlock;
+      visibleLines.push(line);
+      continue;
+    }
+
+    if (!inCodeBlock) {
+      const mediaMatch = line.match(/^\s*MEDIA:\s*(.+?)\s*$/);
+      if (mediaMatch) {
+        refs.push(mediaMatch[1].trim());
+        continue;
+      }
+    }
+
+    visibleLines.push(line);
+  }
+
+  const visibleText = visibleLines.join('\n').trim();
+  return { text: visibleText || (refs.length > 0 ? '' : String(text || '')), refs };
+}
+
+export function mediaRefsFromHistoryAttachments(attachments) {
+  if (!Array.isArray(attachments)) {
+    return [];
+  }
+  return attachments
+    .filter((attachment) => typeof attachment?.path === 'string')
+    .map((attachment) => ({
+      path: attachment.path,
+      name: attachment.name,
+      type: attachment.mime_type,
+      size: attachment.size,
+    }));
+}
