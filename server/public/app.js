@@ -62,7 +62,7 @@ import { createSidebarResizeController } from './modules/sidebar-resize-controll
 import { canResizeSidebar as canResizeSidebarView, sidebarResizeStateFromEvent, sidebarResizeWidth } from './modules/sidebar-resize.js';
 import { applyStoredSidebarWidth, clampSidebarWidth, saveSidebarWidth, SIDEBAR_RESIZE_MEDIA } from './modules/sidebar-width.js';
 import { matchingSlashCommands as findMatchingSlashCommands, renderSlashCommandPalette as renderSlashCommandPaletteView } from './modules/slash-commands.js';
-import { nextPartialSegmentId as nextPartialSegmentIdForMessages, streamingNodeText as getStreamingNodeText } from './modules/streaming-ui.js';
+import { createStreamingController } from './modules/streaming-controller.js';
 import { handleSubmitFlow } from './modules/submit-controller.js';
 import { notifyJobResult, outgoingMessageForSubmit, resetComposerAfterSubmit, restoreComposerAfterSubmitFailure, schedulePostSubmitRefresh, shouldIncludeLocationForMessage, submitValidationMessage } from './modules/submit-flow.js';
 import { showToast } from './modules/toast.js';
@@ -73,7 +73,7 @@ import './plugins/spot-order-card.js';
 import './plugins/spot-wallet-intent.js';
 
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
-const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-05-110';
+const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-05-111';
 const CLIENT_API_VERSION = 1;
 const elements = {
   loginScreen: document.querySelector('#loginScreen'),
@@ -161,9 +161,6 @@ let versionCheckTimer = null;
 let conversationEventSource = null;
 let conversationEventConversationId = '';
 let conversationEventRefreshTimer = null;
-const streamingIdleTimers = new Map();
-const streamingTextByJob = new Map();
-const MIN_STREAMING_CHECKPOINT_CHARS = 12;
 let isSendingMessage = false;
 let selectedAttachments = [];
 let composerDragDepth = 0;
@@ -208,6 +205,14 @@ const sidebarResize = createSidebarResizeController({
   applyStoredWidth: applyStoredSidebarWidth,
 });
 const mediaViewer = createMediaViewerController({ elements });
+const streaming = createStreamingController({
+  messagesRoot: elements.messages,
+  appendMessage,
+  renderMessageNode,
+  messageText: messageTextWithoutAttachmentPreview,
+  isPlaceholderPendingText,
+  isActiveConversation,
+});
 
 window.matchMedia?.('(prefers-color-scheme: light)').addEventListener?.('change', () => {
   if (!['light', 'dark'].includes(settings.themeMode)) {
@@ -1769,78 +1774,19 @@ async function cancelActiveJob() {
 
 
 function applyStreamingToken(jobId, token, conversationId = activeConversationId()) {
-  if (!token || !isActiveConversation(conversationId)) {
-    return;
-  }
-
-  let node = elements.messages.querySelector(`[data-message-id="${jobId}"]`);
-  if (!node) {
-    node = appendMessage('assistant', '', { id: jobId, persist: false, pending: true });
-  }
-
-  const currentText = streamingTextByJob.get(jobId) || node._streamingText || (isPlaceholderPendingText(messageTextWithoutAttachmentPreview(node)) ? '' : messageTextWithoutAttachmentPreview(node));
-  const nextText = `${currentText}${token}`;
-  streamingTextByJob.set(jobId, nextText);
-  node._streamingText = nextText;
-  renderMessageNode(node, 'assistant', nextText, { pending: true });
-  scheduleStreamingIdleCheckpoint(jobId, conversationId);
-}
-
-function streamingNodeText(node) {
-  return getStreamingNodeText(node, {
-    streamingTextByJob,
-    messageText: messageTextWithoutAttachmentPreview,
-    isPlaceholderPendingText,
-  });
+  streaming.applyToken(jobId, token, conversationId);
 }
 
 function clearStreamingState(jobId) {
-  if (!jobId) {
-    return;
-  }
-  window.clearTimeout(streamingIdleTimers.get(jobId));
-  streamingIdleTimers.delete(jobId);
-  streamingTextByJob.delete(jobId);
-}
-
-function nextPartialSegmentId(jobId) {
-  return nextPartialSegmentIdForMessages(elements.messages, jobId);
+  streaming.clear(jobId);
 }
 
 function flushStreamingCheckpointNow(jobId, conversationId = activeConversationId()) {
-  window.clearTimeout(streamingIdleTimers.get(jobId));
-  streamingIdleTimers.delete(jobId);
-  if (!isActiveConversation(conversationId)) {
-    return;
-  }
-  const node = elements.messages.querySelector(`[data-message-id="${jobId}"]`);
-  const text = streamingNodeText(node);
-  if (!node) {
-    return;
-  }
-  if (!text.trim()) {
-    renderMessageNode(node, 'assistant', '응답을 처리 중입니다…', { pending: true, autoScroll: false, suppressScrollButton: true });
-    return;
-  }
-  if (text.trim().length < MIN_STREAMING_CHECKPOINT_CHARS) {
-    streamingTextByJob.set(jobId, '');
-    node._streamingText = '';
-    renderMessageNode(node, 'assistant', '응답을 처리 중입니다…', { pending: true, autoScroll: false, suppressScrollButton: true });
-    return;
-  }
-
-  const checkpoint = document.createElement('article');
-  checkpoint.dataset.messageId = nextPartialSegmentId(jobId);
-  node.before(checkpoint);
-  renderMessageNode(checkpoint, 'assistant', text, { autoScroll: false, suppressScrollButton: true });
-  streamingTextByJob.set(jobId, '');
-  node._streamingText = '';
-  renderMessageNode(node, 'assistant', '응답을 처리 중입니다…', { pending: true, autoScroll: false, suppressScrollButton: true });
+  streaming.flushCheckpointNow(jobId, conversationId);
 }
 
 function scheduleStreamingIdleCheckpoint(jobId, conversationId = activeConversationId()) {
-  window.clearTimeout(streamingIdleTimers.get(jobId));
-  streamingIdleTimers.delete(jobId);
+  streaming.scheduleIdleCheckpoint(jobId, conversationId);
 }
 
 async function waitForJobViaSse(jobId, onTick = () => {}, conversationId = activeConversationId(), onToken = () => {}) {
@@ -2408,6 +2354,6 @@ renderModelPicker();
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-05-110').catch(() => {});
+    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-05-111').catch(() => {});
   });
 }
