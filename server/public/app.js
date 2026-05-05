@@ -21,6 +21,7 @@ import { createHomeScreen } from './modules/home-screen.js';
 import { hideLoginScreen as hideLoginScreenView, showLoginScreen as showLoginScreenView } from './modules/login-screen.js';
 import { getCurrentLocationMetadata } from './modules/location.js';
 import { isPendingHistoryMessage, isPlaceholderPendingText, isRunningJobHistoryMessage, shouldRerenderHistory as shouldRerenderHistorySnapshot } from './modules/history-state.js';
+import { delay, isTerminalJobState, parseSseBlock } from './modules/job-utils.js';
 import { isMarkdownTableRow, isMarkdownTableSeparator, splitMarkdownTableRow, tableAlignments } from './modules/markdown-table.js';
 import { canonicalMediaRefKey, extractMediaRefs, isImageRef, isPlaceholderMediaRef, mediaRefsFromHistoryAttachments, normalizeMediaRefPath, shortenFileName } from './modules/media.js';
 import { createCancelJobButton, createCopyButton, createRetryButton, ensureMessageActions, setCancelJobButtonBusy } from './modules/message-actions.js';
@@ -41,7 +42,7 @@ import './plugins/spot-order-card.js';
 import './plugins/spot-wallet-intent.js';
 
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
-const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-080';
+const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-081';
 const CLIENT_API_VERSION = 1;
 const elements = {
   loginScreen: document.querySelector('#loginScreen'),
@@ -2548,10 +2549,6 @@ function isActiveConversation(conversationId) {
   return conversationId && conversationId === activeConversationId();
 }
 
-function delay(ms) {
-  return new Promise((resolve) => window.setTimeout(resolve, ms));
-}
-
 function canResizeSidebar() {
   return window.matchMedia(SIDEBAR_RESIZE_MEDIA).matches && !document.body.classList.contains('sidebar-collapsed');
 }
@@ -2780,37 +2777,6 @@ async function cancelActiveJob() {
   return true;
 }
 
-
-function isTerminalJobState(state) {
-  return state === 'completed' || state === 'failed' || state === 'cancelled';
-}
-
-function parseSseBlock(block) {
-  let event = 'message';
-  const dataLines = [];
-  for (const rawLine of block.split(/\r?\n/)) {
-    const line = rawLine.trimEnd();
-    if (!line || line.startsWith(':')) {
-      continue;
-    }
-    if (line.startsWith('event:')) {
-      event = line.slice('event:'.length).trim() || 'message';
-      continue;
-    }
-    if (line.startsWith('data:')) {
-      dataLines.push(line.slice('data:'.length).trimStart());
-    }
-  }
-  if (!dataLines.length) {
-    return { event, data: null };
-  }
-  const rawData = dataLines.join('\n');
-  try {
-    return { event, data: JSON.parse(rawData) };
-  } catch {
-    return { event, data: rawData };
-  }
-}
 
 function applyStreamingToken(jobId, token, conversationId = activeConversationId()) {
   if (!token || !isActiveConversation(conversationId)) {
@@ -3757,6 +3723,6 @@ elements.messageInput.addEventListener('keydown', (event) => {
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-04-080').catch(() => {});
+    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-04-081').catch(() => {});
   });
 }
