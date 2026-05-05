@@ -31,3 +31,36 @@ export function matchingSlashCommands(value, cursor = value.length, commands = S
     return haystack.includes(query);
   });
 }
+
+export function clampSlashCommandIndex(index, length) {
+  return Math.max(0, Math.min(index, Math.max(0, length - 1)));
+}
+
+export function renderSlashCommandPalette(palette, matches, selectedIndex, onSelect) {
+  palette.replaceChildren();
+
+  if (matches.length === 0) {
+    palette.classList.add('hidden');
+    return selectedIndex;
+  }
+
+  const nextSelectedIndex = clampSlashCommandIndex(selectedIndex, matches.length);
+  for (const [index, item] of matches.entries()) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = `slash-command-item${index === nextSelectedIndex ? ' selected' : ''}`;
+    button.setAttribute('role', 'option');
+    button.setAttribute('aria-selected', index === nextSelectedIndex ? 'true' : 'false');
+    button.addEventListener('click', () => onSelect(item.command));
+
+    const command = document.createElement('strong');
+    command.textContent = item.command.trim();
+    const text = document.createElement('span');
+    text.textContent = `${item.title} · ${item.description}`;
+    button.append(command, text);
+    palette.append(button);
+  }
+
+  palette.classList.remove('hidden');
+  return nextSelectedIndex;
+}

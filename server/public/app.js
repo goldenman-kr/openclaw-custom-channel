@@ -31,6 +31,7 @@ import { appendInlineMarkdown, countLeadingSpaces } from './modules/markdown-inl
 import { isMarkdownTableRow, isMarkdownTableSeparator, splitMarkdownTableRow } from './modules/markdown-table.js';
 import { appendMarkdownTable } from './modules/markdown-table-render.js';
 import { canonicalMediaRefKey, extractMediaRefs, isImageRef, isPlaceholderMediaRef, mediaRefsFromHistoryAttachments, normalizeMediaRefPath, shortenFileName } from './modules/media.js';
+import { createMediaAttachmentItem, ensureMediaAttachmentPreview, replaceMediaAttachmentWithWarning } from './modules/media-attachment-view.js';
 import { clamp, pointerDistance, pointerMidpoint } from './modules/media-viewer-geometry.js';
 import { collectBlobUrlsInUse, pruneMediaUrlCache as pruneMediaUrlCacheEntries, revokeCachedMediaUrl as revokeCachedMediaUrlEntry } from './modules/media-url-cache.js';
 import { createCancelJobButton, createCopyButton, createRetryButton, ensureMessageActions, isPendingAssistantJobMessage, mergeMediaRefs, setCancelJobButtonBusy } from './modules/message-actions.js';
@@ -45,7 +46,7 @@ import { loadSettings, normalizeHistoryPageSize, saveSettings } from './modules/
 import { isNearBottom as isMessagesNearBottom, hideMessagesScrollIndicator, hideScrollToLatestButton as hideScrollButton, showScrollToLatestButton as showScrollButton, updateMessagesScrollIndicator as updateMessagesScrollIndicatorUi } from './modules/scroll-ui.js';
 import { canResizeSidebar as canResizeSidebarView, sidebarResizeStateFromEvent, sidebarResizeWidth } from './modules/sidebar-resize.js';
 import { applyStoredSidebarWidth, clampSidebarWidth, saveSidebarWidth, SIDEBAR_RESIZE_MEDIA } from './modules/sidebar-width.js';
-import { matchingSlashCommands as findMatchingSlashCommands } from './modules/slash-commands.js';
+import { matchingSlashCommands as findMatchingSlashCommands, renderSlashCommandPalette as renderSlashCommandPaletteView } from './modules/slash-commands.js';
 import { showToast } from './modules/toast.js';
 import { currentUserDisplayName as getCurrentUserDisplayName, sharedUserId as getSharedUserId } from './modules/user-identity.js';
 import { checkClientServerVersion as checkClientServerVersionWithDeps } from './modules/version-check.js';
@@ -54,7 +55,7 @@ import './plugins/spot-order-card.js';
 import './plugins/spot-wallet-intent.js';
 
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
-const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-090';
+const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-092';
 const CLIENT_API_VERSION = 1;
 const elements = {
   loginScreen: document.querySelector('#loginScreen'),
@@ -2018,57 +2019,21 @@ function appendMediaRef(parent, rawRef) {
     return;
   }
 
-  const preview = parent.querySelector('.message-attachments') || document.createElement('div');
-  preview.className = 'message-attachments';
-  preview._mediaRefKeys ||= new Set([...preview.querySelectorAll('[data-media-ref-key]')].map((item) => item.dataset.mediaRefKey));
-  if (preview._mediaRefKeys.has(refKey)) {
+  const preview = ensureMediaAttachmentPreview(parent, refKey);
+  if (!preview) {
     return;
   }
-  preview._mediaRefKeys.add(refKey);
-  if (!preview.parentElement) {
-    parent.append(preview);
-  }
 
-  const item = document.createElement('div');
-  item.className = 'message-attachment';
-  item.dataset.mediaRefKey = refKey;
   const isRemote = /^https?:\/\//i.test(ref);
   const fileName = refInfo.name || ref.split('/').pop() || ref;
   const displayName = shortenFileName(fileName);
   const captionText = refInfo.size ? `${displayName} · ${formatBytes(refInfo.size)}` : displayName;
-  let image = null;
-
-  if (isImageRef(ref) || refInfo.type?.startsWith('image/')) {
-    image = document.createElement('img');
-    image.alt = fileName;
-    image.loading = 'lazy';
-    item.classList.add('image-attachment');
-    item.append(image);
-  } else {
-    const icon = document.createElement('span');
-    icon.className = 'attachment-file-icon';
-    icon.textContent = '📎';
-    item.append(icon);
-  }
-
-  const caption = document.createElement('a');
-  caption.className = 'attachment-caption';
-  caption.textContent = captionText;
-  caption.target = '_blank';
-  caption.rel = 'noopener noreferrer';
-  caption.download = fileName;
-  item.append(caption);
-
-  const downloadLink = image ? null : document.createElement('a');
-  if (downloadLink) {
-    downloadLink.className = 'attachment-download-button';
-    downloadLink.textContent = '다운로드';
-    downloadLink.download = fileName;
-    downloadLink.target = '_blank';
-    downloadLink.rel = 'noopener noreferrer';
-    downloadLink.setAttribute('aria-disabled', 'true');
-    item.append(downloadLink);
-  }
+  const { item, image, caption, downloadLink } = createMediaAttachmentItem({
+    refKey,
+    fileName,
+    captionText,
+    image: isImageRef(ref) || refInfo.type?.startsWith('image/'),
+  });
   preview.append(item);
 
   const wireImageViewer = (url) => {
@@ -2131,11 +2096,7 @@ function appendMediaRef(parent, rawRef) {
     .catch(() => {
       caption.textContent = `${captionText} · 불러오기 실패`;
       if (image) {
-        item.replaceChildren();
-        const icon = document.createElement('span');
-        icon.className = 'attachment-file-icon';
-        icon.textContent = '⚠️';
-        item.append(icon, caption);
+        replaceMediaAttachmentWithWarning(item, caption);
       }
     });
 }
@@ -2985,32 +2946,12 @@ function hideSlashCommandPalette() {
 }
 
 function renderSlashCommandPalette() {
-  const matches = matchingSlashCommands();
-  elements.slashCommandPalette.replaceChildren();
-
-  if (matches.length === 0) {
-    hideSlashCommandPalette();
-    return;
-  }
-
-  selectedSlashCommandIndex = Math.max(0, Math.min(selectedSlashCommandIndex, matches.length - 1));
-  for (const [index, item] of matches.entries()) {
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = `slash-command-item${index === selectedSlashCommandIndex ? ' selected' : ''}`;
-    button.setAttribute('role', 'option');
-    button.setAttribute('aria-selected', index === selectedSlashCommandIndex ? 'true' : 'false');
-    button.addEventListener('click', () => applySlashCommand(item.command));
-
-    const command = document.createElement('strong');
-    command.textContent = item.command.trim();
-    const text = document.createElement('span');
-    text.textContent = `${item.title} · ${item.description}`;
-    button.append(command, text);
-    elements.slashCommandPalette.append(button);
-  }
-
-  elements.slashCommandPalette.classList.remove('hidden');
+  selectedSlashCommandIndex = renderSlashCommandPaletteView(
+    elements.slashCommandPalette,
+    matchingSlashCommands(),
+    selectedSlashCommandIndex,
+    applySlashCommand,
+  );
 }
 
 function acceptSelectedSlashCommand() {
@@ -3449,6 +3390,6 @@ elements.messageInput.addEventListener('keydown', (event) => {
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-04-090').catch(() => {});
+    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-04-092').catch(() => {});
   });
 }
