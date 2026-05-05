@@ -1,3 +1,4 @@
+import { clearBrowserCaches, runConnectionHealthCheck } from './modules/app-maintenance.js';
 import { attachmentSummary as summarizeAttachments, buildAttachmentPayload, filesFromDataTransfer, hasDraggedFiles, validateAttachmentFile } from './modules/attachment-input.js';
 import { createAttachmentPreview } from './modules/attachment-preview.js';
 import { renderAttachmentTray as renderAttachmentTrayView } from './modules/attachment-tray.js';
@@ -55,7 +56,7 @@ import './plugins/spot-order-card.js';
 import './plugins/spot-wallet-intent.js';
 
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
-const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-092';
+const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-093';
 const CLIENT_API_VERSION = 1;
 const elements = {
   loginScreen: document.querySelector('#loginScreen'),
@@ -2832,16 +2833,8 @@ async function clearAppCacheAndReload() {
   setStatus('캐시를 삭제하는 중입니다...');
   pruneMediaUrlCache({ force: true, limit: 0 });
   try {
-    if (navigator.serviceWorker?.getRegistrations) {
-      const registrations = await navigator.serviceWorker.getRegistrations();
-      await Promise.all(registrations.map((registration) => registration.unregister()));
-    }
-    if (window.caches?.keys) {
-      const keys = await caches.keys();
-      await Promise.all(keys.map((key) => caches.delete(key)));
-    }
-    if (window.OpenClawAndroid?.clearWebCache) {
-      window.OpenClawAndroid.clearWebCache();
+    const result = await clearBrowserCaches();
+    if (result.androidCacheCleared) {
       window.setTimeout(() => window.location.reload(), 350);
       return;
     }
@@ -2887,30 +2880,7 @@ async function resetPassword() {
 async function healthCheck() {
   settings = readSettingsFromForm();
   try {
-    assertValidApiKey(settings.apiKey);
-    const healthResponse = await fetch(`${settings.apiUrl}/health`);
-    if (!healthResponse.ok) {
-      throw new Error(`서버 상태 확인 실패: HTTP ${healthResponse.status}`);
-    }
-    const healthBody = await healthResponse.json();
-
-    const authResponse = settings.apiKey
-      ? await fetch(`${settings.apiUrl}/v1/message`, {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          authorization: `Bearer ${settings.apiKey}`,
-          'x-user-id': `${await sharedUserId()}-connection-test`,
-          'x-openclaw-sync': '1',
-        },
-        body: JSON.stringify({ message: '연결 테스트입니다. OK만 답해주세요.' }),
-      })
-      : await apiFetch('/v1/auth/me');
-    const authBody = await authResponse.json().catch(() => null);
-    if (!authResponse.ok) {
-      throw new Error(authBody?.error?.message || `인증 테스트 실패: HTTP ${authResponse.status}`);
-    }
-
+    const healthBody = await runConnectionHealthCheck({ settings, sharedUserId, apiFetch, assertValidApiKey });
     appendMessage('system', `연결 성공: ${healthBody.status} / transport=${healthBody.transport}`);
   } catch (error) {
     appendMessage('system', `연결 실패: ${error instanceof Error ? error.message : String(error)}`);
@@ -3390,6 +3360,6 @@ elements.messageInput.addEventListener('keydown', (event) => {
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-04-092').catch(() => {});
+    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-04-093').catch(() => {});
   });
 }
