@@ -6,6 +6,7 @@ import type { SpotOrderStore } from "../session/SpotOrderStore.js";
 const RELAY_URL = "https://agents-sink.orbs.network/orders/new";
 const RELAY_QUERY_URL = "https://agents-sink.orbs.network/orders";
 const RELAY_TERMINAL_STATUSES = new Set(["filled", "completed", "partially_completed", "cancelled", "expired", "failed", "rejected"]);
+const activeRelayPolls = new Set<string>();
 
 export interface SpotPluginRouteDeps {
   conversationStore: ConversationStore & MessageStore;
@@ -108,7 +109,7 @@ export async function handleSpotPluginRoute(
     const saved = deps.conversationStore.addMessage({ conversationId, role: "system", text, createdAt: new Date().toISOString() });
     deps.publishConversationEvent?.({ id: saved.id, type: "message", messageId: saved.id, conversationId, createdAt: saved.createdAt });
     if (relayOrderHash) {
-      void pollRelayResult({ deps, spotOrderId: record.id, conversationId, relayOrderHash });
+      startSpotOrderPolling({ deps, spotOrderId: record.id, conversationId, relayOrderHash });
     }
     deps.sendJson(response, 200, { ok: true, spot_order_id: record.id, relay_order_hash: relayOrderHash || null });
   } catch (error) {
@@ -127,6 +128,22 @@ export async function handleSpotPluginRoute(
   }
 
   return true;
+}
+
+export function resumeSpotOrderPolling(deps: SpotPluginRouteDeps): void {
+  for (const order of deps.spotOrderStore.listPollable()) {
+    if (order.relayOrderHash) {
+      startSpotOrderPolling({ deps, spotOrderId: order.id, conversationId: order.conversationId, relayOrderHash: order.relayOrderHash });
+    }
+  }
+}
+
+export function startSpotOrderPolling(input: { deps: SpotPluginRouteDeps; spotOrderId: string; conversationId: string; relayOrderHash: string }): void {
+  if (activeRelayPolls.has(input.spotOrderId)) {
+    return;
+  }
+  activeRelayPolls.add(input.spotOrderId);
+  void pollRelayResult(input).finally(() => activeRelayPolls.delete(input.spotOrderId));
 }
 
 async function pollRelayResult(input: { deps: SpotPluginRouteDeps; spotOrderId: string; conversationId: string; relayOrderHash: string }): Promise<void> {
@@ -192,6 +209,11 @@ function publishRelayResultMessage(
     "",
     "폴링 원문 결과는 서버 DB spot_orders.relay_result_json 에 저장했습니다.",
   ].join("\n");
+  const conversation = deps.conversationStore.getConversation(conversationId);
+  if (!conversation) {
+    deps.spotOrderStore.updateRelayResult(spotOrderId, { relayStatus: status, relayResult: body, error: "Target conversation was deleted before result delivery." });
+    return;
+  }
   const saved = deps.conversationStore.addMessage({ conversationId, role: "system", text, createdAt: new Date().toISOString() });
   deps.publishConversationEvent?.({ id: saved.id, type: "message", messageId: saved.id, conversationId, createdAt: saved.createdAt });
 }

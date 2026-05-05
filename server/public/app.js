@@ -51,7 +51,7 @@ import { notificationsSupported, notifyReplyReady as notifyReplyReadyBrowser, re
 import { clearConversationEventRefreshTimer, closeConversationEventSource, conversationEventsSupported, createConversationEventSource } from './modules/conversation-events.js';
 import { conversationIdFromPath, syncConversationUrl } from './modules/navigation.js';
 import { startIntervalIfNeeded, stopIntervalIfNeeded, syncVisiblePagePolling } from './modules/page-lifecycle.js';
-import { clearPendingJobFromStorage, loadPendingJobFromStorage, pendingJobStorageKey as buildPendingJobStorageKey, pendingJobStoragePrefix as buildPendingJobStoragePrefix, pendingJobStorageScope as buildPendingJobStorageScope, prunePendingJobStorage, savePendingJobToStorage } from './modules/pending-job-storage.js';
+import { createPendingJobController } from './modules/pending-job-controller.js';
 import { promptPasswordChange } from './modules/password-flow.js';
 import { applySettingsToFormControls, readSettingsFromFormControls } from './modules/settings-form.js';
 import { openSettingsPanel as openSettingsPanelView, closeSettingsPanel as closeSettingsPanelView } from './modules/settings-panel.js';
@@ -73,7 +73,7 @@ import './plugins/spot-order-card.js';
 import './plugins/spot-wallet-intent.js';
 
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
-const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-05-111';
+const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-05-112';
 const CLIENT_API_VERSION = 1;
 const elements = {
   loginScreen: document.querySelector('#loginScreen'),
@@ -212,6 +212,28 @@ const streaming = createStreamingController({
   messageText: messageTextWithoutAttachmentPreview,
   isPlaceholderPendingText,
   isActiveConversation,
+});
+const pendingJobs = createPendingJobController({
+  storage: localStorage,
+  storageKey: PENDING_JOB_KEY,
+  settings: () => settings,
+  authUser: () => authUser,
+  activeConversationId,
+  isActiveConversation,
+  messagesRoot: elements.messages,
+  messageText: messageTextWithoutAttachmentPreview,
+  renderMessageNode,
+  updateComposerAvailability,
+  fetchJob,
+  isTerminalJobState,
+  setSending,
+  setStatus,
+  cancelJob,
+  refreshHistoryIfChanged,
+  refreshConversations,
+  showToast,
+  appendMessage,
+  isAlreadyFinishedJobError,
 });
 
 window.matchMedia?.('(prefers-color-scheme: light)').addEventListener?.('change', () => {
@@ -1664,67 +1686,24 @@ async function sendMessage(message, attachments = [], metadata = undefined) {
   return sendMessageToApi({ apiFetch, historyHeaders, conversationId: conversation.id, message, attachments, metadata });
 }
 
-function pendingJobStorageScope() {
-  return buildPendingJobStorageScope({
-    storageKey: PENDING_JOB_KEY,
-    apiUrl: settings.apiUrl,
-    apiKey: settings.apiKey,
-    authUserId: authUser?.id,
-  });
-}
-
-function pendingJobStorageKey(conversationId = activeConversationId()) {
-  return buildPendingJobStorageKey(pendingJobStorageScope(), conversationId);
-}
-
 function savePendingJob(job, conversationId = activeConversationId()) {
-  savePendingJobToStorage(localStorage, pendingJobStorageKey(conversationId), job);
-  if (isActiveConversation(conversationId)) {
-    ensurePendingJobBubble(job.job_id, conversationId);
-    updateComposerAvailability();
-  }
+  pendingJobs.save(job, conversationId);
 }
 
 function ensurePendingJobBubble(jobId, conversationId = activeConversationId()) {
-  if (!jobId || !isActiveConversation(conversationId)) {
-    return null;
-  }
-
-  let node = elements.messages.querySelector(`[data-message-id="${jobId}"]`);
-  if (!node) {
-    return null;
-  }
-
-  if (!node.querySelector(':scope > .message-cancel-button')) {
-    const text = messageTextWithoutAttachmentPreview(node).trim() || '응답 대기 중입니다…';
-    renderMessageNode(node, 'assistant', text, { pending: true, autoScroll: false, suppressScrollButton: true });
-  }
-  return node;
+  return pendingJobs.ensureBubble(jobId, conversationId);
 }
 
 function loadPendingJob(conversationId = activeConversationId()) {
-  return loadPendingJobFromStorage(localStorage, pendingJobStorageKey(conversationId));
+  return pendingJobs.load(conversationId);
 }
 
 function clearPendingJob(conversationId = activeConversationId()) {
-  clearPendingJobFromStorage(localStorage, pendingJobStorageKey(conversationId));
-  if (isActiveConversation(conversationId)) {
-    updateComposerAvailability();
-  }
-}
-
-function pendingJobStoragePrefix() {
-  return buildPendingJobStoragePrefix(pendingJobStorageScope());
+  pendingJobs.clear(conversationId);
 }
 
 async function pruneStoredPendingJobs(conversationList = conversations) {
-  await prunePendingJobStorage({
-    storage: localStorage,
-    prefix: pendingJobStoragePrefix(),
-    conversationIds: new Set((conversationList || []).map((conversation) => conversation?.id).filter(Boolean)),
-    fetchJob,
-    isTerminalJobState,
-  });
+  await pendingJobs.prune(conversationList);
 }
 
 async function fetchConversationHistory(conversationId) {
@@ -1740,36 +1719,7 @@ async function cancelJob(jobId, conversationId = activeConversationId()) {
 }
 
 async function cancelActiveJob() {
-  const conversationId = activeConversationId();
-  const pendingJob = loadPendingJob(conversationId);
-  if (!pendingJob?.job_id) {
-    return false;
-  }
-  setSending(true);
-  setStatus('응답을 중지하는 중입니다...');
-  try {
-    await cancelJob(pendingJob.job_id, conversationId);
-    clearPendingJob(conversationId);
-    await refreshHistoryIfChanged();
-    await refreshConversations().catch(() => {});
-    showToast('응답을 중지했습니다.', { kind: 'success' });
-    setStatus('');
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    if (isAlreadyFinishedJobError(error)) {
-      clearPendingJob(conversationId);
-      await refreshHistoryIfChanged().catch(() => {});
-      await refreshConversations().catch(() => {});
-      showToast('이미 끝난 작업이라 남아 있던 처리중 표시를 정리했습니다.', { kind: 'success' });
-      setStatus('');
-      return true;
-    }
-    appendMessage('system', detail, { persist: false });
-    setStatus('');
-  } finally {
-    setSending(false);
-  }
-  return true;
+  return pendingJobs.cancelActive();
 }
 
 
@@ -2354,6 +2304,6 @@ renderModelPicker();
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-05-111').catch(() => {});
+    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-05-112').catch(() => {});
   });
 }

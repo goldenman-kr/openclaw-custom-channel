@@ -18,7 +18,7 @@ import { handleHistoryRoute } from "./http/historyRoutes.js";
 import { handleJobRoute } from "./http/jobRoutes.js";
 import { handleMessageRoute } from "./http/messageRoutes.js";
 import { applyNativeModelSelection, getNativeModelMenu } from "./http/nativeCommands.js";
-import { handleSpotPluginRoute } from "./http/spotPluginRoutes.js";
+import { handleSpotPluginRoute, resumeSpotOrderPolling } from "./http/spotPluginRoutes.js";
 import { handleMediaRoute, handleStaticRoute } from "./http/staticRoutes.js";
 import { GatewayAutonomousAnnounceBridge } from "./openclaw/GatewayAutonomousAnnounceBridge.js";
 import { createOpenClawClient } from "./openclaw/createOpenClawClient.js";
@@ -66,6 +66,19 @@ const chatDbPath = resolve(process.env.CHAT_DB_PATH ?? join(stateDir, "chat.sqli
 const authStore = new AuthStore(chatDbPath);
 const chatStore = new SqliteChatStore(chatDbPath);
 const spotOrderStore = new SpotOrderStore(chatDbPath);
+
+const spotOrderRouteDeps = {
+  conversationStore: chatStore,
+  spotOrderStore,
+  getAuthContext,
+  isConversationVisibleToAuth,
+  sendJson,
+  readJsonBody,
+  publishConversationEvent(event: { id: string; type: "message"; messageId: string; conversationId: string; createdAt: string }) {
+    conversationEventPublisher.publish(event);
+  },
+};
+setImmediate(() => resumeSpotOrderPolling(spotOrderRouteDeps));
 const staleJobCleanup = chatStore.cancelStaleJobs({
   olderThanMs: Number(process.env.STALE_JOB_CLEANUP_AFTER_MS ?? 30 * 60 * 1000),
   reason: "Cancelled stale job on PWA service startup.",
@@ -680,17 +693,7 @@ const server = createServer(async (request, response) => {
     return;
   }
 
-  if (await handleSpotPluginRoute(request, response, url, {
-    conversationStore: chatStore,
-    spotOrderStore,
-    getAuthContext,
-    isConversationVisibleToAuth,
-    sendJson,
-    readJsonBody,
-    publishConversationEvent(event) {
-      conversationEventPublisher.publish(event);
-    },
-  })) {
+  if (await handleSpotPluginRoute(request, response, url, spotOrderRouteDeps)) {
     return;
   }
 

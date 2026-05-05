@@ -110,6 +110,19 @@ export class SpotOrderStore {
     return row ? mapSpotOrder(row) : null;
   }
 
+  listPollable(): SpotOrderRecord[] {
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM spot_orders
+         WHERE relay_order_hash IS NOT NULL
+           AND state = 'submitted'
+           AND (relay_status IS NULL OR relay_status NOT IN ('filled', 'completed', 'partially_completed', 'cancelled', 'expired', 'failed', 'rejected'))
+         ORDER BY created_at ASC`,
+      )
+      .all() as SpotOrderRow[];
+    return rows.map(mapSpotOrder);
+  }
+
   update(id: string, patch: { state?: SpotOrderState; relayOrderHash?: string | null; error?: string | null; now?: string }): SpotOrderRecord | null {
     const current = this.get(id);
     if (!current) {
