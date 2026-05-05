@@ -84,6 +84,43 @@ test("filters conversations by owner", () => {
 });
 
 
+test("looks up conversations by OpenClaw session id", () => {
+  const dir = tempDir();
+  const store = new SqliteChatStore(join(dir, "chat.sqlite"));
+  try {
+    const conversation = store.createConversation({ openclawSessionId: "web-conv-lookup-test" });
+
+    assert.equal(store.getConversationByOpenClawSessionId("web-conv-lookup-test")?.id, conversation.id);
+    assert.equal(store.getConversationByOpenClawSessionId("missing"), null);
+  } finally {
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+
+test("searches conversation message text by owner and archive state", () => {
+  const dir = tempDir();
+  const store = new SqliteChatStore(join(dir, "chat.sqlite"));
+  try {
+    const visible = store.createConversation({ ownerId: "usr_first", title: "visible", now: "2026-04-29T00:00:00.000Z" });
+    const archived = store.createConversation({ ownerId: "usr_first", title: "archived", now: "2026-04-29T00:01:00.000Z" });
+    const other = store.createConversation({ ownerId: "usr_second", title: "other", now: "2026-04-29T00:02:00.000Z" });
+    store.addMessage({ conversationId: visible.id, role: "user", text: "needle match" });
+    store.addMessage({ conversationId: archived.id, role: "user", text: "needle archived" });
+    store.addMessage({ conversationId: other.id, role: "user", text: "needle other" });
+    store.updateConversation(archived.id, { archivedAt: "2026-04-29T00:03:00.000Z" });
+
+    assert.deepEqual(store.searchConversationMessageText({ ownerId: "usr_first", query: "needle" }), [visible.id]);
+    assert.deepEqual(new Set(store.searchConversationMessageText({ ownerId: "usr_first", query: "needle", includeArchived: true })), new Set([visible.id, archived.id]));
+    assert.deepEqual(store.searchConversationMessageText({ ownerId: "usr_second", query: "needle" }), [other.id]);
+  } finally {
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+
 test("checks attachment visibility by conversation owner", () => {
   const dir = tempDir();
   const store = new SqliteChatStore(join(dir, "chat.sqlite"));

@@ -27,7 +27,6 @@ const MIN_STREAMING_CHECKPOINT_CHARS = Number(process.env.MIN_STREAMING_CHECKPOI
 
 export class MessageJobRunner {
   private readonly queueTails = new Map<string, Promise<void>>();
-  private readonly cancelledJobIds = new Set<string>();
   private readonly abortControllers = new Map<string, AbortController>();
 
   constructor(private readonly deps: MessageJobRunnerDeps) {}
@@ -64,7 +63,6 @@ export class MessageJobRunner {
       return false;
     }
 
-    this.cancelledJobIds.add(job.id);
     this.abortControllers.get(job.id)?.abort(new Error("Message job cancelled."));
     this.persistCancellation(job).catch(() => {});
     this.deps.updateJob(job, { state: "cancelled", error: null });
@@ -247,7 +245,7 @@ export class MessageJobRunner {
   }
 
   private isCancelled(job: MessageJob): boolean {
-    return job.state === "cancelled" || this.cancelledJobIds.has(job.id);
+    return job.state === "cancelled";
   }
 
   private isTerminal(job: MessageJob): boolean {

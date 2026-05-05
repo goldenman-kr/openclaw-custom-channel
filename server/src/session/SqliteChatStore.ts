@@ -41,7 +41,9 @@ export interface JobRecord {
 export interface ConversationStore {
   createConversation(input?: { ownerId?: string; title?: string; openclawSessionId?: string; now?: string }): ConversationRecord;
   getConversation(id: string): ConversationRecord | null;
+  getConversationByOpenClawSessionId(openclawSessionId: string): ConversationRecord | null;
   listConversations(input?: { ownerId?: string; includeArchived?: boolean; limit?: number }): ConversationRecord[];
+  searchConversationMessageText(input: { query: string; ownerId?: string; includeArchived?: boolean; limit?: number }): string[];
   updateConversation(id: string, patch: { title?: string; pinned?: boolean; archivedAt?: string | null; now?: string }): ConversationRecord | null;
   deleteConversation(id: string): boolean;
 }
@@ -159,6 +161,11 @@ export class SqliteChatStore implements ConversationStore, MessageStore, JobStor
     return row ? mapConversation(row) : null;
   }
 
+  getConversationByOpenClawSessionId(openclawSessionId: string): ConversationRecord | null {
+    const row = this.db.prepare("SELECT * FROM conversations WHERE openclaw_session_id = ?").get(openclawSessionId) as ConversationRow | undefined;
+    return row ? mapConversation(row) : null;
+  }
+
   listConversations(input: { ownerId?: string; includeArchived?: boolean; limit?: number } = {}): ConversationRecord[] {
     const limit = Math.max(1, Math.min(input.limit ?? 100, 500));
     const conditions: string[] = [];
@@ -175,6 +182,35 @@ export class SqliteChatStore implements ConversationStore, MessageStore, JobStor
       .prepare(`SELECT * FROM conversations ${where} ORDER BY pinned DESC, updated_at DESC, created_at DESC LIMIT ?`)
       .all(...params, limit) as ConversationRow[];
     return rows.map(mapConversation);
+  }
+
+
+  searchConversationMessageText(input: { query: string; ownerId?: string; includeArchived?: boolean; limit?: number }): string[] {
+    const query = input.query.trim();
+    if (!query) {
+      return [];
+    }
+    const limit = Math.max(1, Math.min(input.limit ?? 500, 500));
+    const conditions = ["messages.text LIKE ? ESCAPE '\\'"];
+    const params: unknown[] = [`%${escapeLikePattern(query)}%`];
+    if (input.ownerId) {
+      conditions.push("conversations.owner_id = ?");
+      params.push(input.ownerId);
+    }
+    if (!input.includeArchived) {
+      conditions.push("conversations.archived_at IS NULL");
+    }
+    const rows = this.db
+      .prepare(
+        `SELECT DISTINCT conversations.id, conversations.pinned, conversations.updated_at, conversations.created_at
+         FROM conversations
+         JOIN messages ON messages.conversation_id = conversations.id
+         WHERE ${conditions.join(" AND ")}
+         ORDER BY conversations.pinned DESC, conversations.updated_at DESC, conversations.created_at DESC
+         LIMIT ?`,
+      )
+      .all(...params, limit) as Array<{ id: string }>;
+    return rows.map((row) => row.id);
   }
 
   updateConversation(id: string, patch: { title?: string; pinned?: boolean; archivedAt?: string | null; now?: string }): ConversationRecord | null {
@@ -553,6 +589,10 @@ export class SqliteChatStore implements ConversationStore, MessageStore, JobStor
   private setMeta(key: string, value: string): void {
     this.db.prepare("INSERT INTO app_meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(key, value);
   }
+}
+
+function escapeLikePattern(value: string): string {
+  return value.replace(/[\\%_]/g, (match) => `\\${match}`);
 }
 
 function mapConversation(row: ConversationRow): ConversationRecord {

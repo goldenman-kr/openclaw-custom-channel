@@ -1,9 +1,48 @@
-const CACHE_NAME = 'openclaw-web-channel-v195';
+const CACHE_NAME = 'openclaw-web-channel-v268';
 const ASSETS = [
   '/',
   '/index.html',
   '/styles.css',
   '/app.js',
+  '/modules/api-client.js',
+  '/modules/attachment-preview.js',
+  '/modules/clipboard.js',
+  '/modules/code-block.js',
+  '/modules/attachments.js',
+  '/modules/composer-draft.js',
+  '/modules/composer-input.js',
+  '/modules/conversation-dialogs.js',
+  '/modules/conversation-format.js',
+  '/modules/conversation-list-item.js',
+  '/modules/conversation-list-view.js',
+  '/modules/conversation-list.js',
+  '/modules/composer-availability.js',
+  '/modules/conversation-search.js',
+  '/modules/display.js',
+  '/modules/floating-actions.js',
+  '/modules/history-api.js',
+  '/modules/history-controls.js',
+  '/modules/history-handoff.js',
+  '/modules/job-utils.js',
+  '/modules/history-state.js',
+  '/modules/home-screen.js',
+  '/modules/login-screen.js',
+  '/modules/location.js',
+  '/modules/markdown-table.js',
+  '/modules/media.js',
+  '/modules/message-actions.js',
+  '/modules/mobile-drawer.js',
+  '/modules/model-picker.js',
+  '/modules/navigation.js',
+  '/modules/notifications.js',
+  '/modules/scroll-ui.js',
+  '/modules/settings-panel.js',
+  '/modules/settings.js',
+  '/modules/slash-commands.js',
+  '/modules/toast.js',
+  '/modules/user-identity.js',
+  '/modules/version-check.js',
+  '/modules/sidebar-width.js',
   '/plugins/plugin-registry.js',
   '/plugins/spot-order-card.js',
   '/plugins/spot-wallet-intent.js',
@@ -50,7 +89,8 @@ self.addEventListener('fetch', (event) => {
 
   const isNavigation = event.request.mode === 'navigate';
   const isMutableClientAsset = ['/', '/index.html', '/app.js', '/styles.css', '/sw.js'].includes(url.pathname)
-    || url.pathname.startsWith('/plugins/');
+    || url.pathname.startsWith('/plugins/')
+    || url.pathname.startsWith('/modules/');
 
   if (isNavigation || isMutableClientAsset) {
     event.respondWith(networkFirst(event.request, isNavigation ? '/index.html' : undefined));

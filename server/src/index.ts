@@ -18,7 +18,7 @@ import { handleHistoryRoute } from "./http/historyRoutes.js";
 import { handleJobRoute } from "./http/jobRoutes.js";
 import { handleMessageRoute } from "./http/messageRoutes.js";
 import { applyNativeModelSelection, getNativeModelMenu } from "./http/nativeCommands.js";
-import { handleSpotPluginRoute } from "./http/spotPluginRoutes.js";
+import { handleSpotPluginRoute, resumeSpotOrderPolling } from "./http/spotPluginRoutes.js";
 import { handleMediaRoute, handleStaticRoute } from "./http/staticRoutes.js";
 import { GatewayAutonomousAnnounceBridge } from "./openclaw/GatewayAutonomousAnnounceBridge.js";
 import { createOpenClawClient } from "./openclaw/createOpenClawClient.js";
@@ -66,6 +66,19 @@ const chatDbPath = resolve(process.env.CHAT_DB_PATH ?? join(stateDir, "chat.sqli
 const authStore = new AuthStore(chatDbPath);
 const chatStore = new SqliteChatStore(chatDbPath);
 const spotOrderStore = new SpotOrderStore(chatDbPath);
+
+const spotOrderRouteDeps = {
+  conversationStore: chatStore,
+  spotOrderStore,
+  getAuthContext,
+  isConversationVisibleToAuth,
+  sendJson,
+  readJsonBody,
+  publishConversationEvent(event: { id: string; type: "message"; messageId: string; conversationId: string; createdAt: string }) {
+    conversationEventPublisher.publish(event);
+  },
+};
+setImmediate(() => resumeSpotOrderPolling(spotOrderRouteDeps));
 const staleJobCleanup = chatStore.cancelStaleJobs({
   olderThanMs: Number(process.env.STALE_JOB_CLEANUP_AFTER_MS ?? 30 * 60 * 1000),
   reason: "Cancelled stale job on PWA service startup.",
@@ -79,6 +92,7 @@ const restartFollowupStore = new RestartFollowupStore(join(stateDir, "restart-fo
 configureInitialAdminUser();
 const openClawAgentId = process.env.OPENCLAW_AGENT ?? "main";
 const jobs = new Map<string, MessageJob>();
+const TERMINAL_JOB_STATES = new Set<MessageJob["state"]>(["completed", "failed", "cancelled"]);
 const sessionTtlMs = Number(process.env.AUTH_SESSION_TTL_MS ?? 30 * 24 * 60 * 60 * 1000);
 const cookieSecure = process.env.AUTH_COOKIE_SECURE ? process.env.AUTH_COOKIE_SECURE === "1" : process.env.NODE_ENV === "production";
 const workspaceRoot = resolve(process.env.USER_WORKSPACE_ROOT ?? join(stateDir, "workspaces"));
@@ -429,7 +443,11 @@ function updateJob(job: MessageJob, patch: { state?: MessageJob["state"]; error?
     job.error = patch.error;
   }
   job.updatedAt = new Date().toISOString();
-  jobs.set(job.id, job);
+  if (TERMINAL_JOB_STATES.has(job.state)) {
+    jobs.delete(job.id);
+  } else {
+    jobs.set(job.id, job);
+  }
   if (job.conversationId) {
     chatStore.updateJob(job.id, {
       ...(patch.state ? { state: patch.state } : {}),
@@ -462,14 +480,7 @@ function jobForRequest(jobId: string, request: IncomingMessage, url: URL): JobEv
 }
 
 function conversationForOpenClawSessionId(openclawSessionId: string): ConversationRecord | null {
-  if (openclawSessionId.startsWith("web-conv_")) {
-    const candidate = chatStore.getConversation(openclawSessionId.slice("web-".length));
-    if (candidate?.openclawSessionId === openclawSessionId) {
-      return candidate;
-    }
-  }
-  return chatStore.listConversations({ includeArchived: true, limit: 500 })
-    .find((conversation) => conversation.openclawSessionId === openclawSessionId) ?? null;
+  return chatStore.getConversationByOpenClawSessionId(openclawSessionId);
 }
 
 function isConversationVisibleForRequest(conversationId: string, request: IncomingMessage): boolean {
@@ -682,17 +693,7 @@ const server = createServer(async (request, response) => {
     return;
   }
 
-  if (await handleSpotPluginRoute(request, response, url, {
-    conversationStore: chatStore,
-    spotOrderStore,
-    getAuthContext,
-    isConversationVisibleToAuth,
-    sendJson,
-    readJsonBody,
-    publishConversationEvent(event) {
-      conversationEventPublisher.publish(event);
-    },
-  })) {
+  if (await handleSpotPluginRoute(request, response, url, spotOrderRouteDeps)) {
     return;
   }
 
