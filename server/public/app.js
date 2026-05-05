@@ -7,6 +7,7 @@ import { searchConversationContent } from './modules/conversation-search.js';
 import { applyComposerAvailability, composerAvailabilityState } from './modules/composer-availability.js';
 import { clearComposerDraft as clearStoredComposerDraft, loadComposerDraft, saveComposerDraft as saveStoredComposerDraft } from './modules/composer-draft.js';
 import { apiUrl as buildApiUrl, assertValidApiKey, normalizeApiKey } from './modules/api-client.js';
+import { blobToBase64 } from './modules/blob-utils.js';
 import { copyTextToClipboard } from './modules/clipboard.js';
 import { createPlainCodeBlock } from './modules/code-block.js';
 import { autoResizeTextarea as resizeComposerTextarea, updateClearMessageInputButton as updateComposerClearButton } from './modules/composer-input.js';
@@ -18,12 +19,17 @@ import { fetchHistory as fetchHistoryFromApi, fetchHistoryMeta as fetchHistoryMe
 import { buildNewSessionHandoffMessage } from './modules/history-handoff.js';
 import { createHistoryLoadMoreControl, resetHistoryLoadMoreButton } from './modules/history-controls.js';
 import { createHomeScreen } from './modules/home-screen.js';
+import { isMobileLikeInput, slashCommandUsesCurrentLocation } from './modules/input-context.js';
 import { hideLoginScreen as hideLoginScreenView, showLoginScreen as showLoginScreenView } from './modules/login-screen.js';
 import { getCurrentLocationMetadata } from './modules/location.js';
+import { renderedHistorySignature } from './modules/history-render-signature.js';
 import { isPendingHistoryMessage, isPlaceholderPendingText, isRunningJobHistoryMessage, shouldRerenderHistory as shouldRerenderHistorySnapshot } from './modules/history-state.js';
 import { delay, isTerminalJobState, parseSseBlock } from './modules/job-utils.js';
-import { isMarkdownTableRow, isMarkdownTableSeparator, splitMarkdownTableRow, tableAlignments } from './modules/markdown-table.js';
+import { appendInlineMarkdown, countLeadingSpaces } from './modules/markdown-inline.js';
+import { isMarkdownTableRow, isMarkdownTableSeparator, splitMarkdownTableRow } from './modules/markdown-table.js';
+import { appendMarkdownTable } from './modules/markdown-table-render.js';
 import { canonicalMediaRefKey, extractMediaRefs, isImageRef, isPlaceholderMediaRef, mediaRefsFromHistoryAttachments, normalizeMediaRefPath, shortenFileName } from './modules/media.js';
+import { clamp, pointerDistance, pointerMidpoint } from './modules/media-viewer-geometry.js';
 import { createCancelJobButton, createCopyButton, createRetryButton, ensureMessageActions, setCancelJobButtonBusy } from './modules/message-actions.js';
 import { renderModelPicker as renderModelPickerView, updateModelPickerButtonState as updateModelPickerButtonStateView } from './modules/model-picker.js';
 import { closeDrawer, drawerSwipeGesture, isDesktopLayout as isDesktopViewport, isDrawerOpen, openDrawer, shouldIgnoreDrawerSwipe as shouldIgnoreDrawerSwipeTarget, toggleDesktopSidebar } from './modules/mobile-drawer.js';
@@ -42,7 +48,7 @@ import './plugins/spot-order-card.js';
 import './plugins/spot-wallet-intent.js';
 
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
-const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-081';
+const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-084';
 const CLIENT_API_VERSION = 1;
 const elements = {
   loginScreen: document.querySelector('#loginScreen'),
@@ -121,19 +127,6 @@ const elements = {
   sendButton: document.querySelector('#sendButton'),
   statusText: document.querySelector('#statusText'),
 };
-
-function isMobileLikeInput() {
-  return window.matchMedia('(pointer: coarse)').matches || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
-}
-
-function slashCommandUsesCurrentLocation(message) {
-  const trimmed = message.trimStart();
-  const [command, ...args] = trimmed.split(/\s+/);
-  if (!['/weather', '/route'].includes((command || '').toLowerCase())) {
-    return false;
-  }
-  return args.join(' ').includes('여기');
-}
 
 applyStoredSidebarWidth();
 
@@ -1475,84 +1468,6 @@ async function renderHistory(options = {}) {
   }
 }
 
-function appendInlineMarkdown(parent, text) {
-  const pattern = /(?<strong>(?<![\p{L}\p{N}_*])\*\*(?<strongText>[^*\n]+)\*\*(?!\*))|(?<starEm>(?<![\p{L}\p{N}_*])\*(?<starEmText>[^*\n]+)\*(?![\p{L}\p{N}_*]))|(?<underscoreEm>(?<![\p{L}\p{N}_])_(?<underscoreEmText>[^_\n]+)_(?![\p{L}\p{N}_]))|(?<code>`(?<codeText>[^`\n]+)`)|(?<link>\[(?<linkLabel>[^\]\n]+)\]\((?<linkUrl>https?:\/\/[^\s)]+)\))|(?<url>https?:\/\/[^\s<)]+)/gu;
-  let lastIndex = 0;
-  let match;
-
-  while ((match = pattern.exec(text)) !== null) {
-    if (match.index > lastIndex) {
-      parent.append(document.createTextNode(text.slice(lastIndex, match.index)));
-    }
-
-    if (match.groups.strongText) {
-      const strong = document.createElement('strong');
-      strong.textContent = match.groups.strongText;
-      parent.append(strong);
-    } else if (match.groups.starEmText || match.groups.underscoreEmText) {
-      const emphasis = document.createElement('em');
-      emphasis.textContent = match.groups.starEmText || match.groups.underscoreEmText;
-      parent.append(emphasis);
-    } else if (match.groups.codeText) {
-      const code = document.createElement('code');
-      code.textContent = match.groups.codeText;
-      parent.append(code);
-    } else {
-      const label = match.groups.linkLabel || match.groups.url;
-      const url = match.groups.linkUrl || match.groups.url;
-      const anchor = document.createElement('a');
-      anchor.href = url;
-      anchor.textContent = label;
-      anchor.target = '_blank';
-      anchor.rel = 'noopener noreferrer';
-      parent.append(anchor);
-    }
-
-    lastIndex = pattern.lastIndex;
-  }
-
-  if (lastIndex < text.length) {
-    parent.append(document.createTextNode(text.slice(lastIndex)));
-  }
-}
-
-function appendMarkdownTable(parent, headerCells, separatorLine, bodyRows) {
-  const wrapper = document.createElement('div');
-  wrapper.className = 'markdown-table-wrapper';
-  const table = document.createElement('table');
-  const alignments = tableAlignments(separatorLine);
-
-  const thead = document.createElement('thead');
-  const headerRow = document.createElement('tr');
-  for (const [index, cell] of headerCells.entries()) {
-    const th = document.createElement('th');
-    if (alignments[index]) {
-      th.style.textAlign = alignments[index];
-    }
-    appendInlineMarkdown(th, cell);
-    headerRow.append(th);
-  }
-  thead.append(headerRow);
-  table.append(thead);
-
-  const tbody = document.createElement('tbody');
-  for (const rowCells of bodyRows) {
-    const tr = document.createElement('tr');
-    for (let index = 0; index < headerCells.length; index += 1) {
-      const td = document.createElement('td');
-      if (alignments[index]) {
-        td.style.textAlign = alignments[index];
-      }
-      appendInlineMarkdown(td, rowCells[index] || '');
-      tr.append(td);
-    }
-    tbody.append(tr);
-  }
-  table.append(tbody);
-  wrapper.append(table);
-  parent.append(wrapper);
-}
-
 function insertIntoComposer(text) {
   const value = String(text || '');
   if (!value || !elements.messageInput) {
@@ -1621,11 +1536,6 @@ function appendBlockquote(parent, lines) {
   const quote = document.createElement('blockquote');
   appendMarkdown(quote, lines.join('\n'));
   parent.append(quote);
-}
-
-function countLeadingSpaces(text) {
-  const match = String(text || '').match(/^\s*/);
-  return match ? match[0].length : 0;
 }
 
 function appendMarkdown(parent, text) {
@@ -1794,13 +1704,6 @@ function appendMarkdown(parent, text) {
   }
 }
 
-function messageTextWithoutAttachmentPreview(node) {
-  const clone = node.cloneNode(true);
-  clone.querySelectorAll('.message-attachments, .message-actions, .code-block-header').forEach((preview) => preview.remove());
-  return clone.textContent || '';
-}
-
-
 function renderHistoryItem(item) {
   if (typeof item?.role !== 'string' || typeof item?.text !== 'string') {
     return;
@@ -1839,9 +1742,7 @@ function renderHistoryItem(item) {
 }
 
 function currentRenderedHistorySignature() {
-  return [...elements.messages.querySelectorAll('.message')]
-    .map((node) => `${[...node.classList].find((className) => className !== 'message') || ''}:${messageTextWithoutAttachmentPreview(node)}`)
-    .join('\n---\n');
+  return renderedHistorySignature(elements.messages);
 }
 
 function shouldRerenderHistory(history) {
@@ -2007,10 +1908,6 @@ function scheduleConversationEventRefresh(conversationId = activeConversationId(
   }, 150);
 }
 
-function clamp(value, min, max) {
-  return Math.max(min, Math.min(max, value));
-}
-
 function applyMediaViewerTransform() {
   const { scale, x, y } = mediaViewerTransform;
   elements.mediaViewerImage.style.transform = `translate3d(${x}px, ${y}px, 0) scale(${scale})`;
@@ -2022,17 +1919,6 @@ function resetMediaViewerZoom() {
   mediaViewerPointers.clear();
   mediaViewerGestureStart = null;
   applyMediaViewerTransform();
-}
-
-function pointerDistance(first, second) {
-  return Math.hypot(first.clientX - second.clientX, first.clientY - second.clientY);
-}
-
-function pointerMidpoint(first, second) {
-  return {
-    x: (first.clientX + second.clientX) / 2,
-    y: (first.clientY + second.clientY) / 2,
-  };
 }
 
 function beginMediaViewerGesture() {
@@ -2172,15 +2058,6 @@ function closeMediaViewer(options = {}) {
   mediaViewerCurrentUrl = '';
   mediaViewerHistoryActive = false;
   resetMediaViewerZoom();
-}
-
-function blobToBase64(blob) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result || '').split(',')[1] || '');
-    reader.onerror = () => reject(reader.error || new Error('파일을 읽지 못했습니다.'));
-    reader.readAsDataURL(blob);
-  });
 }
 
 async function downloadUrlThroughClient(url, fileName, trigger, event) {
@@ -3723,6 +3600,6 @@ elements.messageInput.addEventListener('keydown', (event) => {
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-04-081').catch(() => {});
+    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-04-084').catch(() => {});
   });
 }
