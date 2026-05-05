@@ -1582,6 +1582,46 @@ html[data-theme="light"] .toast--success {
   background: rgba(212, 212, 212, 0.10);
 }
 
+.conversation-item.has-unread:not(.active) {
+  border-color: rgba(125, 211, 252, 0.52);
+  background: rgba(14, 165, 233, 0.14);
+  animation: conversation-unread-pulse 1.45s ease-in-out infinite;
+}
+
+.conversation-item.has-unread:not(.active)::before {
+  content: '';
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: #7dd3fc;
+  box-shadow: 0 0 12px rgba(125, 211, 252, 0.7);
+}
+
+.conversation-item.has-unread:not(.active) .conversation-title {
+  padding-left: 12px;
+  font-weight: 850;
+}
+
+@keyframes conversation-unread-pulse {
+  0%, 100% {
+    background: rgba(14, 165, 233, 0.10);
+    box-shadow: 0 0 0 rgba(125, 211, 252, 0);
+  }
+  50% {
+    background: rgba(14, 165, 233, 0.22);
+    box-shadow: 0 0 18px rgba(125, 211, 252, 0.22);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .conversation-item.has-unread:not(.active) {
+    animation: none;
+  }
+}
+
 @media (hover: hover) and (pointer: fine) {
   .conversation-item:hover {
     border-color: rgba(229, 229, 229, 0.18);

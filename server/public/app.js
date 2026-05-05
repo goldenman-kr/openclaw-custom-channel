@@ -73,7 +73,7 @@ import './plugins/spot-order-card.js';
 import './plugins/spot-wallet-intent.js';
 
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
-const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-05-115';
+const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-05-116';
 const CLIENT_API_VERSION = 1;
 const elements = {
   loginScreen: document.querySelector('#loginScreen'),
@@ -158,6 +158,7 @@ applyStoredSidebarWidth();
 let settings = loadSettings();
 let historyPollTimer = null;
 let versionCheckTimer = null;
+let conversationListPollTimer = null;
 let conversationEventSource = null;
 let conversationEventConversationId = '';
 let conversationEventRefreshTimer = null;
@@ -183,6 +184,9 @@ let conversationContentMatches = new Set();
 let conversationSearchTimer = null;
 let conversationSearchRunId = 0;
 const conversationSearchCache = new Map();
+const unreadConversationIds = new Set();
+let conversationUpdateVersions = new Map();
+let conversationListObserved = false;
 let settingsPanelHistoryActive = false;
 let mobileDrawerHistoryActive = false;
 let authUser = null;
@@ -602,12 +606,15 @@ async function loadCurrentUser() {
     return null;
   }
   hideLoginScreen();
+  startConversationListPolling();
   return authUser;
 }
 
 async function login(username, password) {
   authUser = await loginUser(apiFetch, username, password);
+  resetConversationNotificationState();
   hideLoginScreen();
+  startConversationListPolling();
   return authUser;
 }
 
@@ -616,6 +623,8 @@ async function logout() {
   authUser = null;
   conversations = [];
   activeConversation = null;
+  resetConversationNotificationState();
+  stopConversationListPolling();
   clearPendingJob();
   closeMediaViewer({ syncHistory: false });
   renderHome();
@@ -779,6 +788,96 @@ function conversationListEmptyMessage(query) {
   return getConversationListEmptyMessage({ query, showingArchived });
 }
 
+function resetConversationNotificationState() {
+  unreadConversationIds.clear();
+  conversationUpdateVersions = new Map();
+  conversationListObserved = false;
+  document.querySelectorAll('.new-message-alert').forEach((node) => node.remove());
+}
+
+function conversationUpdateVersion(conversation) {
+  return String(conversation?.updated_at || conversation?.created_at || '');
+}
+
+function updateConversationNotifications(nextConversations) {
+  const activeId = activeConversationId();
+  const nextVersions = new Map();
+  for (const conversation of nextConversations) {
+    const version = conversationUpdateVersion(conversation);
+    nextVersions.set(conversation.id, version);
+    if (conversation.id === activeId) {
+      clearUnreadConversation(conversation.id);
+      continue;
+    }
+    const previousVersion = conversationUpdateVersions.get(conversation.id);
+    if (conversationListObserved && previousVersion && previousVersion !== version && !isConversationArchived(conversation)) {
+      markUnreadConversation(conversation);
+    }
+  }
+  conversationUpdateVersions = nextVersions;
+  conversationListObserved = true;
+}
+
+function markUnreadConversation(conversation) {
+  if (!conversation?.id || conversation.id === activeConversationId()) {
+    return;
+  }
+  const wasUnread = unreadConversationIds.has(conversation.id);
+  unreadConversationIds.add(conversation.id);
+  if (!wasUnread) {
+    showNewMessageAlert(conversation);
+  }
+}
+
+function clearUnreadConversation(conversationId) {
+  if (!conversationId) {
+    return;
+  }
+  unreadConversationIds.delete(conversationId);
+  document.querySelectorAll('.new-message-alert').forEach((node) => {
+    if (node.dataset.conversationId === conversationId) {
+      node.remove();
+    }
+  });
+}
+
+function showNewMessageAlert(conversation) {
+  if (!conversation?.id || conversation.id === activeConversationId() || document.querySelector('.new-message-alert')) {
+    return;
+  }
+  const alert = document.createElement('section');
+  alert.className = 'version-alert new-message-alert';
+  alert.dataset.conversationId = conversation.id;
+  alert.setAttribute('role', 'alert');
+
+  const text = document.createElement('div');
+  text.className = 'version-alert__text';
+  const title = document.createElement('strong');
+  title.textContent = '다른 대화에 새 응답이 도착했습니다.';
+  const detail = document.createElement('span');
+  detail.textContent = conversationTitle(conversation);
+  text.append(title, detail);
+
+  const actions = document.createElement('div');
+  actions.className = 'version-alert__actions';
+  const dismiss = document.createElement('button');
+  dismiss.className = 'ghost-button version-alert__dismiss';
+  dismiss.type = 'button';
+  dismiss.textContent = '나중에';
+  dismiss.addEventListener('click', () => alert.remove());
+  const open = document.createElement('button');
+  open.className = 'version-alert__refresh';
+  open.type = 'button';
+  open.textContent = '바로가기';
+  open.addEventListener('click', () => {
+    alert.remove();
+    selectConversation(conversation.id).catch((error) => showToast(error instanceof Error ? error.message : String(error), { kind: 'error', durationMs: 3200 }));
+  });
+  actions.append(dismiss, open);
+  alert.append(text, actions);
+  document.body.append(alert);
+}
+
 function renderConversationList() {
   updateSidebarSummary();
   if (!elements.conversationList) {
@@ -804,6 +903,7 @@ function renderConversationList() {
       conversationTitle,
       formatConversationDate,
       isArchived: isConversationArchived,
+      isUnread: (conversationId) => unreadConversationIds.has(conversationId),
       onSelect: selectConversation,
       onToggleMenu: (conversationId) => {
         openConversationMenuId = openConversationMenuId === conversationId ? null : conversationId;
@@ -851,10 +951,13 @@ function syncActiveConversationFromList() {
 async function refreshConversations() {
   if (!canUseApi()) {
     conversations = [];
+    resetConversationNotificationState();
     renderConversationList();
     return conversations;
   }
-  conversations = sortConversations(await fetchConversations());
+  const nextConversations = sortConversations(await fetchConversations());
+  updateConversationNotifications(nextConversations);
+  conversations = nextConversations;
   syncActiveConversationFromList();
   await pruneStoredPendingJobs(conversations).catch(() => {});
   conversationSearchCache.clear();
@@ -868,7 +971,9 @@ async function selectConversation(conversationId, options = {}) {
     return false;
   }
   if (conversationId === activeConversationId()) {
+    clearUnreadConversation(conversationId);
     syncConversationUrl(conversationId, { replace: options.replaceUrl === true });
+    renderConversationList();
     return true;
   }
   saveComposerDraft();
@@ -877,6 +982,7 @@ async function selectConversation(conversationId, options = {}) {
     return false;
   }
   modelPicker.reset();
+  clearUnreadConversation(conversationId);
   activeConversation = conversation;
   updateChatTitle();
   settings.lastActiveConversationId = conversation.id;
@@ -1435,6 +1541,26 @@ function syncHistoryPolling() {
   stopHistoryPolling();
 }
 
+function shouldPollConversationList() {
+  return canUseApi() && !document.hidden;
+}
+
+function startConversationListPolling() {
+  conversationListPollTimer = startIntervalIfNeeded(conversationListPollTimer, () => refreshConversations().catch(() => {}), 20 * 1000, shouldPollConversationList());
+}
+
+function stopConversationListPolling() {
+  conversationListPollTimer = stopIntervalIfNeeded(conversationListPollTimer);
+}
+
+function syncConversationListPolling() {
+  if (shouldPollConversationList()) {
+    startConversationListPolling();
+    return;
+  }
+  stopConversationListPolling();
+}
+
 function stopConversationEvents() {
   conversationEventRefreshTimer = clearConversationEventRefreshTimer(conversationEventRefreshTimer);
   conversationEventSource = closeConversationEventSource(conversationEventSource);
@@ -1976,11 +2102,16 @@ function syncPageLifecyclePolling() {
     checkVersion: checkClientServerVersion,
     refreshHistory: refreshHistoryIfChanged,
   });
+  syncConversationListPolling();
+  if (!document.hidden) {
+    refreshConversations().catch(() => {});
+  }
 }
 
 document.addEventListener('visibilitychange', syncPageLifecyclePolling);
 checkClientServerVersion();
 startClientServerVersionPolling();
+startConversationListPolling();
 const initialConversationId = conversationIdFromPath();
 bootstrapInitialConversation({
   loadCurrentUser,
@@ -2013,6 +2144,8 @@ function persistSettingsFromForm(options = {}) {
   if (previousApiKey !== settings.apiKey) {
     conversations = [];
     lastHistoryVersion = null;
+    resetConversationNotificationState();
+    syncConversationListPolling();
     refreshConversations().catch(() => {});
     if (activeConversation) {
       refreshHistory({ force: true, preserveScroll: true }).catch(() => {});
@@ -2313,6 +2446,6 @@ renderModelPicker();
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-05-115').catch(() => {});
+    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-05-116').catch(() => {});
   });
 }

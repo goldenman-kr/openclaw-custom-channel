@@ -72,8 +72,9 @@ function createConversationMenuWrap(conversation, deps) {
 
 export function createConversationListItem(conversation, deps) {
   const menuOpen = deps.openMenuId === conversation.id;
+  const unread = Boolean(deps.isUnread?.(conversation.id)) && conversation.id !== deps.activeId;
   const item = document.createElement('div');
-  item.className = `conversation-item${conversation.id === deps.activeId ? ' active' : ''}${menuOpen ? ' menu-open' : ''}`;
+  item.className = `conversation-item${conversation.id === deps.activeId ? ' active' : ''}${menuOpen ? ' menu-open' : ''}${unread ? ' has-unread' : ''}`;
   item.dataset.conversationId = conversation.id;
   item.append(createConversationSelectButton(conversation, deps), createConversationMenuWrap(conversation, deps));
   return item;
