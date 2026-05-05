@@ -45,6 +45,7 @@ import { collectBlobUrlsInUse, pruneMediaUrlCache as pruneMediaUrlCacheEntries, 
 import { appendCancelJobAction as appendCancelJobActionView, appendCopyAction as appendCopyActionView, appendRetryAction as appendRetryActionView } from './modules/message-action-renderer.js';
 import { appendAttachmentPreview as appendAttachmentPreviewView, createMessageNode } from './modules/message-dom.js';
 import { mergeMediaRefs } from './modules/message-actions.js';
+import { createModelPickerController } from './modules/model-picker-controller.js';
 import { renderModelPicker as renderModelPickerView, updateModelPickerButtonState as updateModelPickerButtonStateView } from './modules/model-picker.js';
 import { closeDrawer, drawerSwipeGesture, isDesktopLayout as isDesktopViewport, isDrawerOpen, openDrawer, shouldIgnoreDrawerSwipe as shouldIgnoreDrawerSwipeTarget, toggleDesktopSidebar } from './modules/mobile-drawer.js';
 import { notificationsSupported, notifyReplyReady as notifyReplyReadyBrowser, requestNotificationPermission, updateNotificationButton as updateNotificationButtonView } from './modules/notifications.js';
@@ -57,6 +58,7 @@ import { applySettingsToFormControls, readSettingsFromFormControls } from './mod
 import { openSettingsPanel as openSettingsPanelView, closeSettingsPanel as closeSettingsPanelView } from './modules/settings-panel.js';
 import { loadSettings, normalizeHistoryPageSize, saveSettings } from './modules/settings.js';
 import { isNearBottom as isMessagesNearBottom, hideMessagesScrollIndicator, hideScrollToLatestButton as hideScrollButton, preserveScrollAfterRender as preserveMessagesScrollAfterRender, scheduleScrollToBottom, showScrollToLatestButton as showScrollButton, updateMessagesScrollIndicator as updateMessagesScrollIndicatorUi } from './modules/scroll-ui.js';
+import { createSidebarResizeController } from './modules/sidebar-resize-controller.js';
 import { canResizeSidebar as canResizeSidebarView, sidebarResizeStateFromEvent, sidebarResizeWidth } from './modules/sidebar-resize.js';
 import { applyStoredSidebarWidth, clampSidebarWidth, saveSidebarWidth, SIDEBAR_RESIZE_MEDIA } from './modules/sidebar-width.js';
 import { matchingSlashCommands as findMatchingSlashCommands, renderSlashCommandPalette as renderSlashCommandPaletteView } from './modules/slash-commands.js';
@@ -70,7 +72,7 @@ import './plugins/spot-order-card.js';
 import './plugins/spot-wallet-intent.js';
 
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
-const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-05-106';
+const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-05-107';
 const CLIENT_API_VERSION = 1;
 const elements = {
   loginScreen: document.querySelector('#loginScreen'),
@@ -158,9 +160,6 @@ let versionCheckTimer = null;
 let conversationEventSource = null;
 let conversationEventConversationId = '';
 let conversationEventRefreshTimer = null;
-let modelPickerExpanded = false;
-let modelPickerLoading = false;
-let modelPickerState = null;
 const streamingIdleTimers = new Map();
 const streamingTextByJob = new Map();
 const MIN_STREAMING_CHECKPOINT_CHARS = 12;
@@ -191,11 +190,28 @@ let conversationSearchQuery = '';
 let conversationContentMatches = new Set();
 let conversationSearchTimer = null;
 let conversationSearchRunId = 0;
-let sidebarResizeState = null;
 const conversationSearchCache = new Map();
 let settingsPanelHistoryActive = false;
 let mobileDrawerHistoryActive = false;
 let authUser = null;
+const modelPicker = createModelPickerController({
+  elements,
+  hasConversation: () => Boolean(activeConversation?.id),
+  fetchMenu: fetchConversationModelMenu,
+  patchModel: patchConversationModel,
+  renderModelPicker: renderModelPickerView,
+  updateModelPickerButtonState: updateModelPickerButtonStateView,
+  showToast,
+});
+const sidebarResize = createSidebarResizeController({
+  elements,
+  canResizeSidebar,
+  stateFromEvent: sidebarResizeStateFromEvent,
+  widthFromState: sidebarResizeWidth,
+  clampWidth: clampSidebarWidth,
+  saveWidth: saveSidebarWidth,
+  applyStoredWidth: applyStoredSidebarWidth,
+});
 
 window.matchMedia?.('(prefers-color-scheme: light)').addEventListener?.('change', () => {
   if (!['light', 'dark'].includes(settings.themeMode)) {
@@ -714,8 +730,7 @@ function renderHome() {
 
 function goHome(options = {}) {
   saveComposerDraft();
-  setModelPickerExpanded(false);
-  modelPickerState = null;
+  modelPicker.reset();
   activeConversation = null;
   settings.lastActiveConversationId = '';
   saveSettings(settings);
@@ -837,8 +852,7 @@ async function selectConversation(conversationId, options = {}) {
   if (!conversation) {
     return false;
   }
-  setModelPickerExpanded(false);
-  modelPickerState = null;
+  modelPicker.reset();
   activeConversation = conversation;
   updateChatTitle();
   settings.lastActiveConversationId = conversation.id;
@@ -996,8 +1010,7 @@ async function startNewConversation() {
   saveComposerDraft();
   showingArchived = false;
   updateArchiveToggleButton();
-  setModelPickerExpanded(false);
-  modelPickerState = null;
+  modelPicker.reset();
   activeConversation = await createConversation('새 대화');
   updateChatTitle();
   settings.lastActiveConversationId = activeConversation.id;
@@ -1027,31 +1040,15 @@ function toggleFloatingActions() {
 }
 
 function updateModelPickerButtonState() {
-  updateModelPickerButtonStateView(elements.modelPickerButton, {
-    hasConversation: Boolean(activeConversation?.id),
-    expanded: modelPickerExpanded,
-  });
+  modelPicker.updateButtonState();
 }
 
 function renderModelPicker() {
-  renderModelPickerView(elements, {
-    expanded: modelPickerExpanded,
-    loading: modelPickerLoading,
-    canChange: modelPickerState?.canChange,
-    models: modelPickerState?.models,
-    hasConversation: Boolean(activeConversation?.id),
-  }, (modelRef) => {
-    applyConversationModel(modelRef).catch((error) => {
-      showToast(error instanceof Error ? error.message : String(error), { kind: 'error', durationMs: 3200 });
-    });
-  });
+  modelPicker.render();
 }
+
 function setModelPickerExpanded(expanded) {
-  modelPickerExpanded = Boolean(expanded);
-  if (!modelPickerExpanded) {
-    modelPickerLoading = false;
-  }
-  renderModelPicker();
+  modelPicker.setExpanded(expanded);
 }
 
 async function fetchConversationModelMenu(conversationId) {
@@ -1063,57 +1060,15 @@ async function patchConversationModel(conversationId, model) {
 }
 
 async function openModelPicker() {
-  if (!activeConversation?.id || modelPickerLoading) {
-    return;
-  }
-  modelPickerExpanded = true;
-  modelPickerLoading = true;
-  modelPickerState = null;
-  renderModelPicker();
-  try {
-    modelPickerState = await fetchConversationModelMenu(activeConversation.id);
-  } finally {
-    modelPickerLoading = false;
-    renderModelPicker();
-  }
+  return modelPicker.open(activeConversation?.id);
 }
 
 async function applyConversationModel(modelRef) {
-  if (!activeConversation?.id || modelPickerLoading) {
-    return;
-  }
-  if (modelPickerState?.models?.find((entry) => entry.ref === modelRef)?.selected) {
-    setModelPickerExpanded(false);
-    return;
-  }
-  modelPickerLoading = true;
-  renderModelPicker();
-  try {
-    const result = await patchConversationModel(activeConversation.id, modelRef);
-    showToast(`모델을 ${String(result.current_model || modelRef).split('/').pop()}로 변경했습니다.`, { kind: 'success' });
-    if (result.warning) {
-      showToast(result.warning, { kind: 'info', durationMs: 3200 });
-    }
-    modelPickerState = null;
-    setModelPickerExpanded(false);
-  } finally {
-    modelPickerLoading = false;
-    renderModelPicker();
-  }
+  return modelPicker.apply(activeConversation?.id, modelRef);
 }
 
 async function toggleModelPicker() {
-  if (modelPickerExpanded) {
-    setModelPickerExpanded(false);
-    return;
-  }
-  try {
-    await openModelPicker();
-  } catch (error) {
-    modelPickerLoading = false;
-    setModelPickerExpanded(false);
-    showToast(error instanceof Error ? error.message : String(error), { kind: 'error', durationMs: 3200 });
-  }
+  return modelPicker.toggle(activeConversation?.id);
 }
 
 async function continueInNewSession() {
@@ -1772,44 +1727,23 @@ function canResizeSidebar() {
 }
 
 function startSidebarResize(event) {
-  if (!elements.conversationSidebar || !canResizeSidebar()) {
-    return;
-  }
-  event.preventDefault();
-  sidebarResizeState = sidebarResizeStateFromEvent(event, elements.conversationSidebar);
-  elements.sidebarResizeHandle?.setPointerCapture?.(event.pointerId);
-  document.body.classList.add('sidebar-resizing');
+  sidebarResize.start(event);
 }
 
 function moveSidebarResize(event) {
-  if (!sidebarResizeState || event.pointerId !== sidebarResizeState.pointerId) {
-    return;
-  }
-  const nextWidth = sidebarResizeWidth(sidebarResizeState, event.clientX);
-  document.documentElement.style.setProperty('--sidebar-width', `${clampSidebarWidth(nextWidth)}px`);
+  sidebarResize.move(event);
 }
 
 function finishSidebarResize(event) {
-  if (!sidebarResizeState || event.pointerId !== sidebarResizeState.pointerId) {
-    return;
-  }
-  const nextWidth = sidebarResizeWidth(sidebarResizeState, event.clientX);
-  saveSidebarWidth(nextWidth);
-  elements.sidebarResizeHandle?.releasePointerCapture?.(event.pointerId);
-  sidebarResizeState = null;
-  document.body.classList.remove('sidebar-resizing');
+  sidebarResize.finish(event);
 }
 
 function cancelSidebarResize() {
-  if (!sidebarResizeState) {
-    return;
-  }
-  sidebarResizeState = null;
-  document.body.classList.remove('sidebar-resizing');
+  sidebarResize.cancel();
 }
 
 function syncSidebarWidthToViewport() {
-  applyStoredSidebarWidth();
+  sidebarResize.syncToViewport();
 }
 
 async function sendMessage(message, attachments = [], metadata = undefined) {
@@ -2383,7 +2317,7 @@ bindAppEventListeners({
     openConversationMenuId: () => openConversationMenuId,
     setOpenConversationMenuId: (value) => { openConversationMenuId = value; },
     floatingActionsExpanded: () => floatingActionsExpanded,
-    modelPickerExpanded: () => modelPickerExpanded,
+    modelPickerExpanded: () => modelPicker.isExpanded(),
   },
   actions: {
     toggleSettingsPanel,
@@ -2559,7 +2493,7 @@ bindAppEventListeners({
         setFloatingActionsExpanded(false);
         return;
       }
-      if (event.key === 'Escape' && modelPickerExpanded) {
+      if (event.key === 'Escape' && modelPicker.isExpanded()) {
         setModelPickerExpanded(false);
         return;
       }
@@ -2634,6 +2568,6 @@ renderModelPicker();
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-05-106').catch(() => {});
+    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-05-107').catch(() => {});
   });
 }
