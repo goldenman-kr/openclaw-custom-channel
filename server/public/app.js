@@ -22,6 +22,7 @@ import { conversationTitle, formatConversationDate, formatMessageTimestamp } fro
 import { applyDisplaySettings as applyDisplaySettingsToElements, applyTheme, normalizeFontSize, syncNativeTheme } from './modules/display.js';
 import { applyFloatingActionsExpanded } from './modules/floating-actions.js';
 import { fetchConversationHistory as fetchConversationHistoryFromApi, fetchHistory as fetchHistoryFromApi, fetchHistoryMeta as fetchHistoryMetaFromApi } from './modules/history-api.js';
+import { fetchChangedHistory as fetchChangedHistoryFromApi, reconcilePendingJobWithHistory as reconcilePendingJobWithHistoryFromHistory, shouldPollHistory as shouldPollHistoryFromState } from './modules/history-refresh.js';
 import { buildNewSessionHandoffMessage } from './modules/history-handoff.js';
 import { createHistoryLoadMoreControl, resetHistoryLoadMoreButton } from './modules/history-controls.js';
 import { createHomeScreen } from './modules/home-screen.js';
@@ -30,7 +31,7 @@ import { hideLoginScreen as hideLoginScreenView, showLoginScreen as showLoginScr
 import { getCurrentLocationMetadata } from './modules/location.js';
 import { messageTextWithoutAttachmentPreview, renderedHistorySignature } from './modules/history-render-signature.js';
 import { isPendingHistoryMessage, isPlaceholderPendingText, isRunningJobHistoryMessage, shouldRerenderHistory as shouldRerenderHistorySnapshot } from './modules/history-state.js';
-import { cancelJobById, fetchJobById, isAlreadyFinishedJobError, isJobResolvedInHistory as isJobResolvedInHistoryFromApi } from './modules/job-api.js';
+import { cancelJobById, fetchJobById, isAlreadyFinishedJobError, isJobResolvedInHistory as isJobResolvedInHistoryFromApi, waitForJobPolling } from './modules/job-api.js';
 import { waitForJobEventStream } from './modules/job-events.js';
 import { delay, isTerminalJobState, parseSseBlock } from './modules/job-utils.js';
 import { appendInlineMarkdown, countLeadingSpaces } from './modules/markdown-inline.js';
@@ -68,7 +69,7 @@ import './plugins/spot-order-card.js';
 import './plugins/spot-wallet-intent.js';
 
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
-const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-05-101';
+const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-05-102';
 const CLIENT_API_VERSION = 1;
 const elements = {
   loginScreen: document.querySelector('#loginScreen'),
@@ -1589,13 +1590,14 @@ function renderHistorySnapshot(history) {
 }
 
 async function fetchChangedHistory() {
-  const meta = await fetchHistoryMeta();
-  if (lastHistoryVersion && meta.version === lastHistoryVersion) {
-    return null;
-  }
-  const history = await fetchHistory();
-  lastHistoryVersion = meta.version || lastHistoryVersion;
-  return history;
+  return fetchChangedHistoryFromApi({
+    fetchHistoryMeta,
+    fetchHistory,
+    lastHistoryVersion: () => lastHistoryVersion,
+    setLastHistoryVersion: (version) => {
+      lastHistoryVersion = version;
+    },
+  });
 }
 
 async function refreshHistoryIfChanged() {
@@ -1619,39 +1621,21 @@ async function refreshHistoryIfChanged() {
 
 
 function reconcilePendingJobWithHistory(history, conversationId = activeConversationId()) {
-  const pendingJob = loadPendingJob(conversationId);
-  if (!pendingJob?.job_id || !Array.isArray(history)) {
-    return;
-  }
-  const matchingMessage = history.find((item) => item?.id === pendingJob.job_id);
-  if (!matchingMessage) {
-    clearPendingJob(conversationId);
-    if (isActiveConversation(conversationId)) {
-      setStatus('');
-      setSending(false);
-      const node = elements.messages.querySelector(`[data-message-id="${pendingJob.job_id}"]`);
-      if (node) {
-        node.remove();
-      }
-    }
-    return;
-  }
-  if (isRunningJobHistoryMessage(matchingMessage)) {
-    return;
-  }
-  clearPendingJob(conversationId);
-  if (isActiveConversation(conversationId)) {
-    setStatus('');
-    setSending(false);
-    const node = elements.messages.querySelector(`[data-message-id="${pendingJob.job_id}"]`);
-    if (node) {
-      node.classList.remove('pending');
-    }
-  }
+  reconcilePendingJobWithHistoryFromHistory({
+    history,
+    conversationId,
+    loadPendingJob,
+    clearPendingJob,
+    isActiveConversation,
+    isRunningJobHistoryMessage,
+    setStatus,
+    setSending,
+    messagesRoot: elements.messages,
+  });
 }
 
 function shouldPollHistory() {
-  return canUseApi() && !document.hidden && Boolean(activeConversation?.id);
+  return shouldPollHistoryFromState({ canUseApi, documentHidden: document.hidden, activeConversationId });
 }
 
 function startHistoryPolling() {
@@ -2279,42 +2263,18 @@ async function waitForJob(jobId, onTick = () => {}, conversationId = activeConve
     console.warn('SSE job events unavailable; falling back to polling.', error);
   }
 
-  let transientFailures = 0;
-  let lastError = null;
-  for (let attempt = 0; attempt < 240; attempt += 1) {
-    await delay(attempt < 10 ? 1000 : 3000);
-    try {
-      const job = await fetchJob(jobId, conversationId);
-      transientFailures = 0;
-      lastError = null;
-      if (!isTerminalJobState(job.state)) {
-        ensurePendingJobBubble(jobId, conversationId);
-      }
-      onTick(job);
-      if (isTerminalJobState(job.state)) {
-        clearStreamingState(jobId);
-        clearPendingJob(conversationId);
-        return job;
-      }
-    } catch (error) {
-      lastError = error;
-      transientFailures += 1;
-      if (await isJobResolvedInHistory(jobId, conversationId)) {
-        clearStreamingState(jobId);
-        clearPendingJob(conversationId);
-        return { id: jobId, state: 'completed' };
-      }
-      if (error?.status === 404) {
-        clearStreamingState(jobId);
-        clearPendingJob(conversationId);
-        return { id: jobId, state: 'expired' };
-      }
-      if (transientFailures >= 5) {
-        throw lastError;
-      }
-    }
-  }
-  throw new Error('응답 작업 확인 시간이 초과되었습니다. 잠시 후 대화 기록을 새로고침해주세요.');
+  return waitForJobPolling({
+    jobId,
+    conversationId,
+    fetchJob,
+    delay,
+    isTerminalJobState,
+    isJobResolvedInHistory,
+    ensurePendingJobBubble,
+    clearStreamingState,
+    clearPendingJob,
+    onTick,
+  });
 }
 
 async function resumePendingJobIfNeeded() {
@@ -2961,6 +2921,6 @@ elements.messageInput.addEventListener('keydown', (event) => {
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-05-101').catch(() => {});
+    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-05-102').catch(() => {});
   });
 }

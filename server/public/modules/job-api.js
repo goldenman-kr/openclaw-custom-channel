@@ -40,3 +40,54 @@ export async function isJobResolvedInHistory({ jobId, conversationId, isActiveCo
     return false;
   }
 }
+
+export async function waitForJobPolling({
+  jobId,
+  conversationId,
+  fetchJob,
+  delay,
+  isTerminalJobState,
+  isJobResolvedInHistory,
+  ensurePendingJobBubble,
+  clearStreamingState,
+  clearPendingJob,
+  onTick = () => {},
+  maxAttempts = 240,
+}) {
+  let transientFailures = 0;
+  let lastError = null;
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    await delay(attempt < 10 ? 1000 : 3000);
+    try {
+      const job = await fetchJob(jobId, conversationId);
+      transientFailures = 0;
+      lastError = null;
+      if (!isTerminalJobState(job.state)) {
+        ensurePendingJobBubble(jobId, conversationId);
+      }
+      onTick(job);
+      if (isTerminalJobState(job.state)) {
+        clearStreamingState(jobId);
+        clearPendingJob(conversationId);
+        return job;
+      }
+    } catch (error) {
+      lastError = error;
+      transientFailures += 1;
+      if (await isJobResolvedInHistory(jobId, conversationId)) {
+        clearStreamingState(jobId);
+        clearPendingJob(conversationId);
+        return { id: jobId, state: 'completed' };
+      }
+      if (error?.status === 404) {
+        clearStreamingState(jobId);
+        clearPendingJob(conversationId);
+        return { id: jobId, state: 'expired' };
+      }
+      if (transientFailures >= 5) {
+        throw lastError;
+      }
+    }
+  }
+  throw new Error('응답 작업 확인 시간이 초과되었습니다. 잠시 후 대화 기록을 새로고침해주세요.');
+}
