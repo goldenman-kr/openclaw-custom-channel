@@ -55,6 +55,7 @@ import { clearPendingJobFromStorage, loadPendingJobFromStorage, pendingJobStorag
 import { promptPasswordChange } from './modules/password-flow.js';
 import { applySettingsToFormControls, readSettingsFromFormControls } from './modules/settings-form.js';
 import { openSettingsPanel as openSettingsPanelView, closeSettingsPanel as closeSettingsPanelView } from './modules/settings-panel.js';
+import { continueInNewSessionFlow } from './modules/session-handoff-controller.js';
 import { loadSettings, normalizeHistoryPageSize, saveSettings } from './modules/settings.js';
 import { isNearBottom as isMessagesNearBottom, hideMessagesScrollIndicator, hideScrollToLatestButton as hideScrollButton, preserveScrollAfterRender as preserveMessagesScrollAfterRender, scheduleScrollToBottom, showScrollToLatestButton as showScrollButton, updateMessagesScrollIndicator as updateMessagesScrollIndicatorUi } from './modules/scroll-ui.js';
 import { createSidebarResizeController } from './modules/sidebar-resize-controller.js';
@@ -72,7 +73,7 @@ import './plugins/spot-order-card.js';
 import './plugins/spot-wallet-intent.js';
 
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
-const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-05-109';
+const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-05-110';
 const CLIENT_API_VERSION = 1;
 const elements = {
   loginScreen: document.querySelector('#loginScreen'),
@@ -1067,84 +1068,50 @@ async function toggleModelPicker() {
 }
 
 async function continueInNewSession() {
-  setFloatingActionsExpanded(false);
-  if (isSendingMessage) {
-    return;
-  }
-  if (!canUseApi()) {
-    appendMessage('system', '로그인 후 대화를 시작할 수 있습니다.', { persist: false });
-    openSettingsPanel();
-    return;
-  }
-
-  const sourceConversation = await ensureActiveConversation();
-  saveComposerDraft(sourceConversation.id);
-  setSending(true);
-  setStatus('새 세션 인수인계를 준비하는 중입니다...');
-
-  try {
-    const sourceHistory = await fetchConversationHistory(sourceConversation.id);
-    const handoffMessage = buildNewSessionHandoffMessage(sourceConversation, sourceHistory);
-    const nextTitleBase = conversationTitle(sourceConversation).replace(/^이어가기 -\s*/, '');
-    const nextConversation = await createConversation(`이어가기 - ${nextTitleBase}`.slice(0, 120));
-    activeConversation = nextConversation;
-    settings.lastActiveConversationId = nextConversation.id;
-    conversations = [nextConversation, ...conversations.filter((conversation) => conversation.id !== nextConversation.id)];
-    saveSettings(settings);
-    lastHistoryVersion = null;
-    clearPendingJob();
-    clearRenderedMessages();
-    renderConversationList();
-    restoreComposerDraft(nextConversation.id);
-    closeMobileDrawer();
-
-    appendMessage('system', '새 OpenClaw 세션을 만들고 최근 대화 맥락을 전달합니다.', { persist: false });
-    setStatus('새 세션에 인수인계 메시지를 보내는 중입니다...');
-    const response = await sendMessage(handoffMessage);
-    const conversationId = response.conversation_id || nextConversation.id;
-    if (response.job_id) {
-      savePendingJob({ job_id: response.job_id, startedAt: Date.now() }, conversationId);
-      setSending(false);
-      setStatus('새 세션을 초기화하는 중입니다...');
+  return continueInNewSessionFlow({
+    setFloatingActionsExpanded,
+    isSendingMessage: () => isSendingMessage,
+    canUseApi,
+    appendMessage,
+    openSettingsPanel,
+    ensureActiveConversation,
+    saveComposerDraft,
+    setSending,
+    setStatus,
+    fetchConversationHistory,
+    buildNewSessionHandoffMessage,
+    conversationTitle,
+    createConversation,
+    activateConversation: (conversation) => {
+      activeConversation = conversation;
+      settings.lastActiveConversationId = conversation.id;
+      conversations = [conversation, ...conversations.filter((item) => item.id !== conversation.id)];
+      saveSettings(settings);
+    },
+    resetAfterConversationSwitch: () => {
       lastHistoryVersion = null;
-      await refreshHistoryIfChanged();
-      ensurePendingJobBubble(response.job_id, conversationId);
-      let receivedStreamingToken = false;
-      const job = await waitForJob(response.job_id, (jobUpdate) => {
-        if (!isActiveConversation(conversationId)) {
-          return;
-        }
-        if (!receivedStreamingToken || isTerminalJobState(jobUpdate.state)) {
-          refreshHistoryIfChanged();
-        }
-      }, conversationId, (token) => {
-        receivedStreamingToken = true;
-        applyStreamingToken(response.job_id, token, conversationId);
-      });
-      if (isActiveConversation(conversationId)) {
-        await renderHistory({ scrollToLatest: true });
-      }
-      if (job.state === 'failed') {
-        setStatus(job.error || '새 세션 초기화 응답이 실패했습니다.');
-      } else if (job.state === 'cancelled') {
-        setStatus('새 세션 초기화 요청이 취소되었습니다.');
-      } else {
-        setStatus('새 세션으로 이어갈 준비가 됐습니다.');
-      }
-    } else {
-      await refreshHistoryIfChanged();
-      setStatus('새 세션으로 이어갈 준비가 됐습니다.');
-    }
-    await refreshConversations().catch(() => {});
-  } catch (error) {
-    appendMessage('system', error instanceof Error ? error.message : String(error), { persist: false });
-    setStatus('');
-  } finally {
-    setSending(false);
-    if (!isMobileLikeInput()) {
-      elements.messageInput.focus();
-    }
-  }
+      clearPendingJob();
+      clearRenderedMessages();
+    },
+    renderConversationList,
+    restoreComposerDraft,
+    closeMobileDrawer,
+    sendMessage,
+    savePendingJob,
+    refreshHistoryIfChanged: async () => {
+      lastHistoryVersion = null;
+      return refreshHistoryIfChanged();
+    },
+    ensurePendingJobBubble,
+    waitForJob,
+    isActiveConversation,
+    isTerminalJobState,
+    applyStreamingToken,
+    renderHistory,
+    refreshConversations,
+    isMobileLikeInput,
+    focusMessageInput: () => elements.messageInput.focus(),
+  });
 }
 
 async function fetchHistory() {
@@ -2441,6 +2408,6 @@ renderModelPicker();
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-05-109').catch(() => {});
+    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-05-110').catch(() => {});
   });
 }
