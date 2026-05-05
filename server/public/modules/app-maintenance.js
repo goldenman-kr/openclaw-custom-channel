@@ -30,6 +30,17 @@ export async function downloadUrlThroughAndroidClient(url, fileName) {
   return true;
 }
 
+export async function clearAppCacheAndReload({ setStatus, pruneMediaUrlCache, clearBrowserCaches: clearCaches = clearBrowserCaches, reload = () => window.location.reload(), setTimeoutFn = window.setTimeout.bind(window) }) {
+  setStatus('캐시를 삭제하는 중입니다...');
+  pruneMediaUrlCache({ force: true, limit: 0 });
+  const result = await clearCaches();
+  if (result.androidCacheCleared) {
+    setTimeoutFn(() => reload(), 350);
+    return;
+  }
+  reload();
+}
+
 export async function runConnectionHealthCheck({ settings, sharedUserId, apiFetch, assertValidApiKey }) {
   assertValidApiKey(settings.apiKey);
   const healthResponse = await fetch(`${settings.apiUrl}/health`);
@@ -56,4 +67,15 @@ export async function runConnectionHealthCheck({ settings, sharedUserId, apiFetc
   }
 
   return healthBody;
+}
+
+export async function runHealthCheckAndReport({ settings, readSettingsFromForm, sharedUserId, apiFetch, assertValidApiKey, appendMessage }) {
+  const nextSettings = readSettingsFromForm();
+  try {
+    const healthBody = await runConnectionHealthCheck({ settings: nextSettings, sharedUserId, apiFetch, assertValidApiKey });
+    appendMessage('system', `연결 성공: ${healthBody.status} / transport=${healthBody.transport}`);
+  } catch (error) {
+    appendMessage('system', `연결 실패: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  return nextSettings;
 }

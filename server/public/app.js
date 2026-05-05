@@ -1,4 +1,4 @@
-import { clearBrowserCaches, downloadUrlThroughAndroidClient, runConnectionHealthCheck } from './modules/app-maintenance.js';
+import { clearAppCacheAndReload as clearAppCacheAndReloadWithDeps, downloadUrlThroughAndroidClient, runHealthCheckAndReport } from './modules/app-maintenance.js';
 import { bootstrapInitialConversation } from './modules/app-startup.js';
 import { addAttachmentFilesToSelection, attachmentSummary as summarizeAttachments, buildAttachmentPayload, filesFromDataTransfer, filesFromUnknownList, hasDraggedFiles, nextComposerDragDepth, updateComposerDragOver } from './modules/attachment-input.js';
 import { createAttachmentPreview } from './modules/attachment-preview.js';
@@ -62,7 +62,7 @@ import { canResizeSidebar as canResizeSidebarView, sidebarResizeStateFromEvent, 
 import { applyStoredSidebarWidth, clampSidebarWidth, saveSidebarWidth, SIDEBAR_RESIZE_MEDIA } from './modules/sidebar-width.js';
 import { matchingSlashCommands as findMatchingSlashCommands, renderSlashCommandPalette as renderSlashCommandPaletteView } from './modules/slash-commands.js';
 import { nextPartialSegmentId as nextPartialSegmentIdForMessages, streamingNodeText as getStreamingNodeText } from './modules/streaming-ui.js';
-import { outgoingMessageForSubmit, resetComposerAfterSubmit, restoreComposerAfterSubmitFailure, shouldIncludeLocationForMessage } from './modules/submit-flow.js';
+import { notifyJobResult, outgoingMessageForSubmit, resetComposerAfterSubmit, restoreComposerAfterSubmitFailure, schedulePostSubmitRefresh, shouldIncludeLocationForMessage, submitValidationMessage } from './modules/submit-flow.js';
 import { showToast } from './modules/toast.js';
 import { currentUserDisplayName as getCurrentUserDisplayName, sharedUserId as getSharedUserId } from './modules/user-identity.js';
 import { checkClientServerVersion as checkClientServerVersionWithDeps } from './modules/version-check.js';
@@ -71,7 +71,7 @@ import './plugins/spot-order-card.js';
 import './plugins/spot-wallet-intent.js';
 
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
-const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-05-103';
+const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-05-104';
 const CLIENT_API_VERSION = 1;
 const elements = {
   loginScreen: document.querySelector('#loginScreen'),
@@ -1928,24 +1928,6 @@ function appendMessage(role, text, options = {}) {
   return node;
 }
 
-function startThinkingMessage(options = {}) {
-  const startedAt = options.startedAt || Date.now();
-  const label = options.label || '응답을 작성 중입니다…';
-  const node = appendMessage('assistant', `${label} (${Math.max(1, Math.round((Date.now() - startedAt) / 1000))}초)`, { persist: false });
-  node.classList.add('pending');
-  const timer = window.setInterval(() => {
-    const elapsedSeconds = Math.max(1, Math.round((Date.now() - startedAt) / 1000));
-    renderMessageNode(node, 'assistant pending', `${label} (${elapsedSeconds}초)`, { autoScroll: false });
-  }, 1000);
-  return {
-    node,
-    stop() {
-      window.clearInterval(timer);
-      node.classList.remove('pending');
-    },
-  };
-}
-
 function setSending(isSending) {
   isSendingMessage = isSending;
   updateComposerAvailability();
@@ -2280,22 +2262,23 @@ async function resumePendingJobIfNeeded() {
 async function handleSubmit(event) {
   event.preventDefault();
   const rawMessage = elements.messageInput.value.trim();
-  if (!rawMessage && selectedAttachments.length === 0) {
-    return;
-  }
-
-  if (!canUseApi()) {
-    appendMessage('system', '로그인 후 대화를 시작할 수 있습니다.');
-    openSettingsPanel();
-    return;
-  }
-  if (!activeConversation?.id) {
-    appendMessage('system', '새 대화를 열거나 목록에서 대화를 선택한 뒤 메시지를 보내주세요.', { persist: false });
-    return;
-  }
-  if (isConversationArchived(activeConversation)) {
-    appendMessage('system', '보관된 대화입니다. 대화를 이어가려면 아카이브를 해제하세요.', { persist: false });
-    updateComposerAvailability();
+  const validation = submitValidationMessage({
+    rawMessage,
+    attachmentCount: selectedAttachments.length,
+    canUseApi: canUseApi(),
+    hasActiveConversation: Boolean(activeConversation?.id),
+    archived: isConversationArchived(activeConversation),
+  });
+  if (!validation.ok) {
+    if (!validation.silent) {
+      appendMessage('system', validation.message, { persist: false });
+    }
+    if (validation.openSettings) {
+      openSettingsPanel();
+    }
+    if (validation.updateComposerAvailability) {
+      updateComposerAvailability();
+    }
     return;
   }
 
@@ -2358,17 +2341,12 @@ async function handleSubmit(event) {
           await renderHistory({ scrollToLatest: true });
         }
         await refreshConversations().catch(() => {});
-        if (job.state === 'failed') {
-          notifyReplyReady('OpenClaw 응답 실패', job.error || '응답 작업이 실패했습니다.');
-        } else if (job.state === 'completed') {
-          notifyReplyReady();
-        }
+        notifyJobResult(job, notifyReplyReady);
       } else {
         appendMessage('assistant', response.reply || '(빈 응답)', { force: true, savedAt: new Date().toISOString() });
       }
       setStatus('');
-      window.setTimeout(refreshHistoryIfChanged, 800);
-      window.setTimeout(() => refreshConversations().catch(() => {}), 900);
+      schedulePostSubmitRefresh({ refreshHistoryIfChanged, refreshConversations });
     } catch (error) {
       if (activeJobId && await isJobResolvedInHistory(activeJobId, conversation.id)) {
         clearPendingJob();
@@ -2398,18 +2376,12 @@ async function handleSubmit(event) {
 }
 
 async function clearAppCacheAndReload() {
-  setStatus('캐시를 삭제하는 중입니다...');
-  pruneMediaUrlCache({ force: true, limit: 0 });
   try {
-    const result = await clearBrowserCaches();
-    if (result.androidCacheCleared) {
-      window.setTimeout(() => window.location.reload(), 350);
-      return;
-    }
+    await clearAppCacheAndReloadWithDeps({ setStatus, pruneMediaUrlCache });
   } catch (error) {
     appendMessage('system', `캐시 삭제 실패: ${error instanceof Error ? error.message : String(error)}`, { persist: false });
+    window.location.reload();
   }
-  window.location.reload();
 }
 
 async function resetPassword() {
@@ -2430,13 +2402,7 @@ async function resetPassword() {
 }
 
 async function healthCheck() {
-  settings = readSettingsFromForm();
-  try {
-    const healthBody = await runConnectionHealthCheck({ settings, sharedUserId, apiFetch, assertValidApiKey });
-    appendMessage('system', `연결 성공: ${healthBody.status} / transport=${healthBody.transport}`);
-  } catch (error) {
-    appendMessage('system', `연결 실패: ${error instanceof Error ? error.message : String(error)}`);
-  }
+  settings = await runHealthCheckAndReport({ settings, readSettingsFromForm, sharedUserId, apiFetch, assertValidApiKey, appendMessage });
 }
 
 function updateClearMessageInputButton() {
@@ -2897,6 +2863,6 @@ elements.messageInput.addEventListener('keydown', (event) => {
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-05-103').catch(() => {});
+    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-05-104').catch(() => {});
   });
 }
