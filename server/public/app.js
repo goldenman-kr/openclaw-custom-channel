@@ -1,3 +1,4 @@
+import { bindAppEventListeners } from './modules/app-event-bindings.js';
 import { clearAppCacheAndReload as clearAppCacheAndReloadWithDeps, downloadUrlThroughAndroidClient, runHealthCheckAndReport } from './modules/app-maintenance.js';
 import { bootstrapInitialConversation } from './modules/app-startup.js';
 import { addAttachmentFilesToSelection, attachmentSummary as summarizeAttachments, buildAttachmentPayload, filesFromDataTransfer, filesFromUnknownList, hasDraggedFiles, nextComposerDragDepth, updateComposerDragOver } from './modules/attachment-input.js';
@@ -69,7 +70,7 @@ import './plugins/spot-order-card.js';
 import './plugins/spot-wallet-intent.js';
 
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
-const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-05-105';
+const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-05-106';
 const CLIENT_API_VERSION = 1;
 const elements = {
   loginScreen: document.querySelector('#loginScreen'),
@@ -2376,318 +2377,263 @@ function toggleSettingsPanel() {
   }
 }
 
-elements.settingsButton?.addEventListener('click', toggleSettingsPanel);
-elements.sidebarSettingsButton?.addEventListener('click', () => {
-  toggleSettingsPanel();
-  closeMobileDrawer();
-});
-elements.mobileMenuButton?.addEventListener('click', toggleMobileDrawer);
-elements.modelPickerButton?.addEventListener('click', (event) => {
-  event.stopPropagation();
-  toggleModelPicker();
-});
-elements.mobileDrawerBackdrop?.addEventListener('click', () => closeMobileDrawer({ syncHistory: true }));
-elements.chatPanel?.addEventListener('touchstart', handleDrawerSwipeStart, { passive: true });
-elements.chatPanel?.addEventListener('touchend', handleDrawerSwipeEnd, { passive: false });
-
-document.addEventListener('click', (event) => {
-  const target = event.target;
-  if (openConversationMenuId && !target?.closest?.('.conversation-menu-wrap')) {
-    openConversationMenuId = null;
-    renderConversationList();
-  }
-  if (floatingActionsExpanded && !target?.closest?.('#floatingActionMenu')) {
-    setFloatingActionsExpanded(false);
-  }
-  if (modelPickerExpanded && !target?.closest?.('.chat-titlebar-actions')) {
-    setModelPickerExpanded(false);
-  }
-  if (elements.settingsPanel.classList.contains('hidden')) {
-    return;
-  }
-  if (
-    elements.settingsPanel.contains(target)
-    || elements.settingsButton?.contains(target)
-    || elements.sidebarSettingsButton?.contains(target)
-    || elements.floatingSettingsButton?.contains(target)
-  ) {
-    return;
-  }
-  closeSettingsPanel({ syncHistory: true });
-});
-
-
-elements.loginForm?.addEventListener('submit', async (event) => {
-  event.preventDefault();
-  const username = elements.loginUsernameInput?.value.trim() || '';
-  const password = elements.loginPasswordInput?.value || '';
-  if (elements.loginSubmitButton) {
-    elements.loginSubmitButton.disabled = true;
-  }
-  if (elements.loginStatusText) {
-    elements.loginStatusText.textContent = '로그인 중입니다…';
-  }
-  try {
-    await login(username, password);
-    await refreshConversations();
-    if (!initialConversationId && !activeConversation?.id && conversations.length === 0) {
-      await startNewConversation();
-      return;
-    }
-    if (!initialConversationId) {
-      renderHome();
-      renderConversationList();
-      return;
-    }
-    const selected = await selectConversation(initialConversationId, { replaceUrl: true });
-    if (!selected) {
-      goHome({ replaceUrl: true });
-    }
-  } catch (error) {
-    showLoginScreen(error instanceof Error ? error.message : String(error));
-  } finally {
-    if (elements.loginSubmitButton) {
-      elements.loginSubmitButton.disabled = false;
-    }
-  }
-});
-
-elements.logoutButton?.addEventListener('click', logout);
-
-elements.saveSettingsButton?.addEventListener('click', () => {
-  if (persistSettingsFromForm()) {
-    showToast('설정을 저장했습니다.', { kind: 'success' });
-    closeSettingsPanel({ syncHistory: true });
-  }
-});
-
-elements.themeModeInput.addEventListener('change', () => {
-  applyTheme(elements.themeModeInput.value);
-});
-
-elements.autoLocationOnHereInput?.addEventListener('change', () => {
-  settings = { ...settings, autoLocationOnHere: elements.autoLocationOnHereInput.checked };
-  saveSettings(settings);
-});
-
-elements.fontSizeInput.addEventListener('input', () => {
-  settings = { ...settings, fontSize: normalizeFontSize(elements.fontSizeInput.value) };
-  applyDisplaySettings();
-  saveSettings(settings);
-});
-
-elements.historyPageSizeInput?.addEventListener('change', () => {
-  settings = { ...settings, historyPageSize: normalizeHistoryPageSize(elements.historyPageSizeInput.value) };
-  elements.historyPageSizeInput.value = String(settings.historyPageSize);
-  activeHistoryLimit = normalizeHistoryPageSize(settings.historyPageSize);
-  lastHistoryVersion = null;
-  saveSettings(settings);
-  if (activeConversation?.id) {
-    renderHistory({ scrollToLatest: true }).catch((error) => appendMessage('system', error instanceof Error ? error.message : String(error), { persist: false }));
-  }
-});
-
-elements.newConversationButton?.addEventListener('click', async () => {
-  try {
-    await startNewConversation();
-  } catch (error) {
-    appendMessage('system', error instanceof Error ? error.message : String(error), { persist: false });
-  }
-});
-
-elements.archiveToggleButton?.addEventListener('click', () => {
-  showingArchived = !showingArchived;
-  openConversationMenuId = null;
-  goHome();
-});
-
-elements.conversationSearchInput?.addEventListener('input', () => {
-  conversationSearchQuery = elements.conversationSearchInput.value;
-  updateConversationSearchClearButton();
-  conversationContentMatches = new Set();
-  renderConversationList();
-  scheduleConversationSearch();
-});
-
-elements.clearConversationSearchButton?.addEventListener('click', () => {
-  conversationSearchQuery = '';
-  if (elements.conversationSearchInput) {
-    elements.conversationSearchInput.value = '';
-    elements.conversationSearchInput.focus();
-  }
-  updateConversationSearchClearButton();
-  conversationContentMatches = new Set();
-  renderConversationList();
-  scheduleConversationSearch();
-});
-
-elements.clearHistoryButton?.addEventListener('click', async () => {
-  if (!window.confirm('새 대화를 시작합니다. 기존 대화는 서버에 보존됩니다.')) {
-    return;
-  }
-  try {
-    await startNewConversation();
-    appendMessage('system', '새 대화를 시작했습니다. 기존 대화는 보존됩니다.', { persist: false });
-  } catch (error) {
-    appendMessage('system', error instanceof Error ? error.message : String(error), { persist: false });
-  }
-});
-
-elements.healthCheckButton?.addEventListener('click', healthCheck);
-elements.refreshAppButton.addEventListener('click', () => window.location.reload());
-elements.floatingActionToggle?.addEventListener('click', toggleFloatingActions);
-elements.floatingSettingsButton?.addEventListener('click', (event) => {
-  event.stopPropagation();
-  setFloatingActionsExpanded(false);
-  openSettingsPanel();
-});
-elements.floatingRefreshButton?.addEventListener('click', () => window.location.reload());
-elements.floatingScrollTopButton?.addEventListener('click', () => {
-  setFloatingActionsExpanded(false);
-  elements.messages.scrollTo({ top: 0, behavior: 'smooth' });
-});
-elements.floatingScrollBottomButton?.addEventListener('click', () => {
-  setFloatingActionsExpanded(false);
-  scrollToBottom({ force: true, smooth: true });
-});
-elements.continueNewSessionButton?.addEventListener('click', continueInNewSession);
-elements.scrollToLatestButton?.addEventListener('click', () => scrollToBottom({ force: true }));
-elements.messages.addEventListener('scroll', () => {
-  elements.messages.classList.add('is-scrolling');
-  updateMessagesScrollIndicator();
-  hideMessagesScrollIndicatorSoon();
-  if (isNearBottom(80)) {
-    hideScrollToLatestButton();
-  }
-});
-elements.clearCacheButton.addEventListener('click', clearAppCacheAndReload);
-elements.resetPasswordButton?.addEventListener('click', resetPassword);
-elements.notificationButton.addEventListener('click', enableNotifications);
-elements.mediaViewerDownload.addEventListener('click', downloadCurrentMedia);
-elements.mediaViewerClose.addEventListener('click', closeMediaViewer);
-elements.mediaViewerImage.addEventListener('pointerdown', handleMediaViewerPointerDown);
-elements.mediaViewerImage.addEventListener('pointermove', handleMediaViewerPointerMove);
-elements.mediaViewerImage.addEventListener('pointerup', handleMediaViewerPointerEnd);
-elements.mediaViewerImage.addEventListener('pointercancel', handleMediaViewerPointerEnd);
-elements.mediaViewerImage.addEventListener('wheel', handleMediaViewerWheel, { passive: false });
-elements.mediaViewerImage.addEventListener('dblclick', toggleMediaViewerZoom);
-elements.mediaViewer.addEventListener('click', (event) => {
-  if (event.target?.hasAttribute?.('data-media-viewer-close')) {
-    closeMediaViewer();
-  }
-});
-window.addEventListener('popstate', () => {
-  if (document.body.classList.contains('drawer-open')) {
-    closeMobileDrawer({ syncHistory: false });
-    return;
-  }
-  if (!elements.settingsPanel.classList.contains('hidden')) {
-    closeSettingsPanel({ syncHistory: false });
-    return;
-  }
-  if (mediaViewerHistoryActive && !elements.mediaViewer.classList.contains('hidden')) {
-    closeMediaViewer({ syncHistory: false });
-    return;
-  }
-  const conversationId = conversationIdFromPath();
-  if (conversationId) {
-    selectConversation(conversationId, { replaceUrl: true }).then((selected) => {
-      if (!selected) {
-        goHome({ replaceUrl: true });
+bindAppEventListeners({
+  elements,
+  state: {
+    openConversationMenuId: () => openConversationMenuId,
+    setOpenConversationMenuId: (value) => { openConversationMenuId = value; },
+    floatingActionsExpanded: () => floatingActionsExpanded,
+    modelPickerExpanded: () => modelPickerExpanded,
+  },
+  actions: {
+    toggleSettingsPanel,
+    closeMobileDrawer,
+    toggleMobileDrawer,
+    toggleModelPicker,
+    handleDrawerSwipeStart,
+    handleDrawerSwipeEnd,
+    renderConversationList,
+    setFloatingActionsExpanded,
+    setModelPickerExpanded,
+    closeSettingsPanel,
+    handleLoginSubmit: async (event) => {
+      event.preventDefault();
+      const username = elements.loginUsernameInput?.value.trim() || '';
+      const password = elements.loginPasswordInput?.value || '';
+      if (elements.loginSubmitButton) {
+        elements.loginSubmitButton.disabled = true;
       }
-    }).catch(() => goHome({ replaceUrl: true }));
-    return;
-  }
-  goHome({ replaceUrl: true });
-});
-
-document.addEventListener('keydown', (event) => {
-  if (event.key === 'Escape' && !elements.mediaViewer.classList.contains('hidden')) {
-    closeMediaViewer();
-    return;
-  }
-  if (event.key === 'Escape' && floatingActionsExpanded) {
-    setFloatingActionsExpanded(false);
-    return;
-  }
-  if (event.key === 'Escape' && modelPickerExpanded) {
-    setModelPickerExpanded(false);
-    return;
-  }
-  if (event.key === 'Escape' && document.body.classList.contains('drawer-open')) {
-    closeMobileDrawer({ syncHistory: true });
-  }
+      if (elements.loginStatusText) {
+        elements.loginStatusText.textContent = '로그인 중입니다…';
+      }
+      try {
+        await login(username, password);
+        await refreshConversations();
+        if (!initialConversationId && !activeConversation?.id && conversations.length === 0) {
+          await startNewConversation();
+          return;
+        }
+        if (!initialConversationId) {
+          renderHome();
+          renderConversationList();
+          return;
+        }
+        const selected = await selectConversation(initialConversationId, { replaceUrl: true });
+        if (!selected) {
+          goHome({ replaceUrl: true });
+        }
+      } catch (error) {
+        showLoginScreen(error instanceof Error ? error.message : String(error));
+      } finally {
+        if (elements.loginSubmitButton) {
+          elements.loginSubmitButton.disabled = false;
+        }
+      }
+    },
+    logout,
+    saveSettings: () => {
+      if (persistSettingsFromForm()) {
+        showToast('설정을 저장했습니다.', { kind: 'success' });
+        closeSettingsPanel({ syncHistory: true });
+      }
+    },
+    applyTheme,
+    setAutoLocationOnHere: (enabled) => {
+      settings = { ...settings, autoLocationOnHere: enabled };
+      saveSettings(settings);
+    },
+    setFontSize: (fontSize) => {
+      settings = { ...settings, fontSize: normalizeFontSize(fontSize) };
+      applyDisplaySettings();
+      saveSettings(settings);
+    },
+    changeHistoryPageSize: () => {
+      settings = { ...settings, historyPageSize: normalizeHistoryPageSize(elements.historyPageSizeInput.value) };
+      elements.historyPageSizeInput.value = String(settings.historyPageSize);
+      activeHistoryLimit = normalizeHistoryPageSize(settings.historyPageSize);
+      lastHistoryVersion = null;
+      saveSettings(settings);
+      if (activeConversation?.id) {
+        renderHistory({ scrollToLatest: true }).catch((error) => appendMessage('system', error instanceof Error ? error.message : String(error), { persist: false }));
+      }
+    },
+    newConversation: async () => {
+      try {
+        await startNewConversation();
+      } catch (error) {
+        appendMessage('system', error instanceof Error ? error.message : String(error), { persist: false });
+      }
+    },
+    toggleArchiveView: () => {
+      showingArchived = !showingArchived;
+      openConversationMenuId = null;
+      goHome();
+    },
+    conversationSearchInput: (value) => {
+      conversationSearchQuery = value;
+      updateConversationSearchClearButton();
+      conversationContentMatches = new Set();
+      renderConversationList();
+      scheduleConversationSearch();
+    },
+    clearConversationSearch: () => {
+      conversationSearchQuery = '';
+      if (elements.conversationSearchInput) {
+        elements.conversationSearchInput.value = '';
+        elements.conversationSearchInput.focus();
+      }
+      updateConversationSearchClearButton();
+      conversationContentMatches = new Set();
+      renderConversationList();
+      scheduleConversationSearch();
+    },
+    clearHistory: async () => {
+      if (!window.confirm('새 대화를 시작합니다. 기존 대화는 서버에 보존됩니다.')) {
+        return;
+      }
+      try {
+        await startNewConversation();
+        appendMessage('system', '새 대화를 시작했습니다. 기존 대화는 보존됩니다.', { persist: false });
+      } catch (error) {
+        appendMessage('system', error instanceof Error ? error.message : String(error), { persist: false });
+      }
+    },
+    healthCheck,
+    toggleFloatingActions,
+    openSettingsPanel,
+    scrollToBottom,
+    continueInNewSession,
+    messagesScroll: () => {
+      elements.messages.classList.add('is-scrolling');
+      updateMessagesScrollIndicator();
+      hideMessagesScrollIndicatorSoon();
+      if (isNearBottom(80)) {
+        hideScrollToLatestButton();
+      }
+    },
+    clearAppCacheAndReload,
+    resetPassword,
+    enableNotifications,
+    downloadCurrentMedia,
+    closeMediaViewer,
+    handleMediaViewerPointerDown,
+    handleMediaViewerPointerMove,
+    handleMediaViewerPointerEnd,
+    handleMediaViewerWheel,
+    toggleMediaViewerZoom,
+    mediaViewerBackdropClick: (event) => {
+      if (event.target?.hasAttribute?.('data-media-viewer-close')) {
+        closeMediaViewer();
+      }
+    },
+    popState: () => {
+      if (document.body.classList.contains('drawer-open')) {
+        closeMobileDrawer({ syncHistory: false });
+        return;
+      }
+      if (!elements.settingsPanel.classList.contains('hidden')) {
+        closeSettingsPanel({ syncHistory: false });
+        return;
+      }
+      if (mediaViewerHistoryActive && !elements.mediaViewer.classList.contains('hidden')) {
+        closeMediaViewer({ syncHistory: false });
+        return;
+      }
+      const conversationId = conversationIdFromPath();
+      if (conversationId) {
+        selectConversation(conversationId, { replaceUrl: true }).then((selected) => {
+          if (!selected) {
+            goHome({ replaceUrl: true });
+          }
+        }).catch(() => goHome({ replaceUrl: true }));
+        return;
+      }
+      goHome({ replaceUrl: true });
+    },
+    documentKeydown: (event) => {
+      if (event.key === 'Escape' && !elements.mediaViewer.classList.contains('hidden')) {
+        closeMediaViewer();
+        return;
+      }
+      if (event.key === 'Escape' && floatingActionsExpanded) {
+        setFloatingActionsExpanded(false);
+        return;
+      }
+      if (event.key === 'Escape' && modelPickerExpanded) {
+        setModelPickerExpanded(false);
+        return;
+      }
+      if (event.key === 'Escape' && document.body.classList.contains('drawer-open')) {
+        closeMobileDrawer({ syncHistory: true });
+      }
+    },
+    clearMessageInput: () => {
+      elements.messageInput.focus();
+      document.execCommand('selectAll');
+      document.execCommand('delete');
+      elements.messageInput.dispatchEvent(new Event('input', { bubbles: true }));
+    },
+    attachmentInputChange: () => {
+      try {
+        addAttachmentFilesSafely(elements.attachmentInput.files || [], '파일 선택');
+      } finally {
+        elements.attachmentInput.value = '';
+      }
+    },
+    handleMessagePaste,
+    handleComposerDragEnter,
+    handleComposerDragOver,
+    handleComposerDragLeave,
+    handleComposerDrop,
+    handleSubmit,
+    messageInputChanged: () => {
+      saveComposerDraft();
+      autoResizeTextarea();
+      selectedSlashCommandIndex = 0;
+      renderSlashCommandPalette();
+    },
+    hideSlashCommandPalette,
+    startSidebarResize,
+    moveSidebarResize,
+    finishSidebarResize,
+    cancelSidebarResize,
+    syncSidebarWidthToViewport,
+    messageInputKeydown: (event) => {
+      const hasSlashPalette = !elements.slashCommandPalette.classList.contains('hidden');
+      if (hasSlashPalette && ['ArrowDown', 'ArrowUp', 'Tab', 'Enter'].includes(event.key)) {
+        const matches = matchingSlashCommands();
+        if (event.key === 'ArrowDown') {
+          event.preventDefault();
+          selectedSlashCommandIndex = (selectedSlashCommandIndex + 1) % matches.length;
+          renderSlashCommandPalette();
+          return;
+        }
+        if (event.key === 'ArrowUp') {
+          event.preventDefault();
+          selectedSlashCommandIndex = (selectedSlashCommandIndex - 1 + matches.length) % matches.length;
+          renderSlashCommandPalette();
+          return;
+        }
+        if (event.key === 'Tab' || (event.key === 'Enter' && !event.shiftKey)) {
+          event.preventDefault();
+          acceptSelectedSlashCommand();
+          return;
+        }
+      }
+      if (isMobileLikeInput()) {
+        return;
+      }
+      if (event.key === 'Enter' && !event.shiftKey) {
+        event.preventDefault();
+        elements.messageForm.requestSubmit();
+      }
+    },
+  },
 });
 renderModelPicker();
-elements.attachButton.addEventListener('click', () => elements.attachmentInput.click());
-elements.clearMessageInputButton?.addEventListener('click', () => {
-  elements.messageInput.focus();
-  document.execCommand('selectAll');
-  document.execCommand('delete');
-  elements.messageInput.dispatchEvent(new Event('input', { bubbles: true }));
-});
-elements.attachmentInput.addEventListener('change', () => {
-  try {
-    addAttachmentFilesSafely(elements.attachmentInput.files || [], '파일 선택');
-  } finally {
-    elements.attachmentInput.value = '';
-  }
-});
-elements.messageInput.addEventListener('paste', handleMessagePaste);
-elements.messageForm.addEventListener('dragenter', handleComposerDragEnter);
-elements.messageForm.addEventListener('dragover', handleComposerDragOver);
-elements.messageForm.addEventListener('dragleave', handleComposerDragLeave);
-elements.messageForm.addEventListener('drop', handleComposerDrop);
-elements.messageForm.addEventListener('submit', handleSubmit);
-elements.messageInput.addEventListener('input', () => {
-  saveComposerDraft();
-  autoResizeTextarea();
-  selectedSlashCommandIndex = 0;
-  renderSlashCommandPalette();
-});
-elements.messageInput.addEventListener('blur', () => {
-  window.setTimeout(hideSlashCommandPalette, 160);
-});
-elements.sidebarResizeHandle?.addEventListener('pointerdown', startSidebarResize);
-window.addEventListener('pointermove', moveSidebarResize);
-window.addEventListener('pointerup', finishSidebarResize);
-window.addEventListener('pointercancel', cancelSidebarResize);
-window.addEventListener('resize', syncSidebarWidthToViewport);
-
-elements.messageInput.addEventListener('keydown', (event) => {
-  const hasSlashPalette = !elements.slashCommandPalette.classList.contains('hidden');
-  if (hasSlashPalette && ['ArrowDown', 'ArrowUp', 'Tab', 'Enter'].includes(event.key)) {
-    const matches = matchingSlashCommands();
-    if (event.key === 'ArrowDown') {
-      event.preventDefault();
-      selectedSlashCommandIndex = (selectedSlashCommandIndex + 1) % matches.length;
-      renderSlashCommandPalette();
-      return;
-    }
-    if (event.key === 'ArrowUp') {
-      event.preventDefault();
-      selectedSlashCommandIndex = (selectedSlashCommandIndex - 1 + matches.length) % matches.length;
-      renderSlashCommandPalette();
-      return;
-    }
-    if (event.key === 'Tab' || (event.key === 'Enter' && !event.shiftKey)) {
-      event.preventDefault();
-      acceptSelectedSlashCommand();
-      return;
-    }
-  }
-
-  if (isMobileLikeInput()) {
-    return;
-  }
-  if (event.key === 'Enter' && !event.shiftKey) {
-    event.preventDefault();
-    elements.messageForm.requestSubmit();
-  }
-});
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-05-105').catch(() => {});
+    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-05-106').catch(() => {});
   });
 }
