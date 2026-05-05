@@ -149,7 +149,7 @@ export function startSpotOrderPolling(input: { deps: SpotPluginRouteDeps; spotOr
 async function pollRelayResult(input: { deps: SpotPluginRouteDeps; spotOrderId: string; conversationId: string; relayOrderHash: string }): Promise<void> {
   const { deps, spotOrderId, conversationId, relayOrderHash } = input;
   const startedAt = Date.now();
-  const maxMs = 6 * 60_000;
+  const maxMs = computePollingMaxMs(deps, spotOrderId);
   let lastBody: unknown = null;
   let lastStatus = "pending";
 
@@ -167,10 +167,39 @@ async function pollRelayResult(input: { deps: SpotPluginRouteDeps; spotOrderId: 
       const message = error instanceof Error ? error.message : String(error);
       deps.spotOrderStore.updateRelayResult(spotOrderId, { relayStatus: lastStatus, relayResult: lastBody, error: message });
     }
-    await delay(5_000);
+    await delay(computePollingIntervalMs(Date.now() - startedAt));
   }
 
   publishRelayResultMessage(deps, conversationId, spotOrderId, relayOrderHash, lastStatus, lastBody, "폴링 제한 시간 내 최종 상태에 도달하지 않았습니다.");
+}
+
+function computePollingMaxMs(deps: SpotPluginRouteDeps, spotOrderId: string): number {
+  const fallbackMs = 14 * 24 * 60 * 60_000;
+  const record = deps.spotOrderStore.get(spotOrderId);
+  if (!record) {
+    return fallbackMs;
+  }
+  try {
+    const typedData = JSON.parse(record.typedDataJson) as Record<string, unknown>;
+    const deadline = Number(readPath(typedData, ["message", "witness", "deadline"]) ?? readPath(typedData, ["message", "deadline"]));
+    if (Number.isFinite(deadline) && deadline > 0) {
+      const untilDeadlineMs = deadline * 1000 - Date.now();
+      return Math.max(60_000, untilDeadlineMs + 60 * 60_000);
+    }
+  } catch {
+    // Keep fallback for older/malformed records.
+  }
+  return fallbackMs;
+}
+
+function computePollingIntervalMs(elapsedMs: number): number {
+  if (elapsedMs < 60_000) {
+    return 5_000;
+  }
+  if (elapsedMs < 10 * 60_000) {
+    return 15_000;
+  }
+  return 60_000;
 }
 
 async function queryRelayOrder(relayOrderHash: string): Promise<unknown> {
