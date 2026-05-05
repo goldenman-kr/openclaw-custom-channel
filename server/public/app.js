@@ -18,7 +18,7 @@ import { openDeleteDialog as openDeleteDialogView, openRenameDialog as openRenam
 import { conversationTitle, formatConversationDate, formatMessageTimestamp } from './modules/conversation-format.js';
 import { applyDisplaySettings as applyDisplaySettingsToElements, applyTheme, normalizeFontSize, syncNativeTheme } from './modules/display.js';
 import { applyFloatingActionsExpanded } from './modules/floating-actions.js';
-import { fetchHistory as fetchHistoryFromApi, fetchHistoryMeta as fetchHistoryMetaFromApi } from './modules/history-api.js';
+import { fetchConversationHistory as fetchConversationHistoryFromApi, fetchHistory as fetchHistoryFromApi, fetchHistoryMeta as fetchHistoryMetaFromApi } from './modules/history-api.js';
 import { buildNewSessionHandoffMessage } from './modules/history-handoff.js';
 import { createHistoryLoadMoreControl, resetHistoryLoadMoreButton } from './modules/history-controls.js';
 import { createHomeScreen } from './modules/home-screen.js';
@@ -27,6 +27,7 @@ import { hideLoginScreen as hideLoginScreenView, showLoginScreen as showLoginScr
 import { getCurrentLocationMetadata } from './modules/location.js';
 import { messageTextWithoutAttachmentPreview, renderedHistorySignature } from './modules/history-render-signature.js';
 import { isPendingHistoryMessage, isPlaceholderPendingText, isRunningJobHistoryMessage, shouldRerenderHistory as shouldRerenderHistorySnapshot } from './modules/history-state.js';
+import { cancelJobById, fetchJobById, isAlreadyFinishedJobError, isJobResolvedInHistory as isJobResolvedInHistoryFromApi } from './modules/job-api.js';
 import { waitForJobEventStream } from './modules/job-events.js';
 import { delay, isTerminalJobState, parseSseBlock } from './modules/job-utils.js';
 import { appendInlineMarkdown, countLeadingSpaces } from './modules/markdown-inline.js';
@@ -62,7 +63,7 @@ import './plugins/spot-order-card.js';
 import './plugins/spot-wallet-intent.js';
 
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
-const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-097';
+const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-04-098';
 const CLIENT_API_VERSION = 1;
 const elements = {
   loginScreen: document.querySelector('#loginScreen'),
@@ -2071,7 +2072,7 @@ function appendCancelJobAction(node, role, text, options = {}) {
       setStatus('');
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
-      if (error?.status === 404 || detail.includes('Job not found or already finished.')) {
+      if (isAlreadyFinishedJobError(error)) {
         clearPendingJob(conversationId);
         node.remove();
         await refreshHistoryIfChanged().catch(() => {});
@@ -2305,44 +2306,15 @@ async function pruneStoredPendingJobs(conversationList = conversations) {
 }
 
 async function fetchConversationHistory(conversationId) {
-  const response = await apiFetch('/v1/history', {
-    params: { conversation_id: conversationId },
-    headers: await historyHeaders(),
-  });
-  if (!response.ok) {
-    throw new Error(`대화 기록을 불러오지 못했습니다: HTTP ${response.status}`);
-  }
-  const body = await response.json();
-  return Array.isArray(body.messages) ? body.messages : [];
+  return fetchConversationHistoryFromApi({ apiFetch, historyHeaders, conversationId });
 }
 
 async function fetchJob(jobId, conversationId = activeConversationId()) {
-  const response = await apiFetch(`/v1/jobs/${encodeURIComponent(jobId)}`, {
-    params: { conversation_id: conversationId },
-    headers: await historyHeaders(),
-  });
-  const body = await response.json().catch(() => null);
-  if (!response.ok) {
-    const error = new Error(body?.error?.message || `Job HTTP ${response.status}`);
-    error.status = response.status;
-    throw error;
-  }
-  return body;
+  return fetchJobById({ apiFetch, historyHeaders, jobId, conversationId });
 }
 
 async function cancelJob(jobId, conversationId = activeConversationId()) {
-  const response = await apiFetch(`/v1/jobs/${encodeURIComponent(jobId)}/cancel`, {
-    params: { conversation_id: conversationId },
-    method: 'POST',
-    headers: await historyHeaders(),
-  });
-  const body = await response.json().catch(() => null);
-  if (!response.ok) {
-    const error = new Error(body?.error?.message || `Cancel HTTP ${response.status}`);
-    error.status = response.status;
-    throw error;
-  }
-  return body;
+  return cancelJobById({ apiFetch, historyHeaders, jobId, conversationId });
 }
 
 async function cancelActiveJob() {
@@ -2362,7 +2334,7 @@ async function cancelActiveJob() {
     setStatus('');
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
-    if (error?.status === 404 || detail.includes('Job not found or already finished.')) {
+    if (isAlreadyFinishedJobError(error)) {
       clearPendingJob(conversationId);
       await refreshHistoryIfChanged().catch(() => {});
       await refreshConversations().catch(() => {});
@@ -2477,12 +2449,14 @@ async function waitForJobViaSse(jobId, onTick = () => {}, conversationId = activ
 }
 
 async function isJobResolvedInHistory(jobId, conversationId = activeConversationId()) {
-  try {
-    const history = isActiveConversation(conversationId) ? await fetchHistory() : await fetchConversationHistory(conversationId);
-    return history.some((item) => item.id === jobId && !isPendingHistoryMessage(item));
-  } catch {
-    return false;
-  }
+  return isJobResolvedInHistoryFromApi({
+    jobId,
+    conversationId,
+    isActiveConversation,
+    fetchHistory,
+    fetchConversationHistory,
+    isPendingHistoryMessage,
+  });
 }
 
 async function waitForJob(jobId, onTick = () => {}, conversationId = activeConversationId(), onToken = () => {}) {
@@ -3204,6 +3178,6 @@ elements.messageInput.addEventListener('keydown', (event) => {
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-04-097').catch(() => {});
+    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-04-098').catch(() => {});
   });
 }
