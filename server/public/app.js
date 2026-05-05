@@ -35,9 +35,7 @@ import { isPendingHistoryMessage, isPlaceholderPendingText, isRunningJobHistoryM
 import { cancelJobById, fetchJobById, isAlreadyFinishedJobError, isJobResolvedInHistory as isJobResolvedInHistoryFromApi, waitForJobPolling } from './modules/job-api.js';
 import { waitForJobEventStream } from './modules/job-events.js';
 import { delay, isTerminalJobState, parseSseBlock } from './modules/job-utils.js';
-import { appendInlineMarkdown, countLeadingSpaces } from './modules/markdown-inline.js';
-import { isMarkdownTableRow, isMarkdownTableSeparator, splitMarkdownTableRow } from './modules/markdown-table.js';
-import { appendMarkdownTable } from './modules/markdown-table-render.js';
+import { appendMarkdown as appendMarkdownView } from './modules/markdown-renderer.js';
 import { canonicalMediaRefKey, extractMediaRefs, mediaRefsFromHistoryAttachments } from './modules/media.js';
 import { appendMediaRef as appendMediaRefView } from './modules/media-ref-renderer.js';
 import { applyMediaViewerTransform as applyMediaViewerTransformView, closeMediaViewerView, isMediaViewerHidden, openMediaViewerView } from './modules/media-viewer-view.js';
@@ -71,7 +69,7 @@ import './plugins/spot-order-card.js';
 import './plugins/spot-wallet-intent.js';
 
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
-const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-05-104';
+const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-05-105';
 const CLIENT_API_VERSION = 1;
 const elements = {
   loginScreen: document.querySelector('#loginScreen'),
@@ -1350,182 +1348,9 @@ function appendPlainCodeBlock(parent, codeText, language = '', options = {}) {
     copyTextToClipboard,
   }));
 }
-function appendBlockquote(parent, lines) {
-  const quote = document.createElement('blockquote');
-  appendMarkdown(quote, lines.join('\n'));
-  parent.append(quote);
-}
 
 function appendMarkdown(parent, text) {
-  const lines = text.split('\n');
-  let list = null;
-  let inCodeBlock = false;
-  let codeLanguage = '';
-  let codeFenceIndent = 0;
-  let codeLines = [];
-
-  for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index];
-    // CommonMark allows fenced code blocks to be indented by up to 3 spaces.
-    // This matters for code blocks shown under ordered-list text, where markdown
-    // often carries list-continuation indentation before the backticks.
-    const singleLineFence = line.match(/^( {0,3})```([^`\n]+)```\s*$/);
-    if (singleLineFence) {
-      list = null;
-      appendCodeBlock(parent, singleLineFence[2], '', { showHeader: false, showCopyButton: false });
-      continue;
-    }
-    const fence = line.match(/^( {0,3})```\s*([^`]*)\s*$/);
-    if (fence) {
-      list = null;
-      if (inCodeBlock) {
-        appendCodeBlock(parent, codeLines.join('\n'), codeLanguage);
-        inCodeBlock = false;
-        codeLanguage = '';
-        codeFenceIndent = 0;
-        codeLines = [];
-      } else {
-        inCodeBlock = true;
-        codeLanguage = fence[2]?.trim() || '';
-        codeFenceIndent = fence[1]?.length || 0;
-        codeLines = [];
-      }
-      continue;
-    }
-
-    if (inCodeBlock) {
-      codeLines.push(codeFenceIndent > 0 && line.startsWith(' '.repeat(codeFenceIndent)) ? line.slice(codeFenceIndent) : line);
-      continue;
-    }
-
-    if (isMarkdownTableRow(line) && isMarkdownTableSeparator(lines[index + 1] || '')) {
-      list = null;
-      const headerCells = splitMarkdownTableRow(line);
-      const separatorLine = lines[index + 1];
-      const bodyRows = [];
-      index += 2;
-      while (index < lines.length && isMarkdownTableRow(lines[index])) {
-        bodyRows.push(splitMarkdownTableRow(lines[index]));
-        index += 1;
-      }
-      index -= 1;
-      appendMarkdownTable(parent, headerCells, separatorLine, bodyRows);
-      continue;
-    }
-
-    const heading = line.match(/^(#{1,3})\s+(.+)$/);
-    const bullet = line.match(/^\s*[-*]\s+(.+)$/);
-    const numbered = line.match(/^\s*(\d+)[.)]\s+(.+)$/);
-    const quote = line.match(/^>\s?(.*)$/);
-    const horizontalRule = line.match(/^\s{0,3}((\*\s*){3,}|(-\s*){3,}|(_\s*){3,})\s*$/);
-
-    if (horizontalRule) {
-      list = null;
-      parent.append(document.createElement('hr'));
-      continue;
-    }
-
-    if (quote) {
-      list = null;
-      const quoteLines = [quote[1]];
-      while (index + 1 < lines.length) {
-        const nextLine = lines[index + 1];
-        if (!nextLine.trim()) {
-          break;
-        }
-        const nextQuote = nextLine.match(/^>\s?(.*)$/);
-        if (nextQuote) {
-          quoteLines.push(nextQuote[1]);
-          index += 1;
-          continue;
-        }
-        if (/^ {0,3}```\s*([^`]*)\s*$/.test(nextLine) || /^(#{1,3})\s+(.+)$/.test(nextLine) || /^\s*[-*]\s+(.+)$/.test(nextLine) || /^\s*(\d+)[.)]\s+(.+)$/.test(nextLine) || (isMarkdownTableRow(nextLine) && isMarkdownTableSeparator(lines[index + 2] || ''))) {
-          break;
-        }
-        quoteLines.push(nextLine);
-        index += 1;
-      }
-      appendBlockquote(parent, quoteLines);
-      continue;
-    }
-
-    if (heading) {
-      list = null;
-      const level = String(Math.min(3, heading[1].length + 2));
-      const node = document.createElement(`h${level}`);
-      appendInlineMarkdown(node, heading[2]);
-      parent.append(node);
-      continue;
-    }
-
-    if (bullet || numbered) {
-      const listType = bullet ? 'ul' : 'ol';
-      const explicitNumber = numbered ? Number(numbered[1]) : null;
-      if (!list || list.tagName.toLowerCase() !== listType) {
-        list = document.createElement(listType);
-        if (listType === 'ol' && explicitNumber && explicitNumber > 1) {
-          list.setAttribute('start', String(explicitNumber));
-        }
-        parent.append(list);
-      }
-      const item = document.createElement('li');
-      if (listType === 'ol' && explicitNumber && list.children.length > 0) {
-        item.value = explicitNumber;
-      }
-      appendInlineMarkdown(item, bullet?.[1] || numbered?.[2] || '');
-      list.append(item);
-
-      while (index + 1 < lines.length) {
-        const nextLine = lines[index + 1];
-        if (!nextLine.trim()) {
-          index += 1;
-          continue;
-        }
-
-        const indent = countLeadingSpaces(nextLine);
-        const nestedFence = indent >= 2 ? nextLine.match(/^\s*```\s*([^`]*)\s*$/) : null;
-        if (nestedFence) {
-          const codeIndent = indent;
-          const codeLanguage = nestedFence[1]?.trim() || '';
-          const codeLines = [];
-          index += 1;
-          while (index + 1 < lines.length) {
-            const codeLine = lines[index + 1];
-            if (!codeLine.trim()) {
-              codeLines.push('');
-              index += 1;
-              continue;
-            }
-            const codeLineIndent = countLeadingSpaces(codeLine);
-            if (codeLineIndent >= codeIndent && codeLine.slice(codeIndent).match(/^```\s*$/)) {
-              index += 1;
-              break;
-            }
-            codeLines.push(codeLineIndent >= codeIndent ? codeLine.slice(codeIndent) : codeLine);
-            index += 1;
-          }
-          appendCodeBlock(item, codeLines.join('\n'), codeLanguage);
-          continue;
-        }
-
-        break;
-      }
-      continue;
-    }
-
-    list = null;
-    if (!line.trim()) {
-      parent.append(document.createElement('br'));
-      continue;
-    }
-    const paragraph = document.createElement('p');
-    appendInlineMarkdown(paragraph, line);
-    parent.append(paragraph);
-  }
-
-  if (inCodeBlock) {
-    appendCodeBlock(parent, codeLines.join('\n'), codeLanguage);
-  }
+  appendMarkdownView(parent, text, { appendCodeBlock });
 }
 
 function renderHistoryItem(item) {
@@ -2863,6 +2688,6 @@ elements.messageInput.addEventListener('keydown', (event) => {
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-05-104').catch(() => {});
+    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-05-105').catch(() => {});
   });
 }
