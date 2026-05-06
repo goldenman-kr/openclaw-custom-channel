@@ -5,10 +5,10 @@
 - 현재 구현 범위: PC 브라우저 지갑 provider(`window.ethereum`) 기반 지갑 연결/서명/제출만 지원.
 - 모바일에서는 Spot 지갑 서명 플러그인 버튼을 비활성화하고, 별도 구현 전까지 단독 진행하지 않는다.
 - 추후 검토 후보:
-  - WalletConnect 연동
-  - 지갑 앱 인앱 브라우저에서 PWA 열기
-  - 모바일 브라우저 ↔ 지갑 앱 deep link / universal link 흐름
-  - MetaMask Mobile 등에서 injected provider 제공 여부와 EIP-712 서명 안정성
+  - [x] WalletConnect 연동
+  - [ ] 지갑 앱 인앱 브라우저에서 PWA 열기
+  - [ ] 모바일 브라우저 ↔ 지갑 앱 deep link / universal link 흐름
+  - [x] MetaMask Mobile 등에서 injected provider 제공 여부와 EIP-712 서명 안정성
 - 검토 시 확인할 것:
   - `eth_signTypedData_v4` 지원 여부
   - 체인 전환/approve 트랜잭션 UX

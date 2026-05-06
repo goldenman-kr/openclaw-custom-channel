@@ -63,7 +63,11 @@ function createConversationMenuWrap(conversation, deps) {
     const pin = document.createElement('span');
     pin.className = 'conversation-pin-icon';
     pin.setAttribute('aria-label', '상단 고정됨');
-    pin.textContent = '📌';
+    pin.innerHTML = `
+      <svg viewBox="0 0 156 156" aria-hidden="true" focusable="false">
+        <path d="M90 0 L84 1 L76 12 L69 27 L69 38 L47 60 L26 64 L18 67 L17 73 L46 102 L0 148 L6 155 L53 109 L82 138 L88 137 L91 129 L95 108 L117 86 L127 86 L136 82 L139 82 L140 80 L154 71 L155 65 Z M88 13 L142 67 L128 75 L125 74 L126 75 L125 76 L120 76 L118 74 L113 75 L86 102 L83 118 L81 122 L33 74 L37 72 L53 69 L80 42 L81 37 L79 35 L79 30 Z" fill="currentColor" fill-rule="evenodd" />
+      </svg>
+    `;
     menuWrap.append(pin);
   }
   menuWrap.append(createConversationMenuButton(conversation, deps), createConversationMenu(conversation, deps));

@@ -1668,11 +1668,16 @@ html[data-theme="light"] .toast--success {
   display: grid;
   place-items: center;
   color: var(--accent-strong);
-  font-size: 1rem;
   line-height: 1;
   opacity: 1;
   transition: opacity 120ms ease;
   pointer-events: none;
+}
+
+.conversation-pin-icon svg {
+  width: 17px;
+  height: 17px;
+  display: block;
 }
 
 .conversation-meta,
@@ -1931,7 +1936,6 @@ html[data-theme="light"] .toast--success {
     display: grid;
     place-items: center;
     color: var(--accent-strong);
-    font-size: 1rem;
     line-height: 1;
     opacity: 1;
     transition: opacity 120ms ease;
