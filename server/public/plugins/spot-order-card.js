@@ -304,6 +304,36 @@ function renderSpotOrderCard({ parent, codeText, context, fallback }) {
   });
   hydrateConnectedAccount();
 
+  async function prepareSignature() {
+    if (!connectedAccount) {
+      const accounts = await requestAccounts(chainId);
+      connectedAccount = accounts?.[0] || '';
+    }
+    if (!connectedAccount) {
+      throw new Error('서명할 계정을 찾지 못했습니다.');
+    }
+    if (!swapperMatchesAccount(swapper, connectedAccount)) {
+      throw new Error(`서명 지갑과 주문 swapper가 일치하지 않습니다. 연결=${connectedAccount}, swapper=${swapper}`);
+    }
+    const currentFreshnessError = validateTypedDataFreshness(typedData);
+    if (currentFreshnessError) {
+      throw new Error(`서명 차단: ${currentFreshnessError} 새 주문 카드를 다시 생성하세요.`);
+    }
+    if (!chainId || !inputToken || !inputMaxAmount || !verifyingContract) {
+      throw new Error('approve/서명에 필요한 typedData 필드가 부족합니다.');
+    }
+    setStatus(status, '체인을 확인하는 중입니다…');
+    await switchChain(chainId);
+    await ensureExactApproval({
+      account: connectedAccount,
+      token: inputToken,
+      spender: verifyingContract,
+      amount: inputMaxAmount,
+      onStatus: (message, kind) => setStatus(status, message, kind),
+    });
+    return signTypedData(connectedAccount, typedData);
+  }
+
   actions.append(
     connectButton,
     createButton('주소 복사', async () => {
@@ -316,33 +346,7 @@ function renderSpotOrderCard({ parent, codeText, context, fallback }) {
     }, { secondary: true }),
     createButton('서명 후 바로 제출', async () => {
       try {
-        if (!connectedAccount) {
-          const accounts = await requestAccounts(chainId);
-          connectedAccount = accounts?.[0] || '';
-        }
-        if (!connectedAccount) {
-          throw new Error('서명할 계정을 찾지 못했습니다.');
-        }
-        if (!swapperMatchesAccount(swapper, connectedAccount)) {
-          throw new Error(`서명 지갑과 주문 swapper가 일치하지 않습니다. 연결=${connectedAccount}, swapper=${swapper}`);
-        }
-        const currentFreshnessError = validateTypedDataFreshness(typedData);
-        if (currentFreshnessError) {
-          throw new Error(`서명 차단: ${currentFreshnessError} 새 주문 카드를 다시 생성하세요.`);
-        }
-        if (!chainId || !inputToken || !inputMaxAmount || !verifyingContract) {
-          throw new Error('approve/서명에 필요한 typedData 필드가 부족합니다.');
-        }
-        setStatus(status, '체인을 확인하는 중입니다…');
-        await switchChain(chainId);
-        await ensureExactApproval({
-          account: connectedAccount,
-          token: inputToken,
-          spender: verifyingContract,
-          amount: inputMaxAmount,
-          onStatus: (message, kind) => setStatus(status, message, kind),
-        });
-        const signature = await signTypedData(connectedAccount, typedData);
+        const signature = await prepareSignature();
         setStatus(status, '서명 완료. 주문을 제출하는 중입니다…');
         const result = await submitSignedOrder(context, typedData, signature, connectedAccount);
         setStatus(status, result?.relay_order_hash ? `제출 완료: ${result.relay_order_hash}` : '제출 완료. 대화 기록을 확인하세요.', 'ok');

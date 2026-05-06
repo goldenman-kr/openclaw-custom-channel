@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",
-    "build": "tsc -p tsconfig.json",
+    "build": "npm run build:ts && npm run build:pwa:spot",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "tsx --test \"src/**/*.test.ts\"",
     "smoke:token-sse": "node scripts/smoke-token-sse.mjs",
@@ -18,7 +18,8 @@
     "user:disable": "tsx scripts/user-admin.ts disable",
     "user:enable": "tsx scripts/user-admin.ts enable",
     "restart-followup:schedule": "tsx scripts/schedule-restart-followup.ts",
-    "build:pwa:spot": "vite build --config vite.spot.config.mjs"
+    "build:pwa:spot": "vite build --config vite.spot.config.mjs",
+    "build:ts": "tsc -p tsconfig.json"
   },
   "keywords": [],
   "author": "",
@@ -42,5 +43,8 @@
     "undici": "^6.24.1",
     "viem": "^2.48.8",
     "wagmi": "^3.6.9"
+  },
+  "overrides": {
+    "axios": "^1.16.0"
   }
 }
