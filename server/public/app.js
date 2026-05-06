@@ -73,7 +73,7 @@ import './plugins/spot-order-card.js';
 import './plugins/spot-wallet-intent.js';
 
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
-const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-05-142';
+const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-06-spot-reown-004';
 const CLIENT_API_VERSION = 1;
 const elements = {
   loginScreen: document.querySelector('#loginScreen'),
@@ -2447,6 +2447,6 @@ renderModelPicker();
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-05-142').catch(() => {});
+    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-06-spot-reown-004').catch(() => {});
   });
 }

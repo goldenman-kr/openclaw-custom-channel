@@ -1,4 +1,4 @@
-const CACHE_NAME = 'openclaw-web-channel-v298';
+const CACHE_NAME = 'openclaw-web-channel-v302';
 const ASSETS = [
   '/',
   '/index.html',
@@ -44,6 +44,7 @@ const ASSETS = [
   '/modules/version-check.js',
   '/modules/sidebar-width.js',
   '/plugins/plugin-registry.js',
+  '/plugins/spot-wallet-provider.js',
   '/plugins/spot-order-card.js',
   '/plugins/spot-wallet-intent.js',
   '/manifest.webmanifest',
@@ -88,7 +89,7 @@ self.addEventListener('fetch', (event) => {
   }
 
   const isNavigation = event.request.mode === 'navigate';
-  const isMutableClientAsset = ['/', '/index.html', '/app.js', '/styles.css', '/sw.js'].includes(url.pathname)
+  const isMutableClientAsset = ['/', '/index.html', '/app.js', '/styles.css', '/sw.js', '/assets/spot-reown-wallet.js'].includes(url.pathname)
     || url.pathname.startsWith('/plugins/')
     || url.pathname.startsWith('/modules/');
 
