@@ -47,7 +47,6 @@ const ASSETS = [
   '/plugins/spot-wallet-provider.js',
   '/plugins/spot-order-card.js',
   '/plugins/spot-wallet-intent.js',
-  '/assets/spot-reown-wallet.js',
   '/manifest.webmanifest',
   '/assets/openclaw-app-icon-180.png',
   '/assets/openclaw-app-icon-192.png',

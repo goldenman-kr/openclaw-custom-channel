@@ -3,114 +3,7 @@ import { before, beforeEach, test } from 'node:test';
 import { pathToFileURL } from 'node:url';
 import { resolve } from 'node:path';
 
-type Listener = (event?: unknown) => unknown;
-
-class TestElement {
-  tagName: string;
-  type = '';
-  className = '';
-  textContent = '';
-  disabled = false;
-  hidden = false;
-  dataset: Record<string, string> = {};
-  attributes: Record<string, string> = {};
-  children: TestElement[] = [];
-  listeners = new Map<string, Listener[]>();
-
-  constructor(tagName: string) {
-    this.tagName = tagName.toUpperCase();
-  }
-
-  append(...nodes: Array<TestElement | string | undefined | null>) {
-    for (const node of nodes) {
-      if (node === undefined || node === null) {
-        continue;
-      }
-      if (typeof node === 'string') {
-        const textNode = new TestElement('#text');
-        textNode.textContent = node;
-        this.children.push(textNode);
-        continue;
-      }
-      this.children.push(node);
-    }
-  }
-
-  setAttribute(name: string, value: string) {
-    this.attributes[name] = value;
-  }
-
-  getAttribute(name: string) {
-    return this.attributes[name];
-  }
-
-  addEventListener(event: string, listener: Listener) {
-    const listeners = this.listeners.get(event) || [];
-    listeners.push(listener);
-    this.listeners.set(event, listeners);
-  }
-
-  async click() {
-    for (const listener of this.listeners.get('click') || []) {
-      await listener({ currentTarget: this });
-    }
-  }
-
-  all(predicate: (element: TestElement) => boolean): TestElement[] {
-    const self: TestElement = this;
-    const matches: TestElement[] = predicate(self) ? [self] : [];
-    for (const child of this.children) {
-      matches.push(...child.all(predicate));
-    }
-    return matches;
-  }
-
-  text(): string {
-    return `${this.textContent}${this.children.map((child) => child.text()).join('')}`;
-  }
-}
-
-function setBrowserGlobals({ ethereum, reown, userAgent = 'Mozilla/5.0', coarsePointer = false }: {
-  ethereum?: unknown;
-  reown?: unknown;
-  userAgent?: string;
-  coarsePointer?: boolean;
-} = {}) {
-  const windowListeners = new Map<string, Set<Listener>>();
-  const documentMock = {
-    createElement: (tagName: string) => new TestElement(tagName),
-    querySelector: () => null,
-    body: new TestElement('body'),
-    readyState: 'complete',
-    addEventListener: () => {},
-  };
-  const windowMock: Record<string, unknown> = {
-    ethereum,
-    SpotReownWallet: reown,
-    location: { pathname: '/chat/test-conversation' },
-    setTimeout: globalThis.setTimeout.bind(globalThis),
-    clearTimeout: globalThis.clearTimeout.bind(globalThis),
-    matchMedia: (query: string) => ({ matches: query === '(pointer: coarse)' ? coarsePointer : false }),
-    addEventListener: (event: string, handler: Listener) => {
-      const handlers = windowListeners.get(event) || new Set<Listener>();
-      handlers.add(handler);
-      windowListeners.set(event, handlers);
-    },
-    removeEventListener: (event: string, handler: Listener) => {
-      windowListeners.get(event)?.delete(handler);
-    },
-    dispatchEvent: (event: Event) => {
-      for (const handler of windowListeners.get(event.type) || []) {
-        handler(event);
-      }
-      return true;
-    },
-  };
-  Object.defineProperty(globalThis, 'document', { value: documentMock, configurable: true });
-  Object.defineProperty(globalThis, 'window', { value: windowMock, configurable: true });
-  Object.defineProperty(globalThis, 'navigator', { value: { userAgent }, configurable: true });
-  return { windowMock, documentMock };
-}
+import { TestElement, setBrowserGlobals } from './test-dom.js';
 
 function futureSpotOrderPayload() {
   const now = Math.floor(Date.now() / 1000);
@@ -215,4 +108,121 @@ test('connect button can connect through Reown fallback provider', async () => {
   assert.deepEqual(connectCalls, [{ chainId: 8453 }]);
   assert.equal(connectButton.textContent, '연결 끊기');
   assert.match(parent.text(), /연결됨: 0x2222222222222222222222222222222222222222/);
+});
+
+function uint256Result(value: bigint) {
+  return `0x${value.toString(16).padStart(64, '0')}`;
+}
+
+test('sign button submits signed order through Reown fallback when allowance is sufficient', async () => {
+  const providerCalls: Array<{ method: string; params?: unknown[] }> = [];
+  const submitCalls: Array<{ path: string; options: Record<string, unknown> }> = [];
+  setBrowserGlobals({
+    reown: {
+      connect: async () => ['0x2222222222222222222222222222222222222222'],
+      provider: {
+        request: async (payload: { method: string; params?: unknown[] }) => {
+          providerCalls.push(payload);
+          if (payload.method === 'eth_accounts') {
+            return [];
+          }
+          if (payload.method === 'eth_chainId') {
+            return '0x2105';
+          }
+          if (payload.method === 'eth_call') {
+            return uint256Result(1_000_000n);
+          }
+          if (payload.method === 'eth_signTypedData_v4') {
+            return '0xsigned';
+          }
+          return null;
+        },
+        on: () => {},
+        removeListener: () => {},
+      },
+    },
+  });
+  const parent = new TestElement('div');
+  const context = {
+    activeConversationId: () => 'conv-1',
+    apiJson: async (path: string, options: Record<string, unknown>) => {
+      submitCalls.push({ path, options });
+      return { relay_order_hash: '0xrelay' };
+    },
+    refreshHistory: async () => {},
+  };
+
+  renderCodeBlockPlugin(parent, futureSpotOrderPayload(), 'spot-order-card', context);
+  const signButton = parent.all((element) => element.tagName === 'BUTTON').find((button) => button.textContent === '서명 후 바로 제출');
+  assert.ok(signButton);
+
+  await signButton.click();
+
+  assert.equal(submitCalls.length, 1);
+  assert.equal(submitCalls[0].path, '/v1/plugins/spot/orders/submit-signed');
+  assert.equal((submitCalls[0].options.body as Record<string, unknown>).conversation_id, 'conv-1');
+  assert.equal((submitCalls[0].options.body as Record<string, unknown>).signature, '0xsigned');
+  assert.equal((submitCalls[0].options.body as Record<string, unknown>).signer, '0x2222222222222222222222222222222222222222');
+  assert.ok(providerCalls.some((call) => call.method === 'eth_call'));
+  assert.ok(providerCalls.some((call) => call.method === 'eth_signTypedData_v4'));
+  assert.equal(providerCalls.some((call) => call.method === 'eth_sendTransaction'), false);
+  assert.match(parent.text(), /제출 완료: 0xrelay/);
+});
+
+test('sign button sends exact approve before signing when allowance is insufficient', async () => {
+  const providerCalls: Array<{ method: string; params?: Array<Record<string, unknown> | string> }> = [];
+  setBrowserGlobals({
+    reown: {
+      connect: async () => ['0x2222222222222222222222222222222222222222'],
+      provider: {
+        request: async (payload: { method: string; params?: Array<Record<string, unknown> | string> }) => {
+          providerCalls.push(payload);
+          if (payload.method === 'eth_accounts') {
+            return [];
+          }
+          if (payload.method === 'eth_chainId') {
+            return '0x2105';
+          }
+          if (payload.method === 'eth_call') {
+            return uint256Result(0n);
+          }
+          if (payload.method === 'eth_sendTransaction') {
+            return '0xapprove';
+          }
+          if (payload.method === 'eth_getTransactionReceipt') {
+            return { status: '0x1', transactionHash: '0xapprove' };
+          }
+          if (payload.method === 'eth_signTypedData_v4') {
+            return '0xsigned';
+          }
+          return null;
+        },
+        on: () => {},
+        removeListener: () => {},
+      },
+    },
+  });
+  const parent = new TestElement('div');
+  const context = {
+    activeConversationId: () => 'conv-1',
+    apiJson: async () => ({ relay_order_hash: '0xrelay' }),
+    refreshHistory: async () => {},
+  };
+
+  renderCodeBlockPlugin(parent, futureSpotOrderPayload(), 'spot-order-card', context);
+  const signButton = parent.all((element) => element.tagName === 'BUTTON').find((button) => button.textContent === '서명 후 바로 제출');
+  assert.ok(signButton);
+
+  await signButton.click();
+
+  const approveCall = providerCalls.find((call) => call.method === 'eth_sendTransaction');
+  assert.ok(approveCall);
+  assert.deepEqual(approveCall.params?.[0], {
+    from: '0x2222222222222222222222222222222222222222',
+    to: '0x1111111111111111111111111111111111111111',
+    data: '0x095ea7b3000000000000000000000000000000000022d473030f116ddee9f6b43ac78ba300000000000000000000000000000000000000000000000000000000000f4240',
+  });
+  assert.ok(providerCalls.some((call) => call.method === 'eth_getTransactionReceipt'));
+  assert.ok(providerCalls.some((call) => call.method === 'eth_signTypedData_v4'));
+  assert.match(parent.text(), /제출 완료: 0xrelay/);
 });
