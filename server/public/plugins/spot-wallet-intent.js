@@ -1,4 +1,5 @@
 import { registerCodeBlockPlugin } from './plugin-registry.js';
+import { getSpotWalletMode, requestSpotWallet, requestSpotWalletAccounts, switchSpotWalletChain } from './spot-wallet-provider.js';
 
 function parsePayload(codeText) {
   try {
@@ -16,10 +17,6 @@ function normalizeAddress(value) {
 function compactAddress(value) {
   const address = String(value || '');
   return address.length > 14 ? `${address.slice(0, 8)}…${address.slice(-6)}` : address || '-';
-}
-
-function isMobileWalletUnsupported() {
-  return window.matchMedia?.('(pointer: coarse)')?.matches || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
 }
 
 function createButton(label, onClick, options = {}) {
@@ -49,26 +46,12 @@ function setStatus(statusNode, message, kind = '') {
   statusNode.dataset.kind = kind;
 }
 
-async function requestAccounts() {
-  if (!window.ethereum?.request) {
-    throw new Error('브라우저 지갑을 찾지 못했습니다. MetaMask가 필요합니다.');
-  }
-  return window.ethereum.request({ method: 'eth_requestAccounts' });
+async function requestAccounts(chainId) {
+  return requestSpotWalletAccounts({ chainId });
 }
 
 async function switchChain(chainId) {
-  if (!window.ethereum?.request) {
-    throw new Error('브라우저 지갑을 찾지 못했습니다.');
-  }
-  const targetChainId = `0x${BigInt(chainId).toString(16)}`;
-  const currentChainId = await window.ethereum.request({ method: 'eth_chainId' });
-  if (String(currentChainId).toLowerCase() === targetChainId.toLowerCase()) {
-    return;
-  }
-  await window.ethereum.request({
-    method: 'wallet_switchEthereumChain',
-    params: [{ chainId: targetChainId }],
-  });
+  return switchSpotWalletChain(chainId);
 }
 
 function addressParam(address) {
@@ -84,10 +67,7 @@ function encodeBalanceOfCall(owner) {
 }
 
 async function getErc20Balance({ token, owner }) {
-  const result = await window.ethereum.request({
-    method: 'eth_call',
-    params: [{ to: token, data: encodeBalanceOfCall(owner) }, 'latest'],
-  });
+  const result = await requestSpotWallet('eth_call', [{ to: token, data: encodeBalanceOfCall(owner) }, 'latest']);
   return BigInt(result || '0x0').toString();
 }
 
@@ -102,7 +82,6 @@ function renderSpotWalletIntent({ parent, codeText, context, fallback }) {
   const input = data.input || {};
   const output = data.output || {};
   const inputToken = input.token;
-  const mobileUnsupported = isMobileWalletUnsupported();
 
   const card = document.createElement('section');
   card.className = 'spot-plugin-card';
@@ -126,9 +105,9 @@ function renderSpotWalletIntent({ parent, codeText, context, fallback }) {
 
   const status = document.createElement('p');
   status.className = 'spot-plugin-status';
-  setStatus(status, mobileUnsupported
-    ? '현재 지갑 기반 주문 준비는 PC 브라우저에서만 사용할 수 있습니다.'
-    : '지갑을 연결하면 swapper와 잔액을 확인해 주문 생성을 이어갑니다.');
+  setStatus(status, getSpotWalletMode() === 'injected'
+    ? '지갑을 연결하면 swapper와 잔액을 확인해 주문 생성을 이어갑니다.'
+    : '지갑을 연결하면 Reown AppKit으로 모바일 지갑을 연결하고 주문 생성을 이어갑니다.');
 
   let connectedAccount = '';
   let connectButton;
@@ -147,19 +126,19 @@ function renderSpotWalletIntent({ parent, codeText, context, fallback }) {
         setStatus(status, '이 카드의 지갑 연결 상태를 해제했습니다.', 'ok');
         return;
       }
-      const accounts = await requestAccounts();
+      const accounts = await requestAccounts(chainId);
       connectedAccount = accounts?.[0] || '';
       updateButton();
       setStatus(status, connectedAccount ? `연결됨: ${connectedAccount}` : '연결된 계정이 없습니다.', connectedAccount ? 'ok' : 'warn');
     } catch (connectError) {
       setStatus(status, connectError instanceof Error ? connectError.message : String(connectError), 'error');
     }
-  }, { disabled: mobileUnsupported });
+  });
 
   const continueButton = createButton('잔액 확인 후 주문 생성', async () => {
     try {
       if (!connectedAccount) {
-        const accounts = await requestAccounts();
+        const accounts = await requestAccounts(chainId);
         connectedAccount = accounts?.[0] || '';
         updateButton();
       }
@@ -198,7 +177,7 @@ function renderSpotWalletIntent({ parent, codeText, context, fallback }) {
     } catch (continueError) {
       setStatus(status, continueError instanceof Error ? continueError.message : String(continueError), 'error');
     }
-  }, { disabled: mobileUnsupported });
+  });
 
   const actions = document.createElement('div');
   actions.className = 'spot-plugin-actions';

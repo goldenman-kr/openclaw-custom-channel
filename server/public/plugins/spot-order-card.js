@@ -1,4 +1,5 @@
 import { registerCodeBlockPlugin } from './plugin-registry.js';
+import { getSpotWalletAccounts, getSpotWalletMode, requestSpotWallet, requestSpotWalletAccounts, revokeSpotWalletPermissionsIfSupported, subscribeSpotWalletAccounts, switchSpotWalletChain } from './spot-wallet-provider.js';
 
 const MIN_DEADLINE_REMAINING_SECONDS = 60;
 const MAX_NONCE_OR_START_AGE_SECONDS = 15 * 60;
@@ -102,41 +103,16 @@ function setStatus(statusNode, message, kind = '') {
   statusNode.dataset.kind = kind;
 }
 
-async function requestAccounts() {
-  if (!window.ethereum?.request) {
-    throw new Error('브라우저 지갑을 찾지 못했습니다. MetaMask가 필요합니다.');
-  }
-  return window.ethereum.request({ method: 'eth_requestAccounts' });
+async function requestAccounts(chainId) {
+  return requestSpotWalletAccounts({ chainId });
 }
 
 async function revokeWalletPermissionsIfSupported() {
-  if (!window.ethereum?.request) {
-    return false;
-  }
-  try {
-    await window.ethereum.request({
-      method: 'wallet_revokePermissions',
-      params: [{ eth_accounts: {} }],
-    });
-    return true;
-  } catch {
-    return false;
-  }
+  return revokeSpotWalletPermissionsIfSupported();
 }
 
 async function switchChain(chainId) {
-  if (!window.ethereum?.request) {
-    throw new Error('브라우저 지갑을 찾지 못했습니다.');
-  }
-  const targetChainId = `0x${BigInt(chainId).toString(16)}`;
-  const currentChainId = await window.ethereum.request({ method: 'eth_chainId' });
-  if (String(currentChainId).toLowerCase() === targetChainId.toLowerCase()) {
-    return;
-  }
-  await window.ethereum.request({
-    method: 'wallet_switchEthereumChain',
-    params: [{ chainId: targetChainId }],
-  });
+  return switchSpotWalletChain(chainId);
 }
 
 function uint256Hex(value) {
@@ -161,20 +137,14 @@ function encodeApproveCall(spender, amount) {
 
 async function getAllowance({ token, owner, spender }) {
   const data = encodeAllowanceCall(owner, spender);
-  const result = await window.ethereum.request({
-    method: 'eth_call',
-    params: [{ to: token, data }, 'latest'],
-  });
+  const result = await requestSpotWallet('eth_call', [{ to: token, data }, 'latest']);
   return BigInt(result || '0x0');
 }
 
 async function waitForTransactionReceipt(txHash, timeoutMs = 60_000) {
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
-    const receipt = await window.ethereum.request({
-      method: 'eth_getTransactionReceipt',
-      params: [txHash],
-    });
+    const receipt = await requestSpotWallet('eth_getTransactionReceipt', [txHash]);
     if (receipt) {
       if (receipt.status && String(receipt.status).toLowerCase() !== '0x1') {
         throw new Error(`Approve 트랜잭션이 실패했습니다: ${txHash}`);
@@ -195,14 +165,11 @@ async function ensureExactApproval({ account, token, spender, amount, onStatus }
   }
 
   onStatus?.('토큰 접근 권한이 부족합니다. exact approve 트랜잭션을 요청합니다…');
-  const txHash = await window.ethereum.request({
-    method: 'eth_sendTransaction',
-    params: [{
-      from: account,
-      to: token,
-      data: encodeApproveCall(spender, required),
-    }],
-  });
+  const txHash = await requestSpotWallet('eth_sendTransaction', [{
+    from: account,
+    to: token,
+    data: encodeApproveCall(spender, required),
+  }]);
   onStatus?.(`Approve 전송됨. 확인 중입니다: ${txHash}`);
   await waitForTransactionReceipt(txHash);
   onStatus?.('Approve 확인 완료. 이제 서명합니다.', 'ok');
@@ -226,23 +193,13 @@ async function submitSignedOrder(context, typedData, signature, signer) {
 }
 
 async function signTypedData(account, typedData) {
-  if (!window.ethereum?.request) {
-    throw new Error('브라우저 지갑을 찾지 못했습니다.');
-  }
   typedData.types.EIP712Domain = [
     { name: 'name', type: 'string' },
     { name: 'version', type: 'string' },
     { name: 'chainId', type: 'uint256' },
     { name: 'verifyingContract', type: 'address' },
   ];
-  return window.ethereum.request({
-    method: 'eth_signTypedData_v4',
-    params: [account, JSON.stringify(typedData)],
-  });
-}
-
-function isMobileWalletUnsupported() {
-  return window.matchMedia?.('(pointer: coarse)')?.matches || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+  return requestSpotWallet('eth_signTypedData_v4', [account, JSON.stringify(typedData)]);
 }
 
 function renderSpotOrderCard({ parent, codeText, context, fallback }) {
@@ -262,7 +219,6 @@ function renderSpotOrderCard({ parent, codeText, context, fallback }) {
 
   const card = document.createElement('section');
   card.className = 'spot-plugin-card';
-  const mobileUnsupported = isMobileWalletUnsupported();
 
   const header = document.createElement('div');
   header.className = 'spot-plugin-header';
@@ -283,11 +239,11 @@ function renderSpotOrderCard({ parent, codeText, context, fallback }) {
 
   const status = document.createElement('p');
   status.className = 'spot-plugin-status';
-  setStatus(status, mobileUnsupported
-    ? '현재 Spot 지갑 서명 플러그인은 PC 브라우저에서만 사용할 수 있습니다. 모바일 지갑 연동은 추후 검토 예정입니다.'
-    : freshnessError
-      ? `서명 차단: ${freshnessError} 새 주문 카드를 다시 생성하세요.`
-      : '서명 전 요약을 확인한 뒤 서명하면 주문이 바로 제출됩니다.', freshnessError ? 'error' : '');
+  setStatus(status, freshnessError
+    ? `서명 차단: ${freshnessError} 새 주문 카드를 다시 생성하세요.`
+    : getSpotWalletMode() === 'injected'
+      ? '서명 전 요약을 확인한 뒤 서명하면 주문이 바로 제출됩니다.'
+      : '서명 전 요약을 확인한 뒤 Reown AppKit으로 모바일 지갑을 연결하고 서명하면 주문이 바로 제출됩니다.', freshnessError ? 'error' : '');
 
   const actions = document.createElement('div');
   actions.className = 'spot-plugin-actions';
@@ -305,11 +261,8 @@ function renderSpotOrderCard({ parent, codeText, context, fallback }) {
     }
   }
   async function hydrateConnectedAccount() {
-    if (mobileUnsupported || !window.ethereum?.request) {
-      return;
-    }
     try {
-      const accounts = await window.ethereum.request({ method: 'eth_accounts' });
+      const accounts = await getSpotWalletAccounts();
       const account = accounts?.[0] || '';
       updateConnectedAccount(account, { silent: true });
     } catch {
@@ -324,7 +277,7 @@ function renderSpotOrderCard({ parent, codeText, context, fallback }) {
         setStatus(status, revoked ? '지갑 연결을 해제했습니다.' : '이 카드의 지갑 연결 상태를 해제했습니다.', 'ok');
         return;
       }
-      const accounts = await requestAccounts();
+      const accounts = await requestAccounts(chainId);
       const account = accounts?.[0] || '';
       updateConnectedAccount(account);
       if (normalizeAddress(account) && !swapperMatchesAccount(swapper, account)) {
@@ -337,8 +290,8 @@ function renderSpotOrderCard({ parent, codeText, context, fallback }) {
     } catch (connectError) {
       setStatus(status, connectError instanceof Error ? connectError.message : String(connectError), 'error');
     }
-  }, { disabled: mobileUnsupported });
-  window.ethereum?.on?.('accountsChanged', (accounts) => {
+  });
+  subscribeSpotWalletAccounts((accounts) => {
     const account = accounts?.[0] || '';
     updateConnectedAccount(account);
     if (normalizeAddress(account) && !swapperMatchesAccount(swapper, account)) {
@@ -360,11 +313,11 @@ function renderSpotOrderCard({ parent, codeText, context, fallback }) {
       }
       await context.copyTextToClipboard?.(connectedAccount);
       setStatus(status, '연결된 주소를 복사했습니다.', 'ok');
-    }, { secondary: true, disabled: mobileUnsupported }),
+    }, { secondary: true }),
     createButton('서명 후 바로 제출', async () => {
       try {
         if (!connectedAccount) {
-          const accounts = await requestAccounts();
+          const accounts = await requestAccounts(chainId);
           connectedAccount = accounts?.[0] || '';
         }
         if (!connectedAccount) {
@@ -397,7 +350,7 @@ function renderSpotOrderCard({ parent, codeText, context, fallback }) {
       } catch (signError) {
         setStatus(status, signError instanceof Error ? signError.message : String(signError), 'error');
       }
-    }, { disabled: mobileUnsupported || Boolean(freshnessError) }),
+    }, { disabled: Boolean(freshnessError) }),
     createButton('TypedData 복사', async () => {
       try {
         await context.copyTextToClipboard?.(JSON.stringify(typedData, null, 2));

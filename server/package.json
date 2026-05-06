@@ -17,7 +17,8 @@
     "user:reset-password": "tsx scripts/user-admin.ts reset-password",
     "user:disable": "tsx scripts/user-admin.ts disable",
     "user:enable": "tsx scripts/user-admin.ts enable",
-    "restart-followup:schedule": "tsx scripts/schedule-restart-followup.ts"
+    "restart-followup:schedule": "tsx scripts/schedule-restart-followup.ts",
+    "build:pwa:spot": "vite build --config vite.spot.config.mjs"
   },
   "keywords": [],
   "author": "",
@@ -26,11 +27,20 @@
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^25.6.0",
+    "@vitejs/plugin-react": "^6.0.1",
     "tsx": "^4.21.0",
-    "typescript": "^6.0.3"
+    "typescript": "^6.0.3",
+    "vite": "^8.0.10"
   },
   "dependencies": {
+    "@reown/appkit": "^1.8.19",
+    "@reown/appkit-adapter-wagmi": "^1.8.19",
+    "@tanstack/react-query": "^5.100.9",
     "better-sqlite3": "^12.9.0",
-    "undici": "^6.24.1"
+    "react": "^19.2.5",
+    "react-dom": "^19.2.5",
+    "undici": "^6.24.1",
+    "viem": "^2.48.8",
+    "wagmi": "^3.6.9"
   }
 }

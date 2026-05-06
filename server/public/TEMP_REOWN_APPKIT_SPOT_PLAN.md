@@ -100,27 +100,31 @@ npm install @reown/appkit @reown/appkit-adapter-wagmi wagmi viem
 - `spot-wallet-intent`와 `spot-order-card` 모두 공통 provider resolver만 바꾸면 된다.
 - AppKit은 연결 UI와 WalletConnect 세션 관리를 맡고, Spot 로직은 현재처럼 직접 검증/approve/sign/submit을 유지할 수 있다.
 
-## 필요한 사전 결정
+## 확정된 사전 결정값
 
 1. Reown Project ID
-   - Reown Dashboard에서 projectId 필요.
-   - 서버/프론트 어디에 저장할지 결정 필요.
-   - 공개 프론트 값으로 취급 가능하지만, 도메인 제한/프로젝트 설정은 해야 한다.
+   - `120c9576f09c8e51fd55eec984c877e8`
+   - 공개 프론트 값으로 취급 가능하지만, Reown Dashboard에서 운영 도메인 제한/프로젝트 설정은 맞춰둔다.
 
 2. App metadata
-   - `name`, `description`, `url`, `icons` 필요.
-   - 문서상 metadata `url`은 실제 도메인/subdomain과 맞아야 한다.
+   - `name`: `RODY`
+   - `url`: `https://ai.kryp.xyz/`
+   - `icons`: 현재 Android용 웹앱에서 사용하는 앱 아이콘을 재사용한다.
+   - `description`: 미정. 구현 시 AppKit metadata에 필요하면 `RODY AI Assistant` 같은 짧은 설명을 사용한다.
 
-3. 지원 네트워크 목록
-   - Spot 주문에서 실제 사용하는 EVM chain만 `networks`에 넣는 것이 안전하다.
-   - AppKit 내장 네트워크에 없는 체인이 있으면 custom network 정의 필요.
+3. 지원 EVM 네트워크 목록
+   - Ethereum
+   - Arbitrum
+   - Base
+   - Polygon
+   - BNB Chain
+   - 구현 시 Reown/Wagmi 체인 정의는 위 5개만 활성화한다.
 
 4. 번들링 방식
-   - 현재 `server/public`은 정적 ESM 로딩 구조다.
-   - 선택지:
-     - Vite/Rollup/esbuild로 `plugins/spot-appkit-wallet.js` 번들 생성
-     - CDN ESM import 사용(빠른 검토에는 가능하지만 운영 PWA에는 비추천)
-     - 서버 빌드 단계에 프론트 번들 스크립트 추가
+   - 기존 PWA 프론트 빌드에 React 컴포넌트로 통합한다.
+   - Spot plugin 안에서 PC와 모바일/provider 부재 케이스를 분기한다.
+   - PC: 기존 injected provider 흐름을 우선 유지한다.
+   - 모바일 또는 injected provider 없음: Reown AppKit을 통해 지갑 연결/체인 전환/서명을 처리한다.
 
 ## 제안 아키텍처
 
