@@ -174,7 +174,12 @@ async function pollRelayResult(input: { deps: SpotPluginRouteDeps; spotOrderId: 
       const body = await queryRelayOrder(relayOrderHash);
       lastBody = body;
       lastStatus = extractRelayStatus(body);
+      const previousRecord = deps.spotOrderStore.get(spotOrderId);
+      const previousResult = parseJsonOrNull(previousRecord?.relayResultJson);
       deps.spotOrderStore.updateRelayResult(spotOrderId, { relayStatus: lastStatus, relayResult: body, error: null });
+      if (!RELAY_TERMINAL_STATUSES.has(lastStatus) && shouldPublishPartialChunkUpdate(previousResult, body)) {
+        publishRelayResultMessage(deps, conversationId, spotOrderId, relayOrderHash, lastStatus, body, "분할 주문 일부 체결이 확인되었습니다.");
+      }
       if (RELAY_TERMINAL_STATUSES.has(lastStatus)) {
         publishRelayResultMessage(deps, conversationId, spotOrderId, relayOrderHash, lastStatus, body);
         return;
@@ -216,6 +221,43 @@ function computePollingIntervalMs(elapsedMs: number): number {
     return 15_000;
   }
   return 60_000;
+}
+
+export function shouldPublishPartialChunkUpdate(previousBody: unknown, currentBody: unknown): boolean {
+  const previousSettledCount = countSettledChunks(previousBody);
+  const currentSettledCount = countSettledChunks(currentBody);
+  return currentSettledCount > 0 && currentSettledCount > previousSettledCount;
+}
+
+function countSettledChunks(body: unknown): number {
+  const chunks = readPathUnknown(readFirstOrder(body), ["metadata", "chunks"]);
+  if (!Array.isArray(chunks)) {
+    return 0;
+  }
+  return chunks.filter((chunk) => isSettledChunk(chunk)).length;
+}
+
+function isSettledChunk(chunk: unknown): boolean {
+  if (!chunk || typeof chunk !== "object") {
+    return false;
+  }
+  const record = chunk as Record<string, unknown>;
+  if (record.settled === true) {
+    return true;
+  }
+  const status = String(record.status ?? "").trim().toLowerCase();
+  return ["success", "succeeded", "filled", "completed", "partially_completed"].includes(status);
+}
+
+function parseJsonOrNull(value: string | undefined): unknown {
+  if (!value) {
+    return null;
+  }
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
 }
 
 async function queryRelayOrder(relayOrderHash: string): Promise<unknown> {
@@ -330,6 +372,17 @@ function readPath(value: unknown, path: string[]): string | number | undefined {
     current = (current as Record<string, unknown>)[key];
   }
   return typeof current === "string" || typeof current === "number" ? current : undefined;
+}
+
+function readPathUnknown(value: unknown, path: string[]): unknown {
+  let current: unknown = value;
+  for (const key of path) {
+    if (!current || typeof current !== "object" || !(key in current)) {
+      return undefined;
+    }
+    current = (current as Record<string, unknown>)[key];
+  }
+  return current;
 }
 
 function normalizeAddress(value: unknown): string {
