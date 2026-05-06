@@ -6,6 +6,8 @@ import type { SpotOrderStore } from "../session/SpotOrderStore.js";
 const RELAY_URL = "https://agents-sink.orbs.network/orders/new";
 const RELAY_QUERY_URL = "https://agents-sink.orbs.network/orders";
 const RELAY_TERMINAL_STATUSES = new Set(["filled", "completed", "partially_completed", "cancelled", "expired", "failed", "rejected"]);
+const MIN_DEADLINE_REMAINING_SECONDS = 60;
+const MAX_NONCE_OR_START_AGE_SECONDS = 15 * 60;
 const activeRelayPolls = new Set<string>();
 
 export interface SpotPluginRouteDeps {
@@ -65,6 +67,20 @@ export async function handleSpotPluginRoute(
     const saved = deps.conversationStore.addMessage({ conversationId, role: "system", text: message, createdAt: new Date().toISOString() });
     deps.publishConversationEvent?.({ id: saved.id, type: "message", messageId: saved.id, conversationId, createdAt: saved.createdAt });
     deps.sendJson(response, 400, { error: { code: "VALIDATION_SPOT_SIGNER_MISMATCH", message } });
+    return true;
+  }
+
+  const freshnessError = validateSpotTypedDataFreshness(typedData);
+  if (freshnessError) {
+    const text = [
+      "Spot 주문 제출 차단",
+      "",
+      `- 사유: ${freshnessError}`,
+      "- 만료되었거나 오래된 typedData는 서명/제출할 수 없습니다. 새 주문 카드를 다시 생성해야 합니다.",
+    ].join("\n");
+    const saved = deps.conversationStore.addMessage({ conversationId, role: "system", text, createdAt: new Date().toISOString() });
+    deps.publishConversationEvent?.({ id: saved.id, type: "message", messageId: saved.id, conversationId, createdAt: saved.createdAt });
+    deps.sendJson(response, 400, { error: { code: "VALIDATION_SPOT_ORDER_STALE", message: freshnessError } });
     return true;
   }
 
@@ -319,6 +335,42 @@ function readPath(value: unknown, path: string[]): string | number | undefined {
 function normalizeAddress(value: unknown): string {
   const address = String(value || "").trim().toLowerCase();
   return /^0x[a-f0-9]{40}$/.test(address) ? address : "";
+}
+
+function validateSpotTypedDataFreshness(typedData: unknown, nowSeconds = Math.floor(Date.now() / 1000)): string | null {
+  const deadline = readIntegerPath(typedData, ["message", "witness", "deadline"]) ?? readIntegerPath(typedData, ["message", "deadline"]);
+  if (!deadline) {
+    return "typedData.deadline을 확인할 수 없습니다.";
+  }
+  const remaining = deadline - nowSeconds;
+  if (remaining < MIN_DEADLINE_REMAINING_SECONDS) {
+    return `typedData deadline이 이미 만료되었거나 너무 임박했습니다. deadline=${formatEpoch(deadline)}, 현재=${formatEpoch(nowSeconds)}`;
+  }
+
+  const nonce = readIntegerPath(typedData, ["message", "witness", "nonce"]) ?? readIntegerPath(typedData, ["message", "nonce"]);
+  const start = readIntegerPath(typedData, ["message", "witness", "start"]);
+  const oldestAllowed = nowSeconds - MAX_NONCE_OR_START_AGE_SECONDS;
+  if (nonce && nonce < oldestAllowed) {
+    return `typedData nonce가 너무 오래되었습니다. nonce=${formatEpoch(nonce)}, 현재=${formatEpoch(nowSeconds)}`;
+  }
+  if (start && start < oldestAllowed) {
+    return `typedData start가 너무 오래되었습니다. start=${formatEpoch(start)}, 현재=${formatEpoch(nowSeconds)}`;
+  }
+
+  return null;
+}
+
+function readIntegerPath(value: unknown, path: string[]): number | null {
+  const raw = readPath(value, path);
+  if (raw === undefined || raw === "") {
+    return null;
+  }
+  const parsed = Number(raw);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function formatEpoch(epochSeconds: number): string {
+  return `${epochSeconds} (${new Date(epochSeconds * 1000).toISOString()})`;
 }
 
 function extractRelayOrderHash(value: unknown): string {

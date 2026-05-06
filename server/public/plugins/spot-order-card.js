@@ -1,5 +1,8 @@
 import { registerCodeBlockPlugin } from './plugin-registry.js';
 
+const MIN_DEADLINE_REMAINING_SECONDS = 60;
+const MAX_NONCE_OR_START_AGE_SECONDS = 15 * 60;
+
 function parsePayload(codeText) {
   try {
     return { data: JSON.parse(codeText), error: null };
@@ -31,6 +34,45 @@ function swapperMatchesAccount(swapper, account) {
     return true;
   }
   return normalizeAddress(account) === normalizeAddress(swapper);
+}
+
+function readInteger(value) {
+  if (value === undefined || value === null || value === '') {
+    return null;
+  }
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function formatEpoch(epochSeconds) {
+  try {
+    return `${epochSeconds} (${new Date(epochSeconds * 1000).toISOString()})`;
+  } catch {
+    return String(epochSeconds);
+  }
+}
+
+function validateTypedDataFreshness(typedData, nowSeconds = Math.floor(Date.now() / 1000)) {
+  const message = typedData?.message || {};
+  const witness = message?.witness || {};
+  const deadline = readInteger(witness.deadline ?? message.deadline);
+  if (!deadline) {
+    return 'typedData.deadline을 확인할 수 없어 서명을 차단했습니다.';
+  }
+  if (deadline - nowSeconds < MIN_DEADLINE_REMAINING_SECONDS) {
+    return `typedData deadline이 이미 만료되었거나 너무 임박했습니다. deadline=${formatEpoch(deadline)}, 현재=${formatEpoch(nowSeconds)}`;
+  }
+
+  const oldestAllowed = nowSeconds - MAX_NONCE_OR_START_AGE_SECONDS;
+  const nonce = readInteger(witness.nonce ?? message.nonce);
+  const start = readInteger(witness.start);
+  if (nonce && nonce < oldestAllowed) {
+    return `typedData nonce가 너무 오래되었습니다. nonce=${formatEpoch(nonce)}, 현재=${formatEpoch(nowSeconds)}`;
+  }
+  if (start && start < oldestAllowed) {
+    return `typedData start가 너무 오래되었습니다. start=${formatEpoch(start)}, 현재=${formatEpoch(nowSeconds)}`;
+  }
+  return '';
 }
 
 function createButton(label, onClick, options = {}) {
@@ -216,6 +258,7 @@ function renderSpotOrderCard({ parent, codeText, context, fallback }) {
   const swapper = typedData?.message?.witness?.swapper || typedData?.message?.swapper;
   const inputToken = typedData?.message?.witness?.input?.token || typedData?.message?.permitted?.token;
   const inputMaxAmount = typedData?.message?.witness?.input?.maxAmount || typedData?.message?.permitted?.amount;
+  const freshnessError = validateTypedDataFreshness(typedData);
 
   const card = document.createElement('section');
   card.className = 'spot-plugin-card';
@@ -242,7 +285,9 @@ function renderSpotOrderCard({ parent, codeText, context, fallback }) {
   status.className = 'spot-plugin-status';
   setStatus(status, mobileUnsupported
     ? '현재 Spot 지갑 서명 플러그인은 PC 브라우저에서만 사용할 수 있습니다. 모바일 지갑 연동은 추후 검토 예정입니다.'
-    : '서명 전 요약을 확인한 뒤 서명하면 주문이 바로 제출됩니다.');
+    : freshnessError
+      ? `서명 차단: ${freshnessError} 새 주문 카드를 다시 생성하세요.`
+      : '서명 전 요약을 확인한 뒤 서명하면 주문이 바로 제출됩니다.', freshnessError ? 'error' : '');
 
   const actions = document.createElement('div');
   actions.className = 'spot-plugin-actions';
@@ -256,7 +301,7 @@ function renderSpotOrderCard({ parent, codeText, context, fallback }) {
       connectButton.setAttribute('aria-pressed', connectedAccount ? 'true' : 'false');
     }
     if (connectedAccount && !options.silent) {
-      setStatus(status, `연결됨: ${connectedAccount}`, 'ok');
+      setStatus(status, freshnessError ? `연결됨: ${connectedAccount}. 단, 서명 차단: ${freshnessError} 새 주문 카드를 다시 생성하세요.` : `연결됨: ${connectedAccount}`, freshnessError ? 'error' : 'ok');
     }
   }
   async function hydrateConnectedAccount() {
@@ -328,6 +373,10 @@ function renderSpotOrderCard({ parent, codeText, context, fallback }) {
         if (!swapperMatchesAccount(swapper, connectedAccount)) {
           throw new Error(`서명 지갑과 주문 swapper가 일치하지 않습니다. 연결=${connectedAccount}, swapper=${swapper}`);
         }
+        const currentFreshnessError = validateTypedDataFreshness(typedData);
+        if (currentFreshnessError) {
+          throw new Error(`서명 차단: ${currentFreshnessError} 새 주문 카드를 다시 생성하세요.`);
+        }
         if (!chainId || !inputToken || !inputMaxAmount || !verifyingContract) {
           throw new Error('approve/서명에 필요한 typedData 필드가 부족합니다.');
         }
@@ -348,7 +397,7 @@ function renderSpotOrderCard({ parent, codeText, context, fallback }) {
       } catch (signError) {
         setStatus(status, signError instanceof Error ? signError.message : String(signError), 'error');
       }
-    }, { disabled: mobileUnsupported }),
+    }, { disabled: mobileUnsupported || Boolean(freshnessError) }),
     createButton('TypedData 복사', async () => {
       try {
         await context.copyTextToClipboard?.(JSON.stringify(typedData, null, 2));
