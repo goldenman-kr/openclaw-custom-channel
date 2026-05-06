@@ -230,7 +230,7 @@ function publishRelayResultMessage(
     `- 내부 기록 ID: ${spotOrderId}`,
     `- Relay orderHash: ${relayOrderHash}`,
     `- Status: ${status}`,
-    ...(typeof summary.displayOnlyStatus === "string" ? [`- Display status: ${summary.displayOnlyStatus}`] : []),
+    ...(typeof summary.displayOnlyStatus === "string" ? [`- Display status: ${formatSpotDisplayStatus(summary.displayOnlyStatus)}`] : []),
     ...(typeof summary.displayOnlyStatusDescription === "string" ? [`- Description: ${summary.displayOnlyStatusDescription}`] : []),
     ...(typeof summary.orderType === "string" ? [`- Order type: ${summary.orderType}`] : []),
     ...(typeof summary.displayOnlyOrderTotalUSD === "string" ? [`- Order total USD: ${summary.displayOnlyOrderTotalUSD}`] : []),
@@ -252,6 +252,45 @@ function extractRelayStatus(body: unknown): string {
   const metadataStatus = readPath(order, ["metadata", "status"]);
   const orderStatus = readPath(order, ["status"]);
   return String(metadataStatus ?? orderStatus ?? "pending");
+}
+
+export function formatSpotDisplayStatus(status: string): string {
+  const trimmed = status.trim();
+  if (!trimmed) {
+    return status;
+  }
+  if (/^(✅|⚠️|⏰|⏳|🟢|🟡|🚫|❔)\s*/u.test(trimmed)) {
+    return trimmed;
+  }
+
+  const normalized = trimmed.toUpperCase().replace(/[\s-]+/g, "_");
+  const emoji = getSpotStatusEmoji(normalized);
+  return `${emoji} ${trimmed}`;
+}
+
+function getSpotStatusEmoji(normalizedStatus: string): string {
+  if (/(PARTIAL|PARTIALLY_FILLED|PARTIALLY_COMPLETED)/.test(normalizedStatus)) {
+    return "🟡";
+  }
+  if (/(SUCCEEDED|SUCCESS|FILLED|EXECUTED|COMPLETED)/.test(normalizedStatus)) {
+    return "✅";
+  }
+  if (/(FAILED|REJECTED|ERROR)/.test(normalizedStatus)) {
+    return "⚠️";
+  }
+  if (/EXPIRED/.test(normalizedStatus)) {
+    return "⏰";
+  }
+  if (/(PENDING|QUEUED|WAITING)/.test(normalizedStatus)) {
+    return "⏳";
+  }
+  if (/(SUBMITTED|RELAYED|OPEN|ACTIVE)/.test(normalizedStatus)) {
+    return "🟢";
+  }
+  if (/(CANCELLED|CANCELED)/.test(normalizedStatus)) {
+    return "🚫";
+  }
+  return "❔";
 }
 
 function readFirstOrder(body: unknown): unknown {
