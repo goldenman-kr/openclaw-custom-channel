@@ -28,6 +28,7 @@
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^25.6.0",
+    "@types/web-push": "^3.6.4",
     "@vitejs/plugin-react": "^6.0.1",
     "tsx": "^4.21.0",
     "typescript": "^6.0.3",
@@ -42,7 +43,8 @@
     "react-dom": "^19.2.5",
     "undici": "^6.24.1",
     "viem": "^2.48.8",
-    "wagmi": "^3.6.9"
+    "wagmi": "^3.6.9",
+    "web-push": "^3.6.7"
   },
   "overrides": {
     "axios": "^1.16.0"
