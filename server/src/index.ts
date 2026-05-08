@@ -678,6 +678,7 @@ const server = createServer(async (request, response) => {
 
   if (await handlePushRoute(request, response, url, {
     pushSubscriptionStore,
+    webPushSender,
     vapidPublicKey: process.env.WEB_PUSH_VAPID_PUBLIC_KEY,
     isAuthorized,
     getAuthContext,

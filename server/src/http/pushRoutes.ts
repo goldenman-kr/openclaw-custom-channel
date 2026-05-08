@@ -1,10 +1,12 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { ErrorResponseDto } from "../contracts/apiContractV1.js";
 import type { AuthContext } from "./authRoutes.js";
+import type { WebPushSender } from "../notifications/WebPushSender.js";
 import type { PushSubscriptionStore } from "../session/PushSubscriptionStore.js";
 
 export interface PushRouteDeps {
   pushSubscriptionStore: PushSubscriptionStore;
+  webPushSender?: WebPushSender;
   vapidPublicKey?: string;
   isAuthorized(request: IncomingMessage): boolean;
   getAuthContext(request: IncomingMessage): AuthContext | null;
@@ -41,6 +43,21 @@ export async function handlePushRoute(
     return true;
   }
 
+  if (request.method === "GET" && url.pathname === "/v1/push/subscriptions") {
+    const subscriptions = deps.pushSubscriptionStore.listActiveByOwner(auth.user.id);
+    deps.sendJson(response, 200, {
+      subscriptions: subscriptions.map((subscription) => ({
+        id: subscription.id,
+        device_id: subscription.deviceId,
+        endpoint_host: safeEndpointHost(subscription.endpoint),
+        user_agent: subscription.userAgent,
+        updated_at: subscription.updatedAt,
+        last_seen_at: subscription.lastSeenAt,
+      })),
+    });
+    return true;
+  }
+
   if (request.method === "POST" && url.pathname === "/v1/push/subscriptions") {
     const body = await deps.readJsonBody(request).catch(() => ({}));
     const parsed = parseSubscriptionBody(body);
@@ -66,6 +83,21 @@ export async function handlePushRoute(
         updated_at: record.updatedAt,
       },
     });
+    return true;
+  }
+
+  if (request.method === "POST" && url.pathname === "/v1/push/test") {
+    if (!deps.webPushSender?.isConfigured()) {
+      deps.sendJson(response, 503, deps.makeErrorResponse("INTERNAL_SERVER_ERROR", "Web Push VAPID key is not configured."));
+      return true;
+    }
+    const result = await deps.webPushSender.sendToOwner(auth.user.id, {
+      title: "OpenClaw 푸시 알림 테스트",
+      body: "푸시 알림 설정이 정상적으로 연결되었습니다.",
+      url: "/",
+      tag: "openclaw-push-test",
+    });
+    deps.sendJson(response, 200, { ok: true, result });
     return true;
   }
 
@@ -104,4 +136,12 @@ function parseSubscriptionBody(body: unknown): { endpoint: string; p256dh: strin
 function singleHeader(headers: IncomingMessage["headers"], name: string): string | undefined {
   const value = headers[name.toLowerCase()];
   return Array.isArray(value) ? value[0] : value;
+}
+
+function safeEndpointHost(endpoint: string): string {
+  try {
+    return new URL(endpoint).host;
+  } catch {
+    return "unknown";
+  }
 }

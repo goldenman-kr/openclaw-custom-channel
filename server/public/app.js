@@ -74,7 +74,7 @@ import './plugins/spot-wallet-intent.js';
 
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
 const PUSH_DEVICE_ID_KEY = 'openclaw-web-channel-push-device-id-v1';
-const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-08-push-002';
+const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-08-push-003';
 const CLIENT_API_VERSION = 1;
 const elements = {
   loginScreen: document.querySelector('#loginScreen'),
@@ -279,7 +279,8 @@ async function enableNotifications() {
       settings.notificationsEnabled = true;
       saveSettings(settings);
       updateNotificationButton();
-      appendMessage('system', '응답 도착 푸시 알림을 켰습니다.', { persist: false });
+      const sent = result.testResult?.result?.sent ?? 0;
+      appendMessage('system', sent > 0 ? '응답 도착 푸시 알림을 켰습니다. 테스트 알림도 전송했습니다.' : '응답 도착 푸시 알림을 켰습니다.', { persist: false });
       return;
     }
     if (result.reason === 'ios-install-required' || result.reason === 'push-unsupported') {
@@ -2484,6 +2485,6 @@ renderModelPicker();
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-08-push-002').catch(() => {});
+    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-08-push-003').catch(() => {});
   });
 }

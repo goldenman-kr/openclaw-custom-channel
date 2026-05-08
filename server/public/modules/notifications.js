@@ -95,7 +95,15 @@ export async function subscribeToPushNotifications({ apiFetch, apiHeaders, devic
     const text = await saveResponse.text().catch(() => '');
     throw new Error(text || '푸시 알림 구독을 저장하지 못했습니다.');
   }
-  return { ok: true, permission };
+  const testResponse = await apiFetch('/v1/push/test', {
+    method: 'POST',
+    headers: {
+      ...(await apiHeaders({ 'content-type': 'application/json', 'x-device-id': deviceId })),
+    },
+    body: JSON.stringify({ device_id: deviceId }),
+  });
+  const testResult = testResponse.ok ? await testResponse.json().catch(() => null) : null;
+  return { ok: true, permission, testResult };
 }
 
 export function notifyReplyReady({ enabled, title = 'OpenClaw 응답 도착', body = '새 답변이 도착했습니다.' }) {

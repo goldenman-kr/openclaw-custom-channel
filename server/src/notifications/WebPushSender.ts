@@ -15,6 +15,13 @@ export interface WebPushSenderOptions {
   subject?: string;
 }
 
+export interface WebPushSendResult {
+  attempted: number;
+  sent: number;
+  disabled: number;
+  failed: number;
+}
+
 export class WebPushSender {
   private readonly configured: boolean;
 
@@ -35,15 +42,22 @@ export class WebPushSender {
     return this.configured;
   }
 
-  async sendToOwner(ownerId: string, payload: PushNotificationPayload): Promise<void> {
+  async sendToOwner(ownerId: string, payload: PushNotificationPayload): Promise<WebPushSendResult> {
+    const empty = { attempted: 0, sent: 0, disabled: 0, failed: 0 };
     if (!this.configured) {
-      return;
+      return empty;
     }
     const subscriptions = this.store.listActiveByOwner(ownerId);
-    await Promise.all(subscriptions.map((subscription) => this.sendOne(subscription, payload)));
+    const results = await Promise.all(subscriptions.map((subscription) => this.sendOne(subscription, payload)));
+    return results.reduce((summary, result) => ({
+      attempted: summary.attempted + 1,
+      sent: summary.sent + (result === "sent" ? 1 : 0),
+      disabled: summary.disabled + (result === "disabled" ? 1 : 0),
+      failed: summary.failed + (result === "failed" ? 1 : 0),
+    }), empty);
   }
 
-  private async sendOne(subscription: PushSubscriptionRecord, payload: PushNotificationPayload): Promise<void> {
+  private async sendOne(subscription: PushSubscriptionRecord, payload: PushNotificationPayload): Promise<"sent" | "disabled" | "failed"> {
     try {
       await webpush.sendNotification(
         {
@@ -55,13 +69,15 @@ export class WebPushSender {
         },
         JSON.stringify(payload),
       );
+      return "sent";
     } catch (error) {
       const statusCode = typeof (error as { statusCode?: unknown }).statusCode === "number" ? (error as { statusCode: number }).statusCode : undefined;
       if (statusCode === 404 || statusCode === 410) {
         this.store.disableById(subscription.id);
-        return;
+        return "disabled";
       }
       console.warn(`Web Push send failed (${subscription.id}):`, error);
+      return "failed";
     }
   }
 }
