@@ -1,4 +1,4 @@
-const CACHE_NAME = 'openclaw-web-channel-v302';
+const CACHE_NAME = 'openclaw-web-channel-v308';
 const ASSETS = [
   '/',
   '/index.html',
@@ -102,3 +102,48 @@ self.addEventListener('fetch', (event) => {
     caches.match(event.request).then((cached) => cached || fetch(event.request)),
   );
 });
+
+self.addEventListener('push', (event) => {
+  const payload = parsePushPayload(event.data);
+  const title = payload.title || 'OpenClaw 응답 도착';
+  const options = {
+    body: payload.body || '새 답변이 도착했습니다.',
+    tag: payload.tag || (payload.conversationId ? `openclaw-reply-ready-${payload.conversationId}` : 'openclaw-reply-ready'),
+    renotify: true,
+    silent: false,
+    data: {
+      url: payload.url || '/',
+      conversationId: payload.conversationId || null,
+    },
+  };
+  event.waitUntil(self.registration.showNotification(title, options));
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const targetUrl = new URL(event.notification.data?.url || '/', self.location.origin).toString();
+  event.waitUntil((async () => {
+    const windows = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    for (const client of windows) {
+      if ('focus' in client) {
+        await client.focus();
+        if ('navigate' in client) {
+          await client.navigate(targetUrl);
+        }
+        return;
+      }
+    }
+    await self.clients.openWindow(targetUrl);
+  })());
+});
+
+function parsePushPayload(data) {
+  if (!data) {
+    return {};
+  }
+  try {
+    return data.json();
+  } catch {
+    return { body: data.text() };
+  }
+}

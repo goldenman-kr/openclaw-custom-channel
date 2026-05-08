@@ -47,7 +47,7 @@ import { mergeMediaRefs } from './modules/message-actions.js';
 import { createModelPickerController } from './modules/model-picker-controller.js';
 import { renderModelPicker as renderModelPickerView, updateModelPickerButtonState as updateModelPickerButtonStateView } from './modules/model-picker.js';
 import { closeDrawer, drawerSwipeGesture, isDesktopLayout as isDesktopViewport, isDrawerOpen, openDrawer, shouldIgnoreDrawerSwipe as shouldIgnoreDrawerSwipeTarget, toggleDesktopSidebar } from './modules/mobile-drawer.js';
-import { notificationsSupported, notifyReplyReady as notifyReplyReadyBrowser, requestNotificationPermission, updateNotificationButton as updateNotificationButtonView } from './modules/notifications.js';
+import { getPushNotificationSupportState, notificationsSupported, notifyReplyReady as notifyReplyReadyBrowser, requestNotificationPermission, subscribeToPushNotifications, unsubscribeFromPushNotifications, updateNotificationButton as updateNotificationButtonView } from './modules/notifications.js';
 import { clearConversationEventRefreshTimer, closeConversationEventSource, conversationEventsSupported, createConversationEventSource } from './modules/conversation-events.js';
 import { conversationIdFromPath, syncConversationUrl } from './modules/navigation.js';
 import { startIntervalIfNeeded, stopIntervalIfNeeded, syncVisiblePagePolling } from './modules/page-lifecycle.js';
@@ -73,7 +73,8 @@ import './plugins/spot-order-card.js';
 import './plugins/spot-wallet-intent.js';
 
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
-const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-06-spot-reown-004';
+const PUSH_DEVICE_ID_KEY = 'openclaw-web-channel-push-device-id-v1';
+const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-08-push-006';
 const CLIENT_API_VERSION = 1;
 const elements = {
   loginScreen: document.querySelector('#loginScreen'),
@@ -264,15 +265,68 @@ function updateNotificationButton() {
 }
 
 async function enableNotifications() {
-  if (!notificationsSupported()) {
-    appendMessage('system', '이 환경은 브라우저 알림을 지원하지 않습니다.', { persist: false });
+  if (settings.notificationsEnabled && notificationsSupported() && Notification.permission === 'granted') {
+    try {
+      await unsubscribeFromPushNotifications({
+        apiFetch,
+        apiHeaders,
+        deviceId: getPushDeviceId(),
+      });
+      settings.notificationsEnabled = false;
+      saveSettings(settings);
+      updateNotificationButton();
+      appendMessage('system', '푸시 알림을 껐습니다.', { persist: false });
+    } catch (error) {
+      appendMessage('system', `푸시 알림 해제 실패: ${error instanceof Error ? error.message : String(error)}`, { persist: false });
+    }
     return;
   }
-  const permission = await requestNotificationPermission();
-  settings.notificationsEnabled = permission === 'granted';
-  saveSettings(settings);
-  updateNotificationButton();
-  appendMessage('system', permission === 'granted' ? '응답 도착 알림을 켰습니다.' : '알림 권한이 허용되지 않았습니다.', { persist: false });
+  if (!notificationsSupported()) {
+    const support = getPushNotificationSupportState();
+    appendMessage('system', support.message || '이 환경은 브라우저 알림을 지원하지 않습니다.', { persist: false });
+    return;
+  }
+  try {
+    const result = await subscribeToPushNotifications({
+      apiFetch,
+      apiHeaders,
+      deviceId: getPushDeviceId(),
+    });
+    if (result.ok) {
+      settings.notificationsEnabled = true;
+      saveSettings(settings);
+      updateNotificationButton();
+      appendMessage('system', '응답 도착 푸시 알림을 켰습니다.', { persist: false });
+      return;
+    }
+    if (result.reason === 'ios-install-required' || result.reason === 'push-unsupported') {
+      settings.notificationsEnabled = false;
+      saveSettings(settings);
+      updateNotificationButton();
+      appendMessage('system', result.message || '이 환경에서는 백그라운드 푸시 알림을 사용할 수 없습니다.', { persist: false });
+      return;
+    }
+    const permission = result.reason === 'notification-unsupported' ? 'unsupported' : result.reason;
+    settings.notificationsEnabled = permission === 'granted';
+    saveSettings(settings);
+    updateNotificationButton();
+    appendMessage('system', permission === 'granted' ? '이 환경에서는 앱이 열려 있을 때의 탭 알림만 사용할 수 있습니다.' : '알림 권한이 허용되지 않았습니다.', { persist: false });
+  } catch (error) {
+    settings.notificationsEnabled = false;
+    saveSettings(settings);
+    updateNotificationButton();
+    appendMessage('system', `푸시 알림 설정 실패: ${error instanceof Error ? error.message : String(error)}`, { persist: false });
+  }
+}
+
+function getPushDeviceId() {
+  const existing = localStorage.getItem(PUSH_DEVICE_ID_KEY);
+  if (existing) {
+    return existing;
+  }
+  const id = `pwa_${crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}_${Math.random().toString(16).slice(2)}`}`;
+  localStorage.setItem(PUSH_DEVICE_ID_KEY, id);
+  return id;
 }
 
 function notifyReplyReady(title = 'OpenClaw 응답 도착', body = '새 답변이 도착했습니다.') {
@@ -2447,6 +2501,6 @@ renderModelPicker();
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-06-spot-reown-004').catch(() => {});
+    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-08-push-006').catch(() => {});
   });
 }

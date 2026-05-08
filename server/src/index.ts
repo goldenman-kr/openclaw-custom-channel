@@ -17,9 +17,11 @@ import { conversationIdFromPath, handleConversationRoute } from "./http/conversa
 import { handleHistoryRoute } from "./http/historyRoutes.js";
 import { handleJobRoute } from "./http/jobRoutes.js";
 import { handleMessageRoute } from "./http/messageRoutes.js";
+import { handlePushRoute } from "./http/pushRoutes.js";
 import { applyNativeModelSelection, applyNativeThinkingSelection, getNativeModelMenu } from "./http/nativeCommands.js";
 import { handleSpotPluginRoute, resumeSpotOrderPolling } from "./http/spotPluginRoutes.js";
 import { handleMediaRoute, handleStaticRoute } from "./http/staticRoutes.js";
+import { WebPushSender } from "./notifications/WebPushSender.js";
 import { GatewayAutonomousAnnounceBridge } from "./openclaw/GatewayAutonomousAnnounceBridge.js";
 import { createOpenClawClient } from "./openclaw/createOpenClawClient.js";
 import type { RuntimeWorkspaceScope } from "./openclaw/OpenClawClient.js";
@@ -32,6 +34,7 @@ import { FileHistoryStore, type HistoryAttachment } from "./session/HistoryStore
 import { AuthStore, publicUser, type WorkspaceScopeRecord } from "./session/AuthStore.js";
 import { InMemorySessionStore } from "./session/SessionStore.js";
 import { RestartFollowupStore, type RestartFollowupRecord } from "./session/RestartFollowupStore.js";
+import { PushSubscriptionStore } from "./session/PushSubscriptionStore.js";
 import { SpotOrderStore } from "./session/SpotOrderStore.js";
 import { SqliteChatStore, type ConversationRecord } from "./session/SqliteChatStore.js";
 
@@ -65,6 +68,12 @@ const assistantGeneratedMediaDirs = (process.env.ASSISTANT_MEDIA_SCAN_DIRS ?? "/
 const chatDbPath = resolve(process.env.CHAT_DB_PATH ?? join(stateDir, "chat.sqlite"));
 const authStore = new AuthStore(chatDbPath);
 const chatStore = new SqliteChatStore(chatDbPath);
+const pushSubscriptionStore = new PushSubscriptionStore(chatDbPath);
+const webPushSender = new WebPushSender(pushSubscriptionStore, {
+  publicKey: process.env.WEB_PUSH_VAPID_PUBLIC_KEY,
+  privateKey: process.env.WEB_PUSH_VAPID_PRIVATE_KEY,
+  subject: process.env.WEB_PUSH_SUBJECT,
+});
 const spotOrderStore = new SpotOrderStore(chatDbPath);
 
 const spotOrderRouteDeps = {
@@ -567,6 +576,22 @@ const messageJobRunner = new MessageJobRunner({
   publishAgentEvent(job, event) {
     jobEventPublisher.publishAgentEvent({ id: job.id, stream: event.stream, data: event.data });
   },
+  async notifyReplyReady(job) {
+    if (!job.conversationId || !webPushSender.isConfigured()) {
+      return;
+    }
+    const conversation = chatStore.getConversation(job.conversationId);
+    if (!conversation) {
+      return;
+    }
+    await webPushSender.sendToOwner(conversation.ownerId, {
+      title: "OpenClaw 응답 도착",
+      body: "새 답변이 도착했습니다.",
+      url: `/chat/${encodeURIComponent(conversation.id)}`,
+      conversationId: conversation.id,
+      tag: `openclaw-reply-ready-${conversation.id}`,
+    });
+  },
   generatedMediaDirs: assistantGeneratedMediaDirs,
 });
 
@@ -647,6 +672,19 @@ const server = createServer(async (request, response) => {
     getAuthContext,
     resolveAuthorizedMediaPath,
     sendJson,
+  })) {
+    return;
+  }
+
+  if (await handlePushRoute(request, response, url, {
+    pushSubscriptionStore,
+    webPushSender,
+    vapidPublicKey: process.env.WEB_PUSH_VAPID_PUBLIC_KEY,
+    isAuthorized,
+    getAuthContext,
+    sendJson,
+    makeErrorResponse,
+    readJsonBody,
   })) {
     return;
   }

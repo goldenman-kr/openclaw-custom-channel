@@ -19,6 +19,7 @@ export interface MessageJobRunnerDeps {
   updateJob(job: MessageJob, patch: { state?: MessageJob["state"]; error?: string | null }): void;
   publishToken?(job: MessageJob, token: string): void;
   publishAgentEvent?(job: MessageJob, event: ChatRuntimeAgentEvent): void;
+  notifyReplyReady?(job: MessageJob): void | Promise<void>;
   generatedMediaDirs?: string[];
 }
 
@@ -235,6 +236,7 @@ export class MessageJobRunner {
         }
       }
       this.deps.updateJob(job, { state: "completed" });
+      await this.deps.notifyReplyReady?.(job);
       return;
     }
 
