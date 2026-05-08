@@ -47,7 +47,7 @@ import { mergeMediaRefs } from './modules/message-actions.js';
 import { createModelPickerController } from './modules/model-picker-controller.js';
 import { renderModelPicker as renderModelPickerView, updateModelPickerButtonState as updateModelPickerButtonStateView } from './modules/model-picker.js';
 import { closeDrawer, drawerSwipeGesture, isDesktopLayout as isDesktopViewport, isDrawerOpen, openDrawer, shouldIgnoreDrawerSwipe as shouldIgnoreDrawerSwipeTarget, toggleDesktopSidebar } from './modules/mobile-drawer.js';
-import { notificationsSupported, notifyReplyReady as notifyReplyReadyBrowser, requestNotificationPermission, subscribeToPushNotifications, unsubscribeFromPushNotifications, updateNotificationButton as updateNotificationButtonView } from './modules/notifications.js';
+import { getPushNotificationSupportState, notificationsSupported, notifyReplyReady as notifyReplyReadyBrowser, requestNotificationPermission, subscribeToPushNotifications, unsubscribeFromPushNotifications, updateNotificationButton as updateNotificationButtonView } from './modules/notifications.js';
 import { clearConversationEventRefreshTimer, closeConversationEventSource, conversationEventsSupported, createConversationEventSource } from './modules/conversation-events.js';
 import { conversationIdFromPath, syncConversationUrl } from './modules/navigation.js';
 import { startIntervalIfNeeded, stopIntervalIfNeeded, syncVisiblePagePolling } from './modules/page-lifecycle.js';
@@ -74,7 +74,7 @@ import './plugins/spot-wallet-intent.js';
 
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
 const PUSH_DEVICE_ID_KEY = 'openclaw-web-channel-push-device-id-v1';
-const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-08-push-004';
+const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-08-push-005';
 const CLIENT_API_VERSION = 1;
 const elements = {
   loginScreen: document.querySelector('#loginScreen'),
@@ -282,7 +282,8 @@ async function enableNotifications() {
     return;
   }
   if (!notificationsSupported()) {
-    appendMessage('system', '이 환경은 브라우저 알림을 지원하지 않습니다.', { persist: false });
+    const support = getPushNotificationSupportState();
+    appendMessage('system', support.message || '이 환경은 브라우저 알림을 지원하지 않습니다.', { persist: false });
     return;
   }
   try {
@@ -2501,6 +2502,6 @@ renderModelPicker();
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-08-push-004').catch(() => {});
+    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-08-push-005').catch(() => {});
   });
 }

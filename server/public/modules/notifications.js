@@ -7,8 +7,11 @@ export function pushNotificationsSupported() {
 }
 
 export function getPushNotificationSupportState(env = browserNotificationEnv()) {
+  if (!env.isSecureContext) {
+    return { supported: false, reason: 'secure-context-required', message: '푸시 알림은 HTTPS 또는 localhost 같은 보안 연결에서만 사용할 수 있습니다.' };
+  }
   if (!env.hasNotification) {
-    return { supported: false, reason: 'notification-unsupported', message: '이 환경은 브라우저 알림을 지원하지 않습니다.' };
+    return { supported: false, reason: 'notification-unsupported', message: '현재 앱 실행 환경이 브라우저 알림 API를 제공하지 않습니다. Android에서는 Chrome으로 설치한 PWA에서 다시 열어주세요.' };
   }
   if (env.isIos && !env.isStandalone) {
     return { supported: false, reason: 'ios-install-required', message: 'iOS에서는 홈 화면에 추가한 뒤 앱 아이콘으로 실행해야 푸시 알림을 사용할 수 있습니다.' };
@@ -34,11 +37,15 @@ export function updateNotificationButton(button, enabled) {
   const support = getPushNotificationSupportState();
   if (!notificationsSupported()) {
     button.textContent = '알림 미지원';
-    button.disabled = true;
+    button.disabled = false;
     return;
   }
   if (!support.supported) {
-    button.textContent = support.reason === 'ios-install-required' ? '홈 화면 설치 필요' : '탭 알림만 지원';
+    button.textContent = support.reason === 'ios-install-required'
+      ? '홈 화면 설치 필요'
+      : support.reason === 'secure-context-required'
+        ? 'HTTPS 필요'
+        : '탭 알림만 지원';
     button.disabled = false;
     return;
   }
@@ -159,6 +166,7 @@ function browserNotificationEnv() {
     hasNotification: 'Notification' in window,
     hasServiceWorker: 'serviceWorker' in navigator,
     hasPushManager: 'PushManager' in window,
+    isSecureContext: window.isSecureContext,
     isIos: isIosLike(),
     isStandalone: isStandalonePwa(),
   };

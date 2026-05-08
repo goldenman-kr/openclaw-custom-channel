@@ -9,6 +9,7 @@ test("detects iOS Safari needs home screen installation for push", () => {
     hasNotification: true,
     hasServiceWorker: true,
     hasPushManager: true,
+    isSecureContext: true,
     isIos: true,
     isStandalone: false,
   });
@@ -23,11 +24,40 @@ test("allows push when iOS PWA is running standalone", () => {
     hasNotification: true,
     hasServiceWorker: true,
     hasPushManager: true,
+    isSecureContext: true,
     isIos: true,
     isStandalone: true,
   });
 
   assert.equal(state.supported, true);
+});
+
+test("detects unsupported notification API separately from denied permission", () => {
+  const state = notifications.getPushNotificationSupportState({
+    hasNotification: false,
+    hasServiceWorker: true,
+    hasPushManager: true,
+    isSecureContext: true,
+    isIos: false,
+    isStandalone: false,
+  });
+
+  assert.equal(state.supported, false);
+  assert.equal(state.reason, "notification-unsupported");
+});
+
+test("detects insecure contexts before checking push APIs", () => {
+  const state = notifications.getPushNotificationSupportState({
+    hasNotification: true,
+    hasServiceWorker: true,
+    hasPushManager: true,
+    isSecureContext: false,
+    isIos: false,
+    isStandalone: false,
+  });
+
+  assert.equal(state.supported, false);
+  assert.equal(state.reason, "secure-context-required");
 });
 
 test("detects iPadOS desktop user agent by touch-enabled MacIntel platform", () => {
