@@ -43,7 +43,7 @@ export function updateNotificationButton(button, enabled) {
     return;
   }
   if (Notification.permission === 'granted' && enabled) {
-    button.textContent = '푸시 알림 켜짐';
+    button.textContent = '푸시 알림 끄기';
     button.disabled = false;
     return;
   }
@@ -61,6 +61,31 @@ export async function requestNotificationPermission() {
     return 'unsupported';
   }
   return Notification.requestPermission();
+}
+
+export async function unsubscribeFromPushNotifications({ apiFetch, apiHeaders, deviceId }) {
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+    return { ok: true, reason: 'unsupported' };
+  }
+  const registration = await navigator.serviceWorker.ready;
+  const subscription = await registration.pushManager.getSubscription();
+  if (!subscription) {
+    return { ok: true, reason: 'not-subscribed' };
+  }
+  const endpoint = subscription.endpoint;
+  await subscription.unsubscribe().catch(() => false);
+  const response = await apiFetch('/v1/push/subscriptions', {
+    method: 'DELETE',
+    headers: {
+      ...(await apiHeaders({ 'content-type': 'application/json', 'x-device-id': deviceId })),
+    },
+    body: JSON.stringify({ endpoint, device_id: deviceId }),
+  });
+  if (!response.ok) {
+    const text = await response.text().catch(() => '');
+    throw new Error(text || '푸시 알림 구독 해제를 저장하지 못했습니다.');
+  }
+  return { ok: true, reason: 'unsubscribed' };
 }
 
 export async function subscribeToPushNotifications({ apiFetch, apiHeaders, deviceId }) {
