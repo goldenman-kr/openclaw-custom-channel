@@ -2,7 +2,12 @@ package ai.kryp.openclaw;
 
 import android.Manifest;
 import android.app.Activity;
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.app.PendingIntent;
 import android.content.ContentValues;
+import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.net.Uri;
@@ -31,12 +36,15 @@ public class MainActivity extends Activity {
     private static final String START_URL = "https://ai.kryp.xyz/";
     private static final int LOCATION_REQUEST = 42;
     private static final int FILE_REQUEST = 43;
+    private static final int NOTIFICATION_REQUEST = 44;
+    private static final String DOWNLOAD_CHANNEL_ID = "openclaw_downloads";
 
     private SwipeRefreshLayout swipeRefreshLayout;
     private WebView webView;
     private GeolocationPermissions.Callback pendingGeoCallback;
     private String pendingGeoOrigin;
     private ValueCallback<Uri[]> filePathCallback;
+    private PendingDownloadNotification pendingDownloadNotification;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -192,8 +200,11 @@ public class MainActivity extends Activity {
             try {
                 byte[] bytes = Base64.decode(base64Data, Base64.DEFAULT);
                 String safeName = safeFileName(fileName);
-                saveToDownloads(safeName, mimeType, bytes);
-                runOnUiThread(() -> Toast.makeText(MainActivity.this, "다운로드 완료: " + safeName, Toast.LENGTH_SHORT).show());
+                Uri uri = saveToDownloads(safeName, mimeType, bytes);
+                runOnUiThread(() -> {
+                    Toast.makeText(MainActivity.this, "다운로드 완료: " + safeName, Toast.LENGTH_SHORT).show();
+                    showDownloadNotification(safeName, mimeType, uri);
+                });
             } catch (Exception error) {
                 runOnUiThread(() -> Toast.makeText(MainActivity.this, "다운로드 실패: " + error.getMessage(), Toast.LENGTH_LONG).show());
             }
@@ -223,7 +234,7 @@ public class MainActivity extends Activity {
         return safe.isEmpty() ? fallback : safe;
     }
 
-    private void saveToDownloads(String fileName, String mimeType, byte[] bytes) throws Exception {
+    private Uri saveToDownloads(String fileName, String mimeType, byte[] bytes) throws Exception {
         String type = (mimeType == null || mimeType.isEmpty()) ? "application/octet-stream" : mimeType;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             ContentValues values = new ContentValues();
@@ -244,7 +255,7 @@ public class MainActivity extends Activity {
             values.clear();
             values.put(MediaStore.MediaColumns.IS_PENDING, 0);
             getContentResolver().update(uri, values, null, null);
-            return;
+            return uri;
         }
 
         File directory = new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "OpenClaw");
@@ -255,7 +266,69 @@ public class MainActivity extends Activity {
         try (OutputStream output = new FileOutputStream(file)) {
             output.write(bytes);
         }
-        sendBroadcast(new Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE, Uri.fromFile(file)));
+        Uri uri = Uri.fromFile(file);
+        sendBroadcast(new Intent(Intent.ACTION_MEDIA_SCANNER_SCAN_FILE, uri));
+        return uri;
+    }
+
+    private void showDownloadNotification(String fileName, String mimeType, Uri uri) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            pendingDownloadNotification = new PendingDownloadNotification(fileName, mimeType, uri);
+            requestPermissions(new String[] { Manifest.permission.POST_NOTIFICATIONS }, NOTIFICATION_REQUEST);
+            return;
+        }
+        publishDownloadNotification(fileName, mimeType, uri);
+    }
+
+    private void publishDownloadNotification(String fileName, String mimeType, Uri uri) {
+        NotificationManager manager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+        if (manager == null) {
+            return;
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            NotificationChannel channel = new NotificationChannel(
+                DOWNLOAD_CHANNEL_ID,
+                "다운로드",
+                NotificationManager.IMPORTANCE_DEFAULT
+            );
+            channel.setDescription("OpenClaw에서 저장한 파일 알림");
+            manager.createNotificationChannel(channel);
+        }
+
+        String type = (mimeType == null || mimeType.isEmpty()) ? "application/octet-stream" : mimeType;
+        Intent openIntent = new Intent(Intent.ACTION_VIEW)
+            .setDataAndType(uri, type)
+            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
+        PendingIntent pendingIntent = PendingIntent.getActivity(
+            this,
+            fileName.hashCode(),
+            openIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+        );
+        Notification.Builder builder = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+            ? new Notification.Builder(this, DOWNLOAD_CHANNEL_ID)
+            : new Notification.Builder(this);
+        Notification notification = builder
+            .setSmallIcon(android.R.drawable.stat_sys_download_done)
+            .setContentTitle("다운로드 완료")
+            .setContentText(fileName)
+            .setContentIntent(pendingIntent)
+            .setAutoCancel(true)
+            .build();
+        manager.notify((int) (System.currentTimeMillis() & 0x0fffffff), notification);
+    }
+
+    private static class PendingDownloadNotification {
+        final String fileName;
+        final String mimeType;
+        final Uri uri;
+
+        PendingDownloadNotification(String fileName, String mimeType, Uri uri) {
+            this.fileName = fileName;
+            this.mimeType = mimeType;
+            this.uri = uri;
+        }
     }
 
     @Override
@@ -269,6 +342,17 @@ public class MainActivity extends Activity {
             pendingGeoCallback.invoke(pendingGeoOrigin, granted, false);
             pendingGeoCallback = null;
             pendingGeoOrigin = null;
+        }
+        if (requestCode == NOTIFICATION_REQUEST && pendingDownloadNotification != null) {
+            boolean granted = false;
+            for (int result : grantResults) {
+                granted = granted || result == PackageManager.PERMISSION_GRANTED;
+            }
+            PendingDownloadNotification notification = pendingDownloadNotification;
+            pendingDownloadNotification = null;
+            if (granted) {
+                publishDownloadNotification(notification.fileName, notification.mimeType, notification.uri);
+            }
         }
     }
 
