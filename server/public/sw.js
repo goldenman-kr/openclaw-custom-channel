@@ -1,4 +1,4 @@
-const CACHE_NAME = 'openclaw-web-channel-v308';
+const CACHE_NAME = 'openclaw-web-channel-v327';
 const ASSETS = [
   '/',
   '/index.html',
@@ -44,9 +44,12 @@ const ASSETS = [
   '/modules/version-check.js',
   '/modules/sidebar-width.js',
   '/plugins/plugin-registry.js',
+  '/plugins/wallet-provider.js',
   '/plugins/spot-wallet-provider.js',
   '/plugins/spot-order-card.js',
   '/plugins/spot-wallet-intent.js',
+  '/plugins/spot-wallet-balance.js',
+  '/plugins/orbs-polygon-bridge-card.js',
   '/manifest.webmanifest',
   '/assets/openclaw-app-icon-180.png',
   '/assets/openclaw-app-icon-192.png',

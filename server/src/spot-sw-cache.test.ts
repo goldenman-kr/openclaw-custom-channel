@@ -12,9 +12,11 @@ test('service worker does not precache the large Reown AppKit bundle', async () 
   const swSource = await readFile('public/sw.js', 'utf8');
   const assets = readPrecacheAssets(swSource);
 
+  assert.ok(assets.includes('/plugins/wallet-provider.js'));
   assert.ok(assets.includes('/plugins/spot-wallet-provider.js'));
   assert.ok(assets.includes('/plugins/spot-order-card.js'));
   assert.ok(assets.includes('/plugins/spot-wallet-intent.js'));
+  assert.ok(assets.includes('/plugins/orbs-polygon-bridge-card.js'));
   assert.equal(assets.includes('/assets/spot-reown-wallet.js'), false);
   assert.match(swSource, /'\/assets\/spot-reown-wallet\.js'/, 'Reown bundle should still be network-first when requested');
 });

@@ -51,6 +51,10 @@ function renderIosPwaWalletLink() {
   if (!isIosPwa()) {
     return;
   }
+  if (!explicitWalletConnectInProgress || getConnectedAddress()) {
+    removeIosPwaWalletLink();
+    return;
+  }
   const wcUri = ConnectionController.state.wcUri;
   const wallet = PublicStateController.state.connectingWallet;
   if (!wcUri || !isMetaMaskWallet(wallet)) {
@@ -99,6 +103,13 @@ function installIosPwaWalletLinkFallback() {
   }
   ConnectionController.subscribeKey('wcUri', renderIosPwaWalletLink);
   PublicStateController.subscribe(renderIosPwaWalletLink);
+  window.addEventListener('focus', removeIosPwaWalletLink);
+  window.addEventListener('pageshow', removeIosPwaWalletLink);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && !explicitWalletConnectInProgress) {
+      removeIosPwaWalletLink();
+    }
+  });
   renderIosPwaWalletLink();
 }
 
@@ -119,12 +130,14 @@ const wagmiConfig = wagmiAdapter.wagmiConfig;
 const subscribers = new Set();
 let currentChainId = '';
 let reconnectStarted = false;
+let explicitWalletConnectInProgress = false;
 
 function toHexChainId(chainId) {
-  if (chainId === undefined || chainId === null || chainId === '') {
+  const numericChainId = parseChainId(chainId);
+  if (!numericChainId) {
     return '';
   }
-  return `0x${BigInt(chainId).toString(16)}`;
+  return `0x${BigInt(numericChainId).toString(16)}`;
 }
 
 function parseChainId(chainId) {
@@ -135,7 +148,7 @@ function parseChainId(chainId) {
     return Number(chainId);
   }
   const value = String(chainId || '').trim();
-  if (!value) {
+  if (!value || value === '0x') {
     return 0;
   }
   return Number(value.startsWith('0x') ? BigInt(value) : BigInt(value));
@@ -214,15 +227,28 @@ async function switchToChain(chainId) {
   if (!network) {
     throw new Error(`지원하지 않는 EVM 네트워크입니다: ${numericChainId}`);
   }
+  const targetChainId = toHexChainId(numericChainId);
+  const provider = requireWalletProvider();
+
+  // MetaMask 모바일/WalletConnect에서는 AppKit 내부 network state 변경보다
+  // EIP-3326 wallet_switchEthereumChain 직접 호출이 실제 승인 프롬프트를 띄우는 경로다.
   try {
-    await appKit.switchNetwork?.(network, { throwOnFailure: true });
-    return;
-  } catch (error) {
-    const provider = requireWalletProvider();
     await provider.request({
       method: 'wallet_switchEthereumChain',
-      params: [{ chainId: toHexChainId(numericChainId) }],
+      params: [{ chainId: targetChainId }],
     });
+    currentChainId = targetChainId;
+    emit('chainChanged', currentChainId);
+    return;
+  } catch (providerError) {
+    try {
+      await appKit.switchNetwork?.(network, { throwOnFailure: true });
+      currentChainId = targetChainId;
+      emit('chainChanged', currentChainId);
+      return;
+    } catch {
+      throw providerError;
+    }
   }
 }
 
@@ -230,8 +256,15 @@ async function connect(options = {}) {
   ensureReconnect();
   let address = getConnectedAddress();
   if (!address) {
-    await appKit.open({ view: 'Connect', namespace: 'eip155' });
-    address = await waitForAccount();
+    explicitWalletConnectInProgress = true;
+    try {
+      await appKit.open({ view: 'Connect', namespace: 'eip155' });
+      renderIosPwaWalletLink();
+      address = await waitForAccount();
+    } finally {
+      explicitWalletConnectInProgress = false;
+      removeIosPwaWalletLink();
+    }
   }
   if (options.chainId) {
     await switchToChain(options.chainId);
@@ -245,11 +278,22 @@ async function disconnect() {
   } catch {
     // Fall back to wagmi state reset when the AppKit disconnect path is unavailable.
   }
+  currentChainId = '';
   emit('accountsChanged', []);
 }
 
-async function request({ method, params = [] }) {
+async function reconnectChain(chainId) {
+  await disconnect();
+  await new Promise((resolve) => window.setTimeout(resolve, 500));
+  return connect({ chainId });
+}
+
+async function openNetworks() {
   ensureReconnect();
+  await appKit.open({ view: 'Networks', namespace: 'eip155' });
+}
+
+async function request({ method, params = [] }) {
   switch (method) {
     case 'eth_requestAccounts': {
       const requestedChainId = params?.[0]?.chainId;
@@ -263,10 +307,12 @@ async function request({ method, params = [] }) {
       return currentChainId || toHexChainId(getChainId(wagmiConfig));
     }
     case 'wallet_switchEthereumChain': {
+      ensureReconnect();
       await switchToChain(params?.[0]?.chainId);
       return null;
     }
     default: {
+      ensureReconnect();
       const provider = requireWalletProvider();
       return provider.request({ method, params });
     }
@@ -294,6 +340,9 @@ function off(event, handler) {
 
 watchAccount(wagmiConfig, {
   onChange(account) {
+    if (account?.address) {
+      removeIosPwaWalletLink();
+    }
     emit('accountsChanged', account?.address ? [account.address] : []);
   },
 });
@@ -307,7 +356,6 @@ watchChainId(wagmiConfig, {
 
 function SpotReownBridgeRoot() {
   useEffect(() => {
-    ensureReconnect();
     installIosPwaWalletLinkFallback();
     window.dispatchEvent(new CustomEvent('spot-reown-ready'));
   }, []);
@@ -337,6 +385,8 @@ window.SpotReownWallet = {
   provider: { request, on, removeListener: off, disconnect },
   connect,
   disconnect,
+  reconnectChain,
+  openNetworks,
   getAddress: getConnectedAddress,
   getWalletProvider,
   open: (options) => appKit.open(options),

@@ -91,15 +91,20 @@ test('uses injected provider first even on mobile-like devices', async () => {
 
 test('uses Reown bridge when injected provider is missing', async () => {
   const connectCalls: unknown[] = [];
+  const providerCalls: unknown[] = [];
+  let connectedAddress = '';
   const reownBridge = {
     connect: async (options: unknown) => {
       connectCalls.push(options);
-      return ['0x2222222222222222222222222222222222222222'];
+      connectedAddress = '0x2222222222222222222222222222222222222222';
+      return [connectedAddress];
     },
+    getAddress: () => connectedAddress,
     provider: {
-      request: async ({ method }: { method: string }) => method === 'eth_accounts'
-        ? ['0x2222222222222222222222222222222222222222']
-        : null,
+      request: async (payload: unknown) => {
+        providerCalls.push(payload);
+        return null;
+      },
     },
   };
   setBrowserGlobals({ reown: reownBridge });
@@ -109,6 +114,7 @@ test('uses Reown bridge when injected provider is missing', async () => {
   assert.deepEqual(await providerModule.requestSpotWalletAccounts({ chainId: 8453 }), ['0x2222222222222222222222222222222222222222']);
   assert.deepEqual(connectCalls, [{ chainId: 8453 }]);
   assert.deepEqual(await providerModule.getSpotWalletAccounts(), ['0x2222222222222222222222222222222222222222']);
+  assert.deepEqual(providerCalls, []);
 });
 
 test('does not lazy-load Reown while silently hydrating accounts', async () => {
@@ -117,6 +123,19 @@ test('does not lazy-load Reown while silently hydrating accounts', async () => {
   assert.equal(providerModule.getSpotWalletMode(), 'reown');
   assert.deepEqual(await providerModule.getSpotWalletAccounts(), []);
   assert.equal((globalThis as any).window.SpotReownWallet, undefined);
+});
+
+test('reports invalid chain id clearly instead of throwing raw BigInt 0x errors', async () => {
+  setBrowserGlobals({
+    ethereum: {
+      request: async () => null,
+    },
+  });
+
+  await assert.rejects(
+    () => providerModule.switchSpotWalletChain('0x' as unknown as number),
+    /체인 ID를 확인할 수 없습니다: 0x/,
+  );
 });
 
 test('switches chain through the selected provider only when needed', async () => {

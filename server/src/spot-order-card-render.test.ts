@@ -59,11 +59,20 @@ test('renders Spot order card without disabling wallet buttons when no injected 
   assert.equal(renderCodeBlockPlugin(parent, futureSpotOrderPayload(), 'spot-order-card', {}), true);
   const buttons = parent.all((element) => element.tagName === 'BUTTON');
   const connectButton = buttons.find((button) => button.textContent === '지갑 연결');
+  const switchButton = buttons.find((button) => button.textContent === '체인 전환');
+  const networkSelectorButton = buttons.find((button) => button.textContent === '네트워크 선택 열기');
+  const approveButton = buttons.find((button) => button.textContent === 'Approve');
   const signButton = buttons.find((button) => button.textContent === '서명 후 바로 제출');
 
   assert.ok(connectButton);
+  assert.ok(switchButton);
+  assert.ok(networkSelectorButton);
+  assert.ok(approveButton);
   assert.ok(signButton);
   assert.equal(connectButton.disabled, false);
+  assert.equal(switchButton.disabled, false);
+  assert.equal(networkSelectorButton.disabled, false);
+  assert.equal(approveButton.disabled, false);
   assert.equal(signButton.disabled, false);
   assert.match(parent.text(), /Reown AppKit으로 모바일 지갑을 연결/);
 });
@@ -167,6 +176,78 @@ test('sign button submits signed order through Reown fallback when allowance is 
   assert.ok(providerCalls.some((call) => call.method === 'eth_signTypedData_v4'));
   assert.equal(providerCalls.some((call) => call.method === 'eth_sendTransaction'), false);
   assert.match(parent.text(), /제출 완료: 0xrelay/);
+});
+
+test('chain switch button requests the order chain before approval/signing', async () => {
+  const providerCalls: Array<{ method: string; params?: unknown[] }> = [];
+  let currentChainId = '0x1';
+  setBrowserGlobals({
+    reown: {
+      provider: {
+        request: async (payload: { method: string; params?: unknown[] }) => {
+          providerCalls.push(payload);
+          if (payload.method === 'eth_chainId') return currentChainId;
+          if (payload.method === 'wallet_switchEthereumChain') {
+            currentChainId = (payload.params?.[0] as { chainId?: string })?.chainId || currentChainId;
+            return null;
+          }
+          return null;
+        },
+        on: () => {},
+        removeListener: () => {},
+      },
+    },
+  });
+  const parent = new TestElement('div');
+
+  renderCodeBlockPlugin(parent, futureSpotOrderPayload(), 'spot-order-card', {});
+  const switchButton = parent.all((element) => element.tagName === 'BUTTON').find((button) => button.textContent === '체인 전환');
+  assert.ok(switchButton);
+
+  await switchButton.click();
+
+  assert.ok(providerCalls.some((call) => call.method === 'wallet_switchEthereumChain'
+    && (call.params?.[0] as { chainId?: string })?.chainId === '0x2105'));
+  assert.match(parent.text(), /주문 체인\(8453\) 전환 확인 완료/);
+});
+
+test('approve button sends exact approve without signing or submitting', async () => {
+  const providerCalls: Array<{ method: string; params?: Array<Record<string, unknown> | string> }> = [];
+  setBrowserGlobals({
+    reown: {
+      connect: async () => ['0x2222222222222222222222222222222222222222'],
+      provider: {
+        request: async (payload: { method: string; params?: Array<Record<string, unknown> | string> }) => {
+          providerCalls.push(payload);
+          if (payload.method === 'eth_accounts') return [];
+          if (payload.method === 'eth_chainId') return '0x2105';
+          if (payload.method === 'eth_call') return '0x';
+          if (payload.method === 'eth_sendTransaction') return '0xapprove';
+          if (payload.method === 'eth_getTransactionReceipt') return { status: '0x1', transactionHash: '0xapprove' };
+          return null;
+        },
+        on: () => {},
+        removeListener: () => {},
+      },
+    },
+  });
+  const parent = new TestElement('div');
+  const submitCalls: unknown[] = [];
+
+  renderCodeBlockPlugin(parent, futureSpotOrderPayload(), 'spot-order-card', {
+    activeConversationId: () => 'conv-1',
+    apiJson: async (...args: unknown[]) => { submitCalls.push(args); return {}; },
+  });
+  const approveButton = parent.all((element) => element.tagName === 'BUTTON').find((button) => button.textContent === 'Approve');
+  assert.ok(approveButton);
+
+  await approveButton.click();
+
+  assert.ok(providerCalls.some((call) => call.method === 'eth_sendTransaction'));
+  assert.ok(providerCalls.some((call) => call.method === 'eth_getTransactionReceipt'));
+  assert.equal(providerCalls.some((call) => call.method === 'eth_signTypedData_v4'), false);
+  assert.equal(submitCalls.length, 0);
+  assert.match(parent.text(), /Approve 확인 완료/);
 });
 
 test('sign button sends exact approve before signing when allowance is insufficient', async () => {

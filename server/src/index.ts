@@ -19,6 +19,7 @@ import { handleJobRoute } from "./http/jobRoutes.js";
 import { handleMessageRoute } from "./http/messageRoutes.js";
 import { handlePushRoute } from "./http/pushRoutes.js";
 import { applyNativeModelSelection, applyNativeThinkingSelection, getNativeModelMenu } from "./http/nativeCommands.js";
+import { handleOrbsBridgePluginRoute, resumeOrbsBridgeCheckpointPolling } from "./http/orbsBridgePluginRoutes.js";
 import { handleSpotPluginRoute, resumeSpotOrderPolling } from "./http/spotPluginRoutes.js";
 import { handleMediaRoute, handleStaticRoute } from "./http/staticRoutes.js";
 import { WebPushSender } from "./notifications/WebPushSender.js";
@@ -35,6 +36,7 @@ import { AuthStore, publicUser, type WorkspaceScopeRecord } from "./session/Auth
 import { InMemorySessionStore } from "./session/SessionStore.js";
 import { RestartFollowupStore, type RestartFollowupRecord } from "./session/RestartFollowupStore.js";
 import { PushSubscriptionStore } from "./session/PushSubscriptionStore.js";
+import { OrbsBridgeStore } from "./session/OrbsBridgeStore.js";
 import { SpotOrderStore } from "./session/SpotOrderStore.js";
 import { SqliteChatStore, type ConversationRecord } from "./session/SqliteChatStore.js";
 
@@ -75,6 +77,19 @@ const webPushSender = new WebPushSender(pushSubscriptionStore, {
   subject: process.env.WEB_PUSH_SUBJECT,
 });
 const spotOrderStore = new SpotOrderStore(chatDbPath);
+const orbsBridgeStore = new OrbsBridgeStore(chatDbPath);
+
+const orbsBridgeRouteDeps = {
+  conversationStore: chatStore,
+  orbsBridgeStore,
+  getAuthContext,
+  isConversationVisibleToAuth,
+  sendJson,
+  readJsonBody,
+  publishConversationEvent(event: { id: string; type: "message"; messageId: string; conversationId: string; createdAt: string }) {
+    conversationEventPublisher.publish(event);
+  },
+};
 
 const spotOrderRouteDeps = {
   conversationStore: chatStore,
@@ -88,6 +103,7 @@ const spotOrderRouteDeps = {
   },
 };
 setImmediate(() => resumeSpotOrderPolling(spotOrderRouteDeps));
+setImmediate(() => resumeOrbsBridgeCheckpointPolling(orbsBridgeRouteDeps));
 const staleJobCleanup = chatStore.cancelStaleJobs({
   olderThanMs: Number(process.env.STALE_JOB_CLEANUP_AFTER_MS ?? 30 * 60 * 1000),
   reason: "Cancelled stale job on PWA service startup.",
@@ -732,6 +748,10 @@ const server = createServer(async (request, response) => {
   }
 
   if (await handleSpotPluginRoute(request, response, url, spotOrderRouteDeps)) {
+    return;
+  }
+
+  if (await handleOrbsBridgePluginRoute(request, response, url, orbsBridgeRouteDeps)) {
     return;
   }
 

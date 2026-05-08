@@ -1,5 +1,5 @@
 import { registerCodeBlockPlugin } from './plugin-registry.js';
-import { getSpotWalletMode, requestSpotWallet, requestSpotWalletAccounts, switchSpotWalletChain } from './spot-wallet-provider.js';
+import { getWalletMode, openWalletNetworkSelector, requestWallet, requestWalletAccounts, switchWalletChain } from './wallet-provider.js';
 
 function parsePayload(codeText) {
   try {
@@ -47,11 +47,11 @@ function setStatus(statusNode, message, kind = '') {
 }
 
 async function requestAccounts(chainId) {
-  return requestSpotWalletAccounts({ chainId });
+  return requestWalletAccounts({ chainId });
 }
 
 async function switchChain(chainId) {
-  return switchSpotWalletChain(chainId);
+  return switchWalletChain(chainId);
 }
 
 function addressParam(address) {
@@ -66,9 +66,21 @@ function encodeBalanceOfCall(owner) {
   return `0x70a08231${addressParam(owner)}`;
 }
 
+function bigintFromRpcQuantity(value) {
+  const text = String(value ?? '').trim();
+  if (!text || text === '0x') {
+    return 0n;
+  }
+  try {
+    return BigInt(text);
+  } catch {
+    throw new Error(`RPC quantity를 정수로 변환할 수 없습니다: ${text}`);
+  }
+}
+
 async function getErc20Balance({ token, owner }) {
-  const result = await requestSpotWallet('eth_call', [{ to: token, data: encodeBalanceOfCall(owner) }, 'latest']);
-  return BigInt(result || '0x0').toString();
+  const result = await requestWallet('eth_call', [{ to: token, data: encodeBalanceOfCall(owner) }, 'latest']);
+  return bigintFromRpcQuantity(result).toString();
 }
 
 function renderSpotWalletIntent({ parent, codeText, context, fallback }) {
@@ -105,7 +117,7 @@ function renderSpotWalletIntent({ parent, codeText, context, fallback }) {
 
   const status = document.createElement('p');
   status.className = 'spot-plugin-status';
-  setStatus(status, getSpotWalletMode() === 'injected'
+  setStatus(status, getWalletMode() === 'injected'
     ? '지갑을 연결하면 swapper와 잔액을 확인해 주문 생성을 이어갑니다.'
     : '지갑을 연결하면 Reown AppKit으로 모바일 지갑을 연결하고 주문 생성을 이어갑니다.');
 
@@ -179,9 +191,32 @@ function renderSpotWalletIntent({ parent, codeText, context, fallback }) {
     }
   });
 
+  const switchButton = createButton('체인 전환', async () => {
+    try {
+      if (!chainId) {
+        throw new Error('전환할 chainId를 확인할 수 없습니다.');
+      }
+      setStatus(status, `주문 체인(${chainId})으로 전환을 요청합니다…`);
+      await switchChain(chainId);
+      setStatus(status, `주문 체인(${chainId}) 전환 확인 완료.`, 'ok');
+    } catch (switchError) {
+      setStatus(status, switchError instanceof Error ? switchError.message : String(switchError), 'error');
+    }
+  }, { secondary: true });
+
+  const networkSelectorButton = createButton('네트워크 선택 열기', async () => {
+    try {
+      setStatus(status, 'Reown 네트워크 선택 화면을 여는 중입니다…');
+      await openWalletNetworkSelector();
+      setStatus(status, `네트워크 선택 화면에서 주문 체인(${chainId})을 선택한 뒤 이 카드로 돌아와주세요.`, 'ok');
+    } catch (networkError) {
+      setStatus(status, networkError instanceof Error ? networkError.message : String(networkError), 'error');
+    }
+  }, { secondary: true });
+
   const actions = document.createElement('div');
   actions.className = 'spot-plugin-actions';
-  actions.append(connectButton, continueButton);
+  actions.append(connectButton, switchButton, networkSelectorButton, continueButton);
 
   card.append(header, body, actions, status);
   parent.append(card);

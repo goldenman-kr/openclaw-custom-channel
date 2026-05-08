@@ -1,5 +1,5 @@
 import { registerCodeBlockPlugin } from './plugin-registry.js';
-import { getSpotWalletAccounts, getSpotWalletMode, requestSpotWallet, requestSpotWalletAccounts, revokeSpotWalletPermissionsIfSupported, subscribeSpotWalletAccounts, switchSpotWalletChain } from './spot-wallet-provider.js';
+import { getWalletAccounts, getWalletMode, openWalletNetworkSelector, requestWallet, requestWalletAccounts, revokeWalletPermissionsIfSupported as revokeSharedWalletPermissionsIfSupported, subscribeWalletAccounts, switchWalletChain } from './wallet-provider.js';
 
 const MIN_DEADLINE_REMAINING_SECONDS = 60;
 const MAX_NONCE_OR_START_AGE_SECONDS = 15 * 60;
@@ -104,19 +104,46 @@ function setStatus(statusNode, message, kind = '') {
 }
 
 async function requestAccounts(chainId) {
-  return requestSpotWalletAccounts({ chainId });
+  return requestWalletAccounts({ chainId });
 }
 
 async function revokeWalletPermissionsIfSupported() {
-  return revokeSpotWalletPermissionsIfSupported();
+  return revokeSharedWalletPermissionsIfSupported();
+}
+
+async function waitForWalletChain(expectedChainId, timeoutMs = 10_000) {
+  const expected = `0x${BigInt(expectedChainId).toString(16)}`.toLowerCase();
+  const startedAt = Date.now();
+  let actual = '';
+  while (Date.now() - startedAt < timeoutMs) {
+    actual = String(await requestWallet('eth_chainId')).toLowerCase();
+    if (actual === expected) {
+      return;
+    }
+    await new Promise((resolve) => window.setTimeout(resolve, 500));
+  }
+  throw new Error(`지갑 네트워크가 주문 체인과 일치하지 않습니다. 주문=${expected}, 현재=${actual || '확인 불가'}. 체인 전환을 승인한 뒤 다시 시도해주세요.`);
 }
 
 async function switchChain(chainId) {
-  return switchSpotWalletChain(chainId);
+  await switchWalletChain(chainId);
+  await waitForWalletChain(chainId);
+}
+
+function bigintFromNumberish(value, fieldName = '값') {
+  const text = String(value ?? '').trim();
+  if (!text || text === '0x') {
+    return 0n;
+  }
+  try {
+    return BigInt(text);
+  } catch {
+    throw new Error(`${fieldName}을 정수로 변환할 수 없습니다: ${text}`);
+  }
 }
 
 function uint256Hex(value) {
-  return BigInt(value).toString(16).padStart(64, '0');
+  return bigintFromNumberish(value, 'uint256 값').toString(16).padStart(64, '0');
 }
 
 function addressParam(address) {
@@ -135,16 +162,20 @@ function encodeApproveCall(spender, amount) {
   return `0x095ea7b3${addressParam(spender)}${uint256Hex(amount)}`;
 }
 
+function bigintFromRpcQuantity(value) {
+  return bigintFromNumberish(value, 'RPC quantity');
+}
+
 async function getAllowance({ token, owner, spender }) {
   const data = encodeAllowanceCall(owner, spender);
-  const result = await requestSpotWallet('eth_call', [{ to: token, data }, 'latest']);
-  return BigInt(result || '0x0');
+  const result = await requestWallet('eth_call', [{ to: token, data }, 'latest']);
+  return bigintFromRpcQuantity(result);
 }
 
 async function waitForTransactionReceipt(txHash, timeoutMs = 60_000) {
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
-    const receipt = await requestSpotWallet('eth_getTransactionReceipt', [txHash]);
+    const receipt = await requestWallet('eth_getTransactionReceipt', [txHash]);
     if (receipt) {
       if (receipt.status && String(receipt.status).toLowerCase() !== '0x1') {
         throw new Error(`Approve 트랜잭션이 실패했습니다: ${txHash}`);
@@ -158,14 +189,14 @@ async function waitForTransactionReceipt(txHash, timeoutMs = 60_000) {
 
 async function ensureExactApproval({ account, token, spender, amount, onStatus }) {
   const allowance = await getAllowance({ token, owner: account, spender });
-  const required = BigInt(amount);
+  const required = bigintFromNumberish(amount, 'approve 수량');
   if (allowance >= required) {
     onStatus?.('토큰 접근 권한 확인 완료. 추가 approve 없이 서명할 수 있습니다.', 'ok');
     return { approved: false, allowance: allowance.toString() };
   }
 
   onStatus?.('토큰 접근 권한이 부족합니다. exact approve 트랜잭션을 요청합니다…');
-  const txHash = await requestSpotWallet('eth_sendTransaction', [{
+  const txHash = await requestWallet('eth_sendTransaction', [{
     from: account,
     to: token,
     data: encodeApproveCall(spender, required),
@@ -199,7 +230,7 @@ async function signTypedData(account, typedData) {
     { name: 'chainId', type: 'uint256' },
     { name: 'verifyingContract', type: 'address' },
   ];
-  return requestSpotWallet('eth_signTypedData_v4', [account, JSON.stringify(typedData)]);
+  return requestWallet('eth_signTypedData_v4', [account, JSON.stringify(typedData)]);
 }
 
 function renderSpotOrderCard({ parent, codeText, context, fallback }) {
@@ -241,7 +272,7 @@ function renderSpotOrderCard({ parent, codeText, context, fallback }) {
   status.className = 'spot-plugin-status';
   setStatus(status, freshnessError
     ? `서명 차단: ${freshnessError} 새 주문 카드를 다시 생성하세요.`
-    : getSpotWalletMode() === 'injected'
+    : getWalletMode() === 'injected'
       ? '서명 전 요약을 확인한 뒤 서명하면 주문이 바로 제출됩니다.'
       : '서명 전 요약을 확인한 뒤 Reown AppKit으로 모바일 지갑을 연결하고 서명하면 주문이 바로 제출됩니다.', freshnessError ? 'error' : '');
 
@@ -262,7 +293,7 @@ function renderSpotOrderCard({ parent, codeText, context, fallback }) {
   }
   async function hydrateConnectedAccount() {
     try {
-      const accounts = await getSpotWalletAccounts();
+      const accounts = await getWalletAccounts();
       const account = accounts?.[0] || '';
       updateConnectedAccount(account, { silent: true });
     } catch {
@@ -291,7 +322,7 @@ function renderSpotOrderCard({ parent, codeText, context, fallback }) {
       setStatus(status, connectError instanceof Error ? connectError.message : String(connectError), 'error');
     }
   });
-  subscribeSpotWalletAccounts((accounts) => {
+  subscribeWalletAccounts((accounts) => {
     const account = accounts?.[0] || '';
     updateConnectedAccount(account);
     if (normalizeAddress(account) && !swapperMatchesAccount(swapper, account)) {
@@ -304,7 +335,7 @@ function renderSpotOrderCard({ parent, codeText, context, fallback }) {
   });
   hydrateConnectedAccount();
 
-  async function prepareSignature() {
+  async function prepareConnectedAccount() {
     if (!connectedAccount) {
       const accounts = await requestAccounts(chainId);
       connectedAccount = accounts?.[0] || '';
@@ -324,18 +355,56 @@ function renderSpotOrderCard({ parent, codeText, context, fallback }) {
     }
     setStatus(status, '체인을 확인하는 중입니다…');
     await switchChain(chainId);
+    return connectedAccount;
+  }
+
+  async function approveOnly() {
+    const account = await prepareConnectedAccount();
     await ensureExactApproval({
-      account: connectedAccount,
+      account,
       token: inputToken,
       spender: verifyingContract,
       amount: inputMaxAmount,
       onStatus: (message, kind) => setStatus(status, message, kind),
     });
-    return signTypedData(connectedAccount, typedData);
+    setStatus(status, 'Approve 확인 완료. 이제 서명 후 제출할 수 있습니다.', 'ok');
+  }
+
+  async function prepareSignature() {
+    const account = await prepareConnectedAccount();
+    await ensureExactApproval({
+      account,
+      token: inputToken,
+      spender: verifyingContract,
+      amount: inputMaxAmount,
+      onStatus: (message, kind) => setStatus(status, message, kind),
+    });
+    return signTypedData(account, typedData);
   }
 
   actions.append(
     connectButton,
+    createButton('체인 전환', async () => {
+      try {
+        if (!chainId) {
+          throw new Error('주문 chainId를 확인할 수 없습니다.');
+        }
+        setStatus(status, `주문 체인(${chainId})으로 전환을 요청합니다…`);
+        await switchChain(chainId);
+        setStatus(status, `주문 체인(${chainId}) 전환 확인 완료.`, 'ok');
+      } catch (switchError) {
+        setStatus(status, switchError instanceof Error ? switchError.message : String(switchError), 'error');
+      }
+    }, { disabled: Boolean(freshnessError), secondary: true }),
+    createButton('네트워크 선택 열기', async () => {
+      try {
+        setStatus(status, 'Reown 네트워크 선택 화면을 여는 중입니다…');
+        await openWalletNetworkSelector();
+        setStatus(status, `네트워크 선택 화면에서 Ethereum을 선택한 뒤 이 카드로 돌아와주세요. 주문 체인=${chainId}`, 'ok');
+      } catch (networkError) {
+        setStatus(status, networkError instanceof Error ? networkError.message : String(networkError), 'error');
+      }
+    }, { disabled: Boolean(freshnessError), secondary: true }),
     createButton('주소 복사', async () => {
       if (!connectedAccount) {
         setStatus(status, '먼저 지갑을 연결하세요.', 'warn');
@@ -344,6 +413,13 @@ function renderSpotOrderCard({ parent, codeText, context, fallback }) {
       await context.copyTextToClipboard?.(connectedAccount);
       setStatus(status, '연결된 주소를 복사했습니다.', 'ok');
     }, { secondary: true }),
+    createButton('Approve', async () => {
+      try {
+        await approveOnly();
+      } catch (approveError) {
+        setStatus(status, approveError instanceof Error ? approveError.message : String(approveError), 'error');
+      }
+    }, { disabled: Boolean(freshnessError), secondary: true }),
     createButton('서명 후 바로 제출', async () => {
       try {
         const signature = await prepareSignature();
