@@ -3,20 +3,42 @@ export function notificationsSupported() {
 }
 
 export function pushNotificationsSupported() {
-  return notificationsSupported() && 'serviceWorker' in navigator && 'PushManager' in window;
+  return getPushNotificationSupportState().supported;
+}
+
+export function getPushNotificationSupportState(env = browserNotificationEnv()) {
+  if (!env.hasNotification) {
+    return { supported: false, reason: 'notification-unsupported', message: '이 환경은 브라우저 알림을 지원하지 않습니다.' };
+  }
+  if (env.isIos && !env.isStandalone) {
+    return { supported: false, reason: 'ios-install-required', message: 'iOS에서는 홈 화면에 추가한 뒤 앱 아이콘으로 실행해야 푸시 알림을 사용할 수 있습니다.' };
+  }
+  if (!env.hasServiceWorker || !env.hasPushManager) {
+    return { supported: false, reason: 'push-unsupported', message: '이 브라우저는 백그라운드 푸시 알림을 지원하지 않습니다.' };
+  }
+  return { supported: true, reason: 'supported', message: '푸시 알림을 사용할 수 있습니다.' };
+}
+
+export function isIosLike(userAgent = navigator.userAgent, platform = navigator.platform, maxTouchPoints = navigator.maxTouchPoints || 0) {
+  return /iPad|iPhone|iPod/.test(userAgent) || (platform === 'MacIntel' && maxTouchPoints > 1);
+}
+
+export function isStandalonePwa() {
+  return Boolean(window.matchMedia?.('(display-mode: standalone)').matches || navigator.standalone === true);
 }
 
 export function updateNotificationButton(button, enabled) {
   if (!button) {
     return;
   }
+  const support = getPushNotificationSupportState();
   if (!notificationsSupported()) {
     button.textContent = '알림 미지원';
     button.disabled = true;
     return;
   }
-  if (!pushNotificationsSupported()) {
-    button.textContent = '탭 알림만 지원';
+  if (!support.supported) {
+    button.textContent = support.reason === 'ios-install-required' ? '홈 화면 설치 필요' : '탭 알림만 지원';
     button.disabled = false;
     return;
   }
@@ -42,12 +64,13 @@ export async function requestNotificationPermission() {
 }
 
 export async function subscribeToPushNotifications({ apiFetch, apiHeaders, deviceId }) {
-  if (!pushNotificationsSupported()) {
-    return { ok: false, reason: 'unsupported' };
+  const support = getPushNotificationSupportState();
+  if (!support.supported) {
+    return { ok: false, reason: support.reason, message: support.message };
   }
   const permission = await requestNotificationPermission();
   if (permission !== 'granted') {
-    return { ok: false, reason: permission };
+    return { ok: false, reason: permission, message: '알림 권한이 허용되지 않았습니다.' };
   }
 
   const registration = await navigator.serviceWorker.ready;
@@ -96,6 +119,16 @@ export function notifyReplyReady({ enabled, title = 'OpenClaw 응답 도착', bo
   } catch {
     // Some WebView builds expose Notification but do not allow constructing it.
   }
+}
+
+function browserNotificationEnv() {
+  return {
+    hasNotification: 'Notification' in window,
+    hasServiceWorker: 'serviceWorker' in navigator,
+    hasPushManager: 'PushManager' in window,
+    isIos: isIosLike(),
+    isStandalone: isStandalonePwa(),
+  };
 }
 
 function urlBase64ToUint8Array(base64String) {

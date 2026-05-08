@@ -74,7 +74,7 @@ import './plugins/spot-wallet-intent.js';
 
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
 const PUSH_DEVICE_ID_KEY = 'openclaw-web-channel-push-device-id-v1';
-const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-08-push-001';
+const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-08-push-002';
 const CLIENT_API_VERSION = 1;
 const elements = {
   loginScreen: document.querySelector('#loginScreen'),
@@ -282,7 +282,14 @@ async function enableNotifications() {
       appendMessage('system', '응답 도착 푸시 알림을 켰습니다.', { persist: false });
       return;
     }
-    const permission = result.reason === 'unsupported' ? await requestNotificationPermission() : result.reason;
+    if (result.reason === 'ios-install-required' || result.reason === 'push-unsupported') {
+      settings.notificationsEnabled = false;
+      saveSettings(settings);
+      updateNotificationButton();
+      appendMessage('system', result.message || '이 환경에서는 백그라운드 푸시 알림을 사용할 수 없습니다.', { persist: false });
+      return;
+    }
+    const permission = result.reason === 'notification-unsupported' ? 'unsupported' : result.reason;
     settings.notificationsEnabled = permission === 'granted';
     saveSettings(settings);
     updateNotificationButton();
@@ -2477,6 +2484,6 @@ renderModelPicker();
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-08-push-001').catch(() => {});
+    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-08-push-002').catch(() => {});
   });
 }

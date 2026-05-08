@@ -1,7 +1,10 @@
 {
+  "id": "/",
   "name": "OpenClaw Web Channel",
   "short_name": "OpenClaw",
   "description": "Location-aware OpenClaw chat channel",
+  "lang": "ko-KR",
+  "categories": ["productivity", "utilities"],
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
