@@ -41,6 +41,27 @@ export async function clearAppCacheAndReload({ setStatus, pruneMediaUrlCache, cl
   reload();
 }
 
+export async function resetLocalAppStateAndReload({ setStatus, pruneMediaUrlCache, clearBrowserCaches: clearCaches = clearBrowserCaches, reload = () => window.location.reload(), setTimeoutFn = window.setTimeout.bind(window), localStorageRef = window.localStorage, sessionStorageRef = window.sessionStorage } = {}) {
+  setStatus('앱 로컬 데이터를 초기화하는 중입니다...');
+  pruneMediaUrlCache?.({ force: true, limit: 0 });
+  try {
+    localStorageRef?.clear?.();
+  } catch {
+    // Ignore storage access failures in restricted browser modes.
+  }
+  try {
+    sessionStorageRef?.clear?.();
+  } catch {
+    // Ignore storage access failures in restricted browser modes.
+  }
+  const result = await clearCaches();
+  if (result.androidCacheCleared) {
+    setTimeoutFn(() => reload(), 350);
+    return;
+  }
+  reload();
+}
+
 export async function runConnectionHealthCheck({ settings, sharedUserId, apiFetch, assertValidApiKey }) {
   assertValidApiKey(settings.apiKey);
   const healthResponse = await fetch(`${settings.apiUrl}/health`);

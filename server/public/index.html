@@ -7,10 +7,10 @@
     <meta name="theme-color" content="#e2e8f0" media="(prefers-color-scheme: light)" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <title>OpenClaw Mobile</title>
-    <link rel="manifest" href="/manifest.webmanifest?v=pwa-client-2026-05-09-cancel-align-001" />
+    <link rel="manifest" href="/manifest.webmanifest?v=pwa-client-2026-05-09-reset-state-001" />
     <link rel="icon" type="image/png" sizes="192x192" href="/assets/openclaw-app-icon-192.png" />
     <link rel="apple-touch-icon" sizes="180x180" href="/assets/openclaw-app-icon-180.png" />
-    <link rel="stylesheet" href="/styles.css?v=pwa-client-2026-05-09-cancel-align-001" />
+    <link rel="stylesheet" href="/styles.css?v=pwa-client-2026-05-09-reset-state-001" />
   </head>
   <body>
     <section id="loginScreen" class="login-screen hidden" aria-label="로그인">
@@ -191,6 +191,7 @@
           <div class="settings-actions">
             <button id="refreshAppButton" class="ghost-button" type="button">새로고침</button>
             <button id="clearCacheButton" class="ghost-button" type="button">강력 새로고침</button>
+            <button id="resetAppStateButton" class="ghost-button" type="button">앱 초기화</button>
             <button id="notificationButton" class="ghost-button" type="button">알림 허용</button>
             <button id="resetPasswordButton" class="ghost-button" type="button">비밀번호 재설정</button>
           </div>
@@ -264,6 +265,6 @@
       </form>
     </dialog>
 
-    <script type="module" src="/app.js?v=pwa-client-2026-05-09-cancel-align-001"></script>
+    <script type="module" src="/app.js?v=pwa-client-2026-05-09-reset-state-001"></script>
   </body>
 </html>

@@ -1,5 +1,5 @@
 import { bindAppEventListeners } from './modules/app-event-bindings.js';
-import { clearAppCacheAndReload as clearAppCacheAndReloadWithDeps, downloadUrlThroughAndroidClient, runHealthCheckAndReport } from './modules/app-maintenance.js';
+import { clearAppCacheAndReload as clearAppCacheAndReloadWithDeps, downloadUrlThroughAndroidClient, resetLocalAppStateAndReload as resetLocalAppStateAndReloadWithDeps, runHealthCheckAndReport } from './modules/app-maintenance.js';
 import { bootstrapInitialConversation } from './modules/app-startup.js';
 import { addAttachmentFilesToSelection, attachmentSummary as summarizeAttachments, buildAttachmentPayload, filesFromDataTransfer, filesFromUnknownList, hasDraggedFiles, nextComposerDragDepth, updateComposerDragOver } from './modules/attachment-input.js';
 import { createAttachmentPreview } from './modules/attachment-preview.js';
@@ -73,10 +73,11 @@ import './plugins/spot-order-card.js';
 import './plugins/spot-wallet-intent.js';
 import './plugins/spot-wallet-balance.js';
 import './plugins/orbs-polygon-bridge-card.js';
+import './plugins/wallet-transaction-card.js';
 
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
 const PUSH_DEVICE_ID_KEY = 'openclaw-web-channel-push-device-id-v1';
-const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-09-cancel-align-001';
+const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-09-reset-state-001';
 const CLIENT_API_VERSION = 1;
 const elements = {
   loginScreen: document.querySelector('#loginScreen'),
@@ -137,6 +138,7 @@ const elements = {
   resetPasswordButton: document.querySelector('#resetPasswordButton'),
   refreshAppButton: document.querySelector('#refreshAppButton'),
   clearCacheButton: document.querySelector('#clearCacheButton'),
+  resetAppStateButton: document.querySelector('#resetAppStateButton'),
   notificationButton: document.querySelector('#notificationButton'),
   clearHistoryButton: document.querySelector('#clearHistoryButton'),
   messages: document.querySelector('#messages'),
@@ -2072,6 +2074,18 @@ async function clearAppCacheAndReload() {
   }
 }
 
+async function resetLocalAppStateAndReload() {
+  if (!window.confirm('이 기기의 앱 설정, 초안, 대기 중 응답 표시, 로컬 캐시를 초기화하고 다시 불러옵니다. 서버에 저장된 대화는 삭제되지 않습니다. 계속할까요?')) {
+    return;
+  }
+  try {
+    await resetLocalAppStateAndReloadWithDeps({ setStatus, pruneMediaUrlCache });
+  } catch (error) {
+    appendMessage('system', `앱 초기화 실패: ${error instanceof Error ? error.message : String(error)}`, { persist: false });
+    window.location.reload();
+  }
+}
+
 async function resetPassword() {
   const input = promptPasswordChange();
   if (!input) {
@@ -2381,6 +2395,7 @@ bindAppEventListeners({
       }
     },
     clearAppCacheAndReload,
+    resetLocalAppStateAndReload,
     resetPassword,
     enableNotifications,
     downloadCurrentMedia,
@@ -2503,6 +2518,6 @@ renderModelPicker();
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-09-cancel-align-001').catch(() => {});
+    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-09-reset-state-001').catch(() => {});
   });
 }

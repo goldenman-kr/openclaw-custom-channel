@@ -73,6 +73,7 @@ export function bindAppEventListeners({ elements, actions, state, windowRef = wi
   elements.scrollToLatestButton?.addEventListener('click', () => actions.scrollToBottom({ force: true }));
   elements.messages.addEventListener('scroll', actions.messagesScroll);
   elements.clearCacheButton.addEventListener('click', actions.clearAppCacheAndReload);
+  elements.resetAppStateButton?.addEventListener('click', actions.resetLocalAppStateAndReload);
   elements.resetPasswordButton?.addEventListener('click', actions.resetPassword);
   elements.notificationButton.addEventListener('click', actions.enableNotifications);
   elements.mediaViewerDownload.addEventListener('click', actions.downloadCurrentMedia);
