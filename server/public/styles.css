@@ -983,7 +983,8 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); }
 .message-cancel-button {
   position: absolute;
   right: 9px;
-  top: 9px;
+  top: 50%;
+  transform: translateY(-50%);
   width: 30px;
   height: 30px;
   padding: 0;
@@ -1042,7 +1043,7 @@ html[data-theme="light"] .message-cancel-button {
 
   .message-cancel-button {
     right: 7px;
-    top: 7px;
+    top: 50%;
     width: 28px;
     height: 28px;
   }
