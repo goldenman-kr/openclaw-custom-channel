@@ -21,8 +21,13 @@ export function appendCopyAction(node, role, text, options = {}, copyTextToClipb
     return;
   }
   node.append(createCopyButton(copyText, async (value) => {
-    await copyTextToClipboard(value);
-    showToast?.('복사했어요.', { kind: 'success', durationMs: 1600 });
+    try {
+      await copyTextToClipboard(value);
+      showToast?.('복사했어요.', { kind: 'success', durationMs: 1600 });
+    } catch (error) {
+      showToast?.('복사하지 못했습니다.', { kind: 'error', durationMs: 2200 });
+      throw error;
+    }
   }));
 }
 

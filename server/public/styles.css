@@ -46,7 +46,7 @@ body {
 button, input, textarea, select { font: inherit; }
 
 input, textarea, select {
-  font-size: max(16px, 1rem);
+  font-size: 1rem;
 }
 
 .app-shell {
@@ -1404,7 +1404,7 @@ html[data-theme="light"] .message-cancel-button {
 .toast-stack {
   position: fixed;
   left: 50%;
-  bottom: calc(var(--composer-height, 96px) + max(18px, env(safe-area-inset-bottom)));
+  top: calc(max(14px, env(safe-area-inset-top)) + 62px);
   z-index: 80;
   display: grid;
   justify-items: center;
