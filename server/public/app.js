@@ -77,7 +77,7 @@ import './plugins/wallet-transaction-card.js';
 
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
 const PUSH_DEVICE_ID_KEY = 'openclaw-web-channel-push-device-id-v1';
-const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-12-simple-chat-layout-001';
+const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-12-viewport-offset-layout-001';
 const CLIENT_API_VERSION = 1;
 const elements = {
   loginScreen: document.querySelector('#loginScreen'),
@@ -173,9 +173,13 @@ function scrollMessagesToLatest() {
 }
 
 function syncViewportHeight() {
-  const height = window.visualViewport?.height || window.innerHeight;
+  const viewport = window.visualViewport;
+  // Mobile browsers can pan the visual viewport upward when the keyboard opens.
+  // If we use only visualViewport.height, the app shell ends above the visible
+  // viewport bottom and leaves a keyboard-sized blank area below the composer.
+  const height = viewport ? viewport.height + viewport.offsetTop : window.innerHeight;
   if (height > 0) {
-    document.documentElement.style.setProperty('--app-viewport-height', `${height}px`);
+    document.documentElement.style.setProperty('--app-viewport-height', `${Math.round(height)}px`);
   }
   document.documentElement.style.setProperty('--app-bottom-bleed', '0px');
   syncComposerHeight();
@@ -2563,6 +2567,6 @@ renderModelPicker();
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-12-simple-chat-layout-001').catch(() => {});
+    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-12-viewport-offset-layout-001').catch(() => {});
   });
 }
