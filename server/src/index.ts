@@ -22,6 +22,7 @@ import { applyNativeModelSelection, applyNativeThinkingSelection, getNativeModel
 import { handleOrbsBridgePluginRoute, resumeOrbsBridgeCheckpointPolling } from "./http/orbsBridgePluginRoutes.js";
 import { handleSpotPluginRoute, resumeSpotOrderPolling } from "./http/spotPluginRoutes.js";
 import { handleMediaRoute, handleStaticRoute } from "./http/staticRoutes.js";
+import { titleFromMessage } from "./conversationTitle.js";
 import { WebPushSender } from "./notifications/WebPushSender.js";
 import { GatewayAutonomousAnnounceBridge } from "./openclaw/GatewayAutonomousAnnounceBridge.js";
 import { createOpenClawClient } from "./openclaw/createOpenClawClient.js";
@@ -610,14 +611,6 @@ const messageJobRunner = new MessageJobRunner({
   },
   generatedMediaDirs: assistantGeneratedMediaDirs,
 });
-
-function titleFromMessage(message: string): string {
-  const firstLine = message.replace(/\s+/g, " ").trim();
-  if (!firstLine) {
-    return "새 대화";
-  }
-  return firstLine.length > 40 ? `${firstLine.slice(0, 40)}…` : firstLine;
-}
 
 async function persistConversationUserMessage(conversation: ConversationRecord, payload: MessageRequestDto): Promise<void> {
   if (payload.metadata?.hiddenFromHistory || !shouldPersistMessage(payload.message)) {
