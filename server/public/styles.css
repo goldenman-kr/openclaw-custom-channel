@@ -1,6 +1,7 @@
 :root {
   color-scheme: light dark;
   --app-viewport-height: 100dvh;
+  --chat-titlebar-height: calc(54px + env(safe-area-inset-top));
   --shell-x: clamp(14px, 2vw, 32px);
   --sidebar-width: 280px;
   --app-font-size: 16px;
@@ -111,8 +112,8 @@ html[data-theme="system"] .danger-button { color: #991b1b; }
 
 .chat-titlebar {
   flex: 0 0 auto;
-  height: calc(54px + env(safe-area-inset-top));
-  min-height: calc(54px + env(safe-area-inset-top));
+  height: var(--chat-titlebar-height);
+  min-height: var(--chat-titlebar-height);
   display: grid;
   grid-template-columns: 44px minmax(0, 1fr) 44px;
   align-items: center;
@@ -1160,7 +1161,15 @@ body.ios-keyboard-open .composer {
 
 body.ios-composer-focus-pending .messages,
 body.ios-keyboard-open .messages {
-  padding-bottom: calc(var(--composer-height, 96px) + 14px);
+  flex: 0 0 auto;
+  height: calc(var(--ios-keyboard-top, var(--app-viewport-height, 100vh)) - var(--chat-titlebar-height) - var(--composer-height, 96px));
+  min-height: 0;
+  padding-bottom: 14px;
+}
+
+body.ios-composer-focus-pending .messages:not(:has(> .message.system:only-child))::before,
+body.ios-keyboard-open .messages:not(:has(> .message.system:only-child))::before {
+  margin-top: 0;
 }
 
 body.ios-composer-focus-pending .floating-action-menu,
