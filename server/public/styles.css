@@ -290,9 +290,9 @@ html[data-theme="system"] .danger-button { color: #991b1b; }
 }
 
 .floating-action-menu {
-  position: fixed;
+  position: absolute;
   right: max(14px, env(safe-area-inset-right));
-  bottom: calc(max(14px, env(safe-area-inset-bottom)) + 115px);
+  bottom: calc(var(--composer-height, 96px) + 14px);
   z-index: 40;
 }
 
@@ -553,10 +553,6 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); }
 .messages:not(:has(> .message.system:only-child))::before {
   content: '';
   margin-top: auto;
-}
-
-.messages.ios-scroll-nudge {
-  -webkit-overflow-scrolling: auto;
 }
 
 .history-load-more {
@@ -1143,37 +1139,14 @@ html[data-theme="light"] .message-cancel-button {
 }
 
 .composer {
-  position: sticky;
-  bottom: 0;
+  position: relative;
+  flex: 0 0 auto;
   display: grid;
   gap: 6px;
   min-width: 0;
   padding: 8px var(--shell-x) clamp(10px, env(safe-area-inset-bottom), 22px);
   background: linear-gradient(180deg, transparent, var(--bg) 22%);
-}
-
-body.ios-composer-focus-pending .composer,
-body.ios-keyboard-open .composer {
-  position: fixed;
-  left: 0;
-  right: 0;
-  top: auto;
-  bottom: var(--ios-keyboard-bottom, 0px);
-  z-index: 45;
-  transform: translateZ(0);
-}
-
-body.ios-composer-focus-pending .messages,
-body.ios-keyboard-open .messages {
-  flex: 0 0 auto;
-  height: calc(var(--ios-keyboard-top, var(--app-viewport-height, 100vh)) - var(--chat-titlebar-height) - var(--composer-height, 96px));
-  min-height: 0;
-  padding-bottom: 14px;
-}
-
-body.ios-composer-focus-pending .floating-action-menu,
-body.ios-keyboard-open .floating-action-menu {
-  display: none;
+  z-index: 20;
 }
 
 .composer.drag-over {

@@ -77,7 +77,7 @@ import './plugins/wallet-transaction-card.js';
 
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
 const PUSH_DEVICE_ID_KEY = 'openclaw-web-channel-push-device-id-v1';
-const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-12-ios-scroll-nudge-001';
+const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-12-simple-chat-layout-001';
 const CLIENT_API_VERSION = 1;
 const elements = {
   loginScreen: document.querySelector('#loginScreen'),
@@ -159,93 +159,47 @@ const elements = {
   statusText: document.querySelector('#statusText'),
 };
 
-function isIosLikeBrowser() {
-  return /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+function syncComposerHeight() {
+  const composerHeight = Math.ceil(elements.messageForm?.getBoundingClientRect().height || 96);
+  document.documentElement.style.setProperty('--composer-height', `${composerHeight}px`);
 }
 
-function isComposerInputFocused() {
-  return document.activeElement === elements.messageInput || elements.messageForm?.contains(document.activeElement);
-}
-
-function forceMessagesToLatest({ nudge = false } = {}) {
-  const messages = elements.messages;
-  if (!messages) {
+function scrollMessagesToLatest() {
+  if (!elements.messages) {
     return;
   }
-  const maxScrollTop = Math.max(0, messages.scrollHeight - messages.clientHeight);
-  messages.scrollTop = maxScrollTop;
-  if (nudge) {
-    messages.classList.add('ios-scroll-nudge');
-    if (maxScrollTop > 0) {
-      messages.scrollTop = Math.max(0, maxScrollTop - 1);
-    }
-    // Force iOS standalone Safari to flush the scroll container layout. A real
-    // one-pixel scroll fixes the black gap; this reproduces that scroll without
-    // visibly moving the chat.
-    void messages.offsetHeight;
-    messages.scrollTop = maxScrollTop;
-    messages.dispatchEvent(new Event('scroll', { bubbles: true }));
-    requestAnimationFrame(() => messages.classList.remove('ios-scroll-nudge'));
-  }
+  elements.messages.scrollTop = Math.max(0, elements.messages.scrollHeight - elements.messages.clientHeight);
   hideScrollToLatestButton();
 }
 
-function stabilizeIosComposerAfterFocus() {
-  if (!isIosLikeBrowser()) {
-    return;
-  }
-  const stabilize = () => {
-    syncViewportHeight();
-    forceMessagesToLatest({ nudge: true });
-  };
-  stabilize();
-  requestAnimationFrame(() => {
-    stabilize();
-    requestAnimationFrame(stabilize);
-  });
-  window.setTimeout(stabilize, 80);
-  window.setTimeout(stabilize, 180);
-  window.setTimeout(stabilize, 360);
-}
-
 function syncViewportHeight() {
-  const viewport = window.visualViewport;
-  const height = viewport?.height || window.innerHeight;
+  const height = window.visualViewport?.height || window.innerHeight;
   if (height > 0) {
     document.documentElement.style.setProperty('--app-viewport-height', `${height}px`);
   }
-  const bottomBleed = isIosLikeBrowser() && window.matchMedia?.('(display-mode: standalone)')?.matches
-    ? Math.max(0, Math.round((window.screen?.height || 0) - window.innerHeight))
-    : 0;
-  document.documentElement.style.setProperty('--app-bottom-bleed', `${Math.min(bottomBleed, 96)}px`);
+  document.documentElement.style.setProperty('--app-bottom-bleed', '0px');
+  syncComposerHeight();
+}
 
-  const keyboardOpen = isIosLikeBrowser() && isComposerInputFocused() && viewport && viewport.height < window.innerHeight - 80;
-  document.body.classList.toggle('ios-keyboard-open', Boolean(keyboardOpen));
-  if (keyboardOpen) {
-    const composerHeight = Math.ceil(elements.messageForm?.getBoundingClientRect().height || 96);
-    const keyboardBottom = Math.max(0, Math.round(window.innerHeight - (viewport.offsetTop + viewport.height)));
-    document.documentElement.style.setProperty('--ios-keyboard-top', `${Math.max(0, Math.round(viewport.offsetTop + viewport.height))}px`);
-    document.documentElement.style.setProperty('--ios-keyboard-bottom', `${keyboardBottom}px`);
-    document.documentElement.style.setProperty('--composer-height', `${composerHeight}px`);
-    window.scrollTo(0, 0);
-    forceMessagesToLatest({ nudge: true });
-    requestAnimationFrame(() => forceMessagesToLatest({ nudge: true }));
-    window.setTimeout(() => forceMessagesToLatest({ nudge: true }), 80);
-    window.setTimeout(() => forceMessagesToLatest({ nudge: true }), 240);
-  } else {
-    document.documentElement.style.setProperty('--ios-keyboard-top', `${height}px`);
-    document.documentElement.style.setProperty('--ios-keyboard-bottom', '0px');
-    if (!isComposerInputFocused()) {
-      document.body.classList.remove('ios-composer-focus-pending');
-      document.documentElement.style.removeProperty('--composer-height');
-    }
-  }
+function stabilizeComposerAfterFocus() {
+  syncViewportHeight();
+  requestAnimationFrame(() => {
+    syncViewportHeight();
+    scrollMessagesToLatest();
+  });
+  window.setTimeout(() => {
+    syncViewportHeight();
+    scrollMessagesToLatest();
+  }, 180);
 }
 
 syncViewportHeight();
 window.visualViewport?.addEventListener('resize', syncViewportHeight);
 window.visualViewport?.addEventListener('scroll', syncViewportHeight);
 window.addEventListener('resize', syncViewportHeight);
+if (window.ResizeObserver && elements.messageForm) {
+  new ResizeObserver(syncComposerHeight).observe(elements.messageForm);
+}
 
 applyStoredSidebarWidth();
 
@@ -2558,16 +2512,8 @@ bindAppEventListeners({
     handleComposerDragLeave,
     handleComposerDrop,
     handleSubmit,
-    messageInputFocus: () => {
-      if (isIosLikeBrowser()) {
-        document.body.classList.add('ios-composer-focus-pending');
-      }
-      stabilizeIosComposerAfterFocus();
-    },
-    messageInputBlur: () => {
-      document.body.classList.remove('ios-composer-focus-pending');
-      window.setTimeout(syncViewportHeight, 0);
-    },
+    messageInputFocus: stabilizeComposerAfterFocus,
+    messageInputBlur: () => window.setTimeout(syncViewportHeight, 0),
     messageInputChanged: () => {
       saveComposerDraft();
       autoResizeTextarea();
@@ -2617,6 +2563,6 @@ renderModelPicker();
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-12-ios-scroll-nudge-001').catch(() => {});
+    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-12-simple-chat-layout-001').catch(() => {});
   });
 }
