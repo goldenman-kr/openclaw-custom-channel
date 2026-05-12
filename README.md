@@ -21,13 +21,6 @@
 - API 계약은 `specification.md`를 기준으로 유지
 - 고정 계약은 `specification.md`의 `8.1.1 API Contract v1 (Locked for MVP)`를 기준으로 구현
 
-## 시작 순서 (권장)
-
-1. `server/` Web/PWA 및 Bridge API 구현
-2. Web/PWA Settings(API URL/API Key) 연동
-3. Android/iOS WebView에서 서버 Web/PWA 로딩 확인
-4. 위치/첨부/슬래시 커맨드 통합 테스트
-
 ## 빠른 로컬 검증
 
 서버:
