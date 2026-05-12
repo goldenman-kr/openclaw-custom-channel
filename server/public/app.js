@@ -77,7 +77,7 @@ import './plugins/wallet-transaction-card.js';
 
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
 const PUSH_DEVICE_ID_KEY = 'openclaw-web-channel-push-device-id-v1';
-const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-12-ios-safe-area-001';
+const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-12-ios-bottom-gap-001';
 const CLIENT_API_VERSION = 1;
 const elements = {
   loginScreen: document.querySelector('#loginScreen'),
@@ -158,6 +158,18 @@ const elements = {
   sendButton: document.querySelector('#sendButton'),
   statusText: document.querySelector('#statusText'),
 };
+
+function syncViewportHeight() {
+  const height = window.visualViewport?.height || window.innerHeight;
+  if (height > 0) {
+    document.documentElement.style.setProperty('--app-viewport-height', `${height}px`);
+  }
+}
+
+syncViewportHeight();
+window.visualViewport?.addEventListener('resize', syncViewportHeight);
+window.visualViewport?.addEventListener('scroll', syncViewportHeight);
+window.addEventListener('resize', syncViewportHeight);
 
 applyStoredSidebarWidth();
 
@@ -2518,6 +2530,6 @@ renderModelPicker();
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-12-ios-safe-area-001').catch(() => {});
+    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-12-ios-bottom-gap-001').catch(() => {});
   });
 }

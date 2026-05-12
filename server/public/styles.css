@@ -1,5 +1,6 @@
 :root {
   color-scheme: light dark;
+  --app-viewport-height: 100dvh;
   --shell-x: clamp(14px, 2vw, 32px);
   --sidebar-width: 280px;
   --app-font-size: 16px;
@@ -40,7 +41,7 @@ button, input, textarea, select { font: inherit; }
 
 .app-shell {
   width: 100%;
-  height: 100dvh;
+  height: var(--app-viewport-height, 100dvh);
   margin: 0;
   display: flex;
   flex-direction: column;
@@ -1141,7 +1142,7 @@ html[data-theme="light"] .message-cancel-button {
   display: grid;
   gap: 6px;
   min-width: 0;
-  padding: 8px var(--shell-x) max(14px, env(safe-area-inset-bottom));
+  padding: 8px var(--shell-x) clamp(10px, env(safe-area-inset-bottom), 22px);
   background: linear-gradient(180deg, transparent, var(--bg) 22%);
 }
 
