@@ -27,11 +27,16 @@ html, body {
   overscroll-behavior-y: none;
 }
 
-html { font-size: var(--app-font-size); }
+html {
+  font-size: var(--app-font-size);
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
 
 body {
   margin: 0;
   overflow: hidden;
+  touch-action: manipulation;
   font-family: var(--app-font-family);
   font-size: 1rem;
   background: var(--bg);
@@ -39,6 +44,10 @@ body {
 }
 
 button, input, textarea, select { font: inherit; }
+
+input, textarea, select {
+  font-size: max(16px, 1rem);
+}
 
 .app-shell {
   width: 100%;

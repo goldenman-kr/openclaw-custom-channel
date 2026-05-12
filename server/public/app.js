@@ -77,7 +77,7 @@ import './plugins/wallet-transaction-card.js';
 
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
 const PUSH_DEVICE_ID_KEY = 'openclaw-web-channel-push-device-id-v1';
-const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-12-viewport-offset-layout-001';
+const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-12-disable-browser-zoom-001';
 const CLIENT_API_VERSION = 1;
 const elements = {
   loginScreen: document.querySelector('#loginScreen'),
@@ -158,6 +158,23 @@ const elements = {
   sendButton: document.querySelector('#sendButton'),
   statusText: document.querySelector('#statusText'),
 };
+
+function preventDefaultBrowserZoom(event) {
+  event.preventDefault();
+}
+
+function installBrowserZoomGuards() {
+  document.addEventListener('gesturestart', preventDefaultBrowserZoom, { passive: false });
+  document.addEventListener('gesturechange', preventDefaultBrowserZoom, { passive: false });
+  document.addEventListener('gestureend', preventDefaultBrowserZoom, { passive: false });
+  document.addEventListener('touchmove', (event) => {
+    if (event.touches?.length > 1) {
+      event.preventDefault();
+    }
+  }, { passive: false });
+}
+
+installBrowserZoomGuards();
 
 function syncComposerHeight() {
   const composerHeight = Math.ceil(elements.messageForm?.getBoundingClientRect().height || 96);
@@ -2567,6 +2584,6 @@ renderModelPicker();
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-12-viewport-offset-layout-001').catch(() => {});
+    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-12-disable-browser-zoom-001').catch(() => {});
   });
 }
