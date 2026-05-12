@@ -8,13 +8,14 @@ import { WagmiProvider } from 'wagmi';
 import { getAccount, getChainId, reconnect, watchAccount, watchChainId } from '@wagmi/core';
 import { ConnectionController, PublicStateController } from '@reown/appkit-controllers';
 
-const PROJECT_ID = '120c9576f09c8e51fd55eec984c877e8';
+const APP_ORIGIN = import.meta.env.VITE_APP_ORIGIN || window.location.origin;
+const PROJECT_ID = import.meta.env.VITE_REOWN_PROJECT_ID || '';
 const SUPPORTED_NETWORKS = [mainnet, arbitrum, base, polygon, bsc];
 const METADATA = {
-  name: 'RODY',
-  description: 'RODY AI Assistant',
-  url: 'https://ai.kryp.xyz/',
-  icons: ['https://ai.kryp.xyz/assets/openclaw-app-icon-512.png'],
+  name: import.meta.env.VITE_APP_NAME || 'OpenClaw',
+  description: import.meta.env.VITE_APP_DESCRIPTION || 'OpenClaw Custom Channel',
+  url: `${APP_ORIGIN}/`,
+  icons: [`${APP_ORIGIN}/assets/openclaw-app-icon-512.png`],
 };
 
 const queryClient = new QueryClient();
@@ -83,6 +84,10 @@ function renderIosPwaWalletLink() {
   }
 
   const href = buildMetaMaskUniversalLink(wcUri);
+  if (node.dataset.href === href) {
+    return;
+  }
+  node.dataset.href = href;
   node.innerHTML = `
     <div style="font-size:13px;line-height:1.35;margin-bottom:8px;opacity:.92">
       iOS 웹앱에서 자동 실행이 막히면 아래 버튼을 직접 누르세요.
@@ -129,7 +134,7 @@ const appKit = createAppKit({
 const wagmiConfig = wagmiAdapter.wagmiConfig;
 const subscribers = new Set();
 let currentChainId = '';
-let reconnectStarted = false;
+let reconnectPromise = null;
 let explicitWalletConnectInProgress = false;
 
 function toHexChainId(chainId) {
@@ -170,11 +175,10 @@ function emit(event, payload) {
 }
 
 function ensureReconnect() {
-  if (reconnectStarted) {
-    return;
+  if (!reconnectPromise) {
+    reconnectPromise = reconnect(wagmiConfig).catch(() => null);
   }
-  reconnectStarted = true;
-  reconnect(wagmiConfig).catch(() => {});
+  return reconnectPromise;
 }
 
 function waitForAccount(timeoutMs = 120_000) {
@@ -218,6 +222,33 @@ function requireWalletProvider() {
   return provider;
 }
 
+async function readProviderChainId(provider = getWalletProvider()) {
+  if (!provider?.request) {
+    return '';
+  }
+  try {
+    return toHexChainId(await provider.request({ method: 'eth_chainId' }));
+  } catch {
+    return '';
+  }
+}
+
+async function waitForProviderChain(targetChainId, timeoutMs = 15_000) {
+  const target = toHexChainId(targetChainId).toLowerCase();
+  const startedAt = Date.now();
+  let actual = '';
+  while (Date.now() - startedAt < timeoutMs) {
+    actual = await readProviderChainId();
+    if (actual.toLowerCase() === target) {
+      currentChainId = actual;
+      emit('chainChanged', currentChainId);
+      return;
+    }
+    await new Promise((resolve) => window.setTimeout(resolve, 500));
+  }
+  throw new Error(`지갑 네트워크 전환이 확인되지 않았습니다. 목표=${target}, 현재=${actual || '확인 불가'}. 지갑에서 BNB Chain으로 전환한 뒤 다시 시도해주세요.`);
+}
+
 async function switchToChain(chainId) {
   const numericChainId = parseChainId(chainId);
   if (!numericChainId) {
@@ -230,37 +261,50 @@ async function switchToChain(chainId) {
   const targetChainId = toHexChainId(numericChainId);
   const provider = requireWalletProvider();
 
-  // MetaMask 모바일/WalletConnect에서는 AppKit 내부 network state 변경보다
-  // EIP-3326 wallet_switchEthereumChain 직접 호출이 실제 승인 프롬프트를 띄우는 경로다.
+  if ((await readProviderChainId(provider)).toLowerCase() === targetChainId.toLowerCase()) {
+    currentChainId = targetChainId;
+    emit('chainChanged', currentChainId);
+    return;
+  }
+
+  // MetaMask 모바일/WalletConnect에서는 요청이 성공처럼 반환되어도 실제 지갑 네트워크가
+  // 그대로인 경우가 있다. 그래서 직접 switch → 확인, AppKit switch → 확인 순서로 검증한다.
+  let providerError = null;
   try {
     await provider.request({
       method: 'wallet_switchEthereumChain',
       params: [{ chainId: targetChainId }],
     });
-    currentChainId = targetChainId;
-    emit('chainChanged', currentChainId);
+    await waitForProviderChain(targetChainId);
     return;
-  } catch (providerError) {
-    try {
-      await appKit.switchNetwork?.(network, { throwOnFailure: true });
-      currentChainId = targetChainId;
-      emit('chainChanged', currentChainId);
-      return;
-    } catch {
-      throw providerError;
-    }
+  } catch (error) {
+    providerError = error;
+  }
+
+  try {
+    await appKit.switchNetwork?.(network, { throwOnFailure: true });
+    await waitForProviderChain(targetChainId);
+    return;
+  } catch (appKitError) {
+    throw providerError || appKitError;
   }
 }
 
 async function connect(options = {}) {
-  ensureReconnect();
+  await ensureReconnect();
   let address = getConnectedAddress();
-  if (!address) {
+  let provider = getWalletProvider();
+  if (!address || !provider?.request) {
     explicitWalletConnectInProgress = true;
     try {
       await appKit.open({ view: 'Connect', namespace: 'eip155' });
       renderIosPwaWalletLink();
       address = await waitForAccount();
+      await appKit.close?.();
+      provider = getWalletProvider();
+      if (!provider?.request) {
+        throw new Error('지갑 provider를 찾지 못했습니다. 지갑 연결을 다시 승인해주세요.');
+      }
     } finally {
       explicitWalletConnectInProgress = false;
       removeIosPwaWalletLink();
@@ -289,7 +333,7 @@ async function reconnectChain(chainId) {
 }
 
 async function openNetworks() {
-  ensureReconnect();
+  await ensureReconnect();
   await appKit.open({ view: 'Networks', namespace: 'eip155' });
 }
 
@@ -307,13 +351,17 @@ async function request({ method, params = [] }) {
       return currentChainId || toHexChainId(getChainId(wagmiConfig));
     }
     case 'wallet_switchEthereumChain': {
-      ensureReconnect();
+      await ensureReconnect();
       await switchToChain(params?.[0]?.chainId);
       return null;
     }
     default: {
-      ensureReconnect();
-      const provider = requireWalletProvider();
+      await ensureReconnect();
+      let provider = getWalletProvider();
+      if (!provider?.request) {
+        await connect();
+        provider = requireWalletProvider();
+      }
       return provider.request({ method, params });
     }
   }

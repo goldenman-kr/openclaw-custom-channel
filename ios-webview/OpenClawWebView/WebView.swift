@@ -105,7 +105,11 @@ struct WebView: UIViewRepresentable {
                 return
             }
 
-            if host == "ai.kryp.xyz" {
+            let configuredHost = Bundle.main.object(forInfoDictionaryKey: "OpenClawAllowedHost") as? String
+            let configuredURL = Bundle.main.object(forInfoDictionaryKey: "OpenClawStartURL") as? String
+            let validConfiguredURL = (configuredURL?.hasPrefix("$(") == false) ? configuredURL : nil
+            let allowedHost = (configuredHost?.hasPrefix("$(") == false) ? configuredHost : nil) ?? URL(string: validConfiguredURL ?? "http://localhost:29999/")?.host
+            if host == allowedHost {
                 decisionHandler(.allow)
                 return
             }

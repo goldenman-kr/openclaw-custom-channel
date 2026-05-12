@@ -33,7 +33,7 @@ import android.webkit.WebViewClient;
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout;
 
 public class MainActivity extends Activity {
-    private static final String START_URL = "https://ai.kryp.xyz/";
+    private static final String START_URL = BuildConfig.START_URL;
     private static final int LOCATION_REQUEST = 42;
     private static final int FILE_REQUEST = 43;
     private static final int NOTIFICATION_REQUEST = 44;
@@ -84,7 +84,7 @@ public class MainActivity extends Activity {
             @Override
             public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
                 Uri uri = request.getUrl();
-                if ("ai.kryp.xyz".equals(uri.getHost())) {
+                if (BuildConfig.ALLOWED_HOST.equals(uri.getHost())) {
                     return false;
                 }
                 startActivity(new Intent(Intent.ACTION_VIEW, uri));

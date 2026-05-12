@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import type { HistoryAttachment } from "../session/HistoryStore.js";
 import type { ConversationRecord, MessageStore } from "../session/SqliteChatStore.js";
@@ -59,7 +60,7 @@ interface ModelCompletedRecord {
 }
 
 const DEFAULT_GATEWAY_URL = "http://127.0.0.1:18789";
-const DEFAULT_SESSIONS_DIR = "/home/orbsian/.openclaw/agents/main/sessions";
+const DEFAULT_SESSIONS_DIR = join(homedir(), ".openclaw", "agents", "main", "sessions");
 
 export class GatewayAutonomousAnnounceBridge {
   private socket: unknown;

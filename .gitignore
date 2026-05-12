@@ -4,11 +4,27 @@
 **/xcuserdata/
 *.xcuserstate
 
+# Local env / secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.p12
+*.keystore
+*.jks
+*.mobileprovision
+
 # Node / TypeScript
 node_modules/
 dist/
 server/state/
 TODO.md
+
+# Native build outputs
+*.apk
+*.aab
+*.ipa
+DerivedData/
 
 # Flutter / Dart
 build/

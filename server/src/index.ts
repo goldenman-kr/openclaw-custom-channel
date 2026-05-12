@@ -48,8 +48,9 @@ const apiContractVersion = 1;
 const minClientApiVersion = 1;
 const execFileAsync = promisify(execFile);
 
+const defaultBridgeApiKeys = process.env.NODE_ENV === "production" ? "" : "dev-api-key";
 const validApiKeys = new Set(
-  (process.env.BRIDGE_API_KEYS ?? "dev-api-key")
+  (process.env.BRIDGE_API_KEYS ?? defaultBridgeApiKeys)
     .split(",")
     .map((key) => key.trim())
     .filter(Boolean),
@@ -63,7 +64,7 @@ const historyStore = new FileHistoryStore(historyDir);
 const publicDir = resolve(process.env.PUBLIC_DIR ?? join(process.cwd(), "public"));
 const stateDir = resolve(process.env.CHANNEL_STATE_DIR ?? join(process.cwd(), "state"));
 const historyMediaDir = resolve(process.env.HISTORY_MEDIA_DIR ?? join(stateDir, "history-media"));
-const assistantGeneratedMediaDirs = (process.env.ASSISTANT_MEDIA_SCAN_DIRS ?? "/home/orbsian/.openclaw/media")
+const assistantGeneratedMediaDirs = (process.env.ASSISTANT_MEDIA_SCAN_DIRS ?? join(homedir(), ".openclaw", "media"))
   .split(":")
   .map((dir) => dir.trim())
   .filter(Boolean)
@@ -126,15 +127,17 @@ const workspaceCommonDir = resolve(process.env.USER_WORKSPACE_COMMON_DIR ?? join
 const workspaceCommonWritable = process.env.USER_WORKSPACE_COMMON_WRITABLE === "1";
 
 const mediaRoots = [
-  resolve(process.env.MEDIA_ROOT ?? "/home/orbsian/.openclaw/workspace"),
-  resolve(process.env.OPENCLAW_MEDIA_DIR ?? "/home/orbsian/.openclaw/media"),
+  resolve(process.env.MEDIA_ROOT ?? join(homedir(), ".openclaw", "workspace")),
+  resolve(process.env.OPENCLAW_MEDIA_DIR ?? join(homedir(), ".openclaw", "media")),
   resolve(process.env.OPENCLAW_CANVAS_DIR ?? join(homedir(), ".openclaw", "canvas")),
   resolve(process.env.UPLOAD_DIR ?? join(process.cwd(), "state", "uploads")),
   stateDir,
 ];
 
+const defaultCorsOrigin = host === "0.0.0.0" ? `http://127.0.0.1:${port}` : `http://${host}:${port}`;
+const corsAllowOrigin = process.env.CORS_ALLOW_ORIGIN ?? defaultCorsOrigin;
 const corsHeaders = {
-  "access-control-allow-origin": "*",
+  "access-control-allow-origin": corsAllowOrigin,
   "access-control-allow-methods": "GET,POST,PATCH,DELETE,OPTIONS",
   "access-control-allow-headers": "authorization,content-type,x-device-id,x-user-id,x-openclaw-sync",
   "access-control-allow-credentials": "true",

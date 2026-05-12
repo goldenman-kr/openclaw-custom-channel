@@ -26,8 +26,9 @@ npm install
 npm run dev
 ```
 
-기본 바인딩은 외부 접근 가능한 `HOST=0.0.0.0`, `PORT=29999`입니다.
-운영/공유 환경에서는 `BRIDGE_API_KEYS` 환경변수로 쉼표 구분 API Key 목록을 설정합니다.
+기본 바인딩은 `HOST=0.0.0.0`, `PORT=29999`입니다.
+운영/공유 환경에서는 `BRIDGE_API_KEYS` 환경변수로 쉼표 구분 API Key 목록을 설정합니다. `NODE_ENV=production`에서는 개발용 기본 키가 비활성화됩니다.
+Cross-origin API 호출이 필요하면 `CORS_ALLOW_ORIGIN=https://your-domain.example`처럼 허용 origin을 명시합니다. 기본 CORS origin은 `http://127.0.0.1:29999`로 제한됩니다.
 Web UI는 API Key를 자동 입력하지 않으므로, 설정 화면에서 키를 직접 입력해야 합니다.
 
 기본 OpenClaw transport는 `openclaw agent`입니다. 모바일 `device_id` 또는 Web UI의 `user_id`는 브릿지에서 `mobile-<id>` 세션으로 매핑되고, 아래 형식으로 OpenClaw Gateway agent turn을 실행합니다.

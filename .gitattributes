@@ -1,0 +1,14 @@
+# Keep internal implementation notes and throwaway plans out of `git archive` exports.
+MULTI_SESSION_IMPL.md export-ignore
+MULTI_SESSION_PLAN.md export-ignore
+REFACTORY.md export-ignore
+TODO.md export-ignore
+server/public/TEMP_* export-ignore
+
+# Runtime/private state and generated artifacts must never be included in share archives.
+server/state/** export-ignore
+server/dist/** export-ignore
+server/node_modules/** export-ignore
+android-webview/.gradle/** export-ignore
+android-webview/**/build/** export-ignore
+ios-webview/**/xcuserdata/** export-ignore

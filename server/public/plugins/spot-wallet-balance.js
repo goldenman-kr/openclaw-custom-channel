@@ -4,6 +4,7 @@ import { getWalletMode, requestWallet, requestWalletAccounts, switchWalletChain 
 const CHAINS = {
   1: {
     name: 'Ethereum',
+    rpcUrls: ['https://1rpc.io/eth', 'https://ethereum-rpc.publicnode.com'],
     native: { symbol: 'ETH', decimals: 18 },
     tokens: [
       { symbol: 'ORBS', name: 'Orbs', address: '0xff56cc6b1e6ded347aa0b7676c85ab0b3d08b0fa', decimals: 18 },
@@ -16,6 +17,7 @@ const CHAINS = {
   },
   42161: {
     name: 'Arbitrum',
+    rpcUrls: ['https://arb1.arbitrum.io/rpc', 'https://arbitrum-one-rpc.publicnode.com'],
     native: { symbol: 'ETH', decimals: 18 },
     tokens: [
       { symbol: 'USDC', name: 'USD Coin', address: '0xaf88d065e77c8cc2239327c5edb3a432268e5831', decimals: 6 },
@@ -26,6 +28,7 @@ const CHAINS = {
   },
   8453: {
     name: 'Base',
+    rpcUrls: ['https://mainnet.base.org', 'https://base-rpc.publicnode.com'],
     native: { symbol: 'ETH', decimals: 18 },
     tokens: [
       { symbol: 'USDC', name: 'USD Coin', address: '0x833589fcd6edb6e08f4c7c32d4f71b54bdA02913', decimals: 6 },
@@ -35,6 +38,7 @@ const CHAINS = {
   },
   137: {
     name: 'Polygon',
+    rpcUrls: ['https://polygon-rpc.com', 'https://1rpc.io/matic'],
     native: { symbol: 'POL', decimals: 18 },
     tokens: [
       { symbol: 'ORBS', name: 'Orbs', address: '0x614389eaae0a6821dc49062d56bda3d9d45fa2ff', decimals: 18 },
@@ -46,6 +50,7 @@ const CHAINS = {
   },
   56: {
     name: 'BNB Chain',
+    rpcUrls: ['https://bsc-dataseed.binance.org', 'https://bsc-rpc.publicnode.com'],
     native: { symbol: 'BNB', decimals: 18 },
     tokens: [
       { symbol: 'USDC', name: 'USD Coin', address: '0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d', decimals: 18 },
@@ -125,13 +130,52 @@ function formatUnits(value, decimals) {
   return trimmed ? `${whole}.${trimmed}` : whole.toString();
 }
 
-async function getNativeBalance(owner) {
-  const result = await requestWallet('eth_getBalance', [owner, 'latest']);
+async function waitForWalletChain(expectedChainId, timeoutMs = 10_000) {
+  const expected = `0x${BigInt(expectedChainId).toString(16)}`.toLowerCase();
+  const startedAt = Date.now();
+  let actual = '';
+  while (Date.now() - startedAt < timeoutMs) {
+    actual = String(await requestWallet('eth_chainId')).toLowerCase();
+    if (actual === expected) {
+      return;
+    }
+    await new Promise((resolve) => window.setTimeout(resolve, 500));
+  }
+  throw new Error(`지갑 네트워크가 선택한 체인과 일치하지 않습니다. 선택=${expected}, 현재=${actual || '확인 불가'}. 체인 전환을 승인한 뒤 다시 조회해주세요.`);
+}
+
+async function rpcCall(chain, method, params) {
+  const urls = Array.isArray(chain?.rpcUrls) ? chain.rpcUrls : [];
+  let lastError = null;
+  for (const url of urls) {
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }),
+      });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      const payload = await response.json();
+      if (payload?.error) {
+        throw new Error(payload.error.message || JSON.stringify(payload.error));
+      }
+      return payload?.result;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError || new Error(`${chain?.name || '선택한 체인'} RPC를 사용할 수 없습니다.`);
+}
+
+async function getNativeBalance(chain, owner) {
+  const result = await rpcCall(chain, 'eth_getBalance', [owner, 'latest']);
   return bigintFromRpcQuantity(result);
 }
 
-async function getErc20Balance({ token, owner }) {
-  const result = await requestWallet('eth_call', [{ to: token, data: encodeBalanceOfCall(owner) }, 'latest']);
+async function getErc20Balance({ chain, token, owner }) {
+  const result = await rpcCall(chain, 'eth_call', [{ to: token, data: encodeBalanceOfCall(owner) }, 'latest']);
   return bigintFromRpcQuantity(result);
 }
 
@@ -243,15 +287,13 @@ function renderSpotWalletBalance({ parent, codeText, fallback }) {
       if (!chain) {
         throw new Error('지원하지 않는 체인입니다.');
       }
-      setStatus(status, `${chain.name} 체인으로 전환하는 중입니다…`);
-      await switchWalletChain(chainId);
-      setStatus(status, '잔액을 조회하는 중입니다…');
+      setStatus(status, `${chain.name} 전용 RPC로 잔액을 조회하는 중입니다…`);
       const rows = [];
-      const nativeBalance = await getNativeBalance(connectedAccount);
+      const nativeBalance = await getNativeBalance(chain, connectedAccount);
       rows.push({ symbol: chain.native.symbol, amount: formatUnits(nativeBalance, chain.native.decimals), address: '' });
       for (const token of chain.tokens) {
         try {
-          const balance = await getErc20Balance({ token: token.address, owner: connectedAccount });
+          const balance = await getErc20Balance({ chain, token: token.address, owner: connectedAccount });
           if (balance > 0n || data.showZeroBalances) {
             rows.push({ symbol: token.symbol, amount: formatUnits(balance, token.decimals), address: token.address });
           }

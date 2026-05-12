@@ -39,7 +39,7 @@ npm install
 OPENCLAW_TRANSPORT=mock npm run dev
 ```
 
-서버 기본 바인딩은 `0.0.0.0:29999`입니다.
+서버 기본 바인딩은 `0.0.0.0:29999`입니다. 외부 공개 시에는 `CORS_ALLOW_ORIGIN`, `BRIDGE_API_KEYS`, `AUTH_*` 값을 환경변수로 명시하고, 필요하면 방화벽/리버스 프록시에서 노출 범위를 제한하세요.
 
 Web/PWA:
 
@@ -50,7 +50,13 @@ open http://localhost:29999/
 Web/PWA Settings에는 다음 값을 입력합니다.
 
 - API URL: `http://localhost:29999`
-- API Key: `dev-api-key`
+- API Key: 개발/테스트 기본값은 `dev-api-key`입니다. 운영에서는 반드시 `BRIDGE_API_KEYS`로 긴 랜덤 값을 지정하세요.
 
 Android/iOS 앱은 별도 Flutter 클라이언트가 아니라 서버 Web/PWA를 감싸는 WebView 방식으로 유지합니다.
+
+공유용 아카이브는 반드시 git 기준으로 생성하세요. `server/state/`, 빌드 산출물, 내부 임시 문서는 공유 대상에서 제외됩니다.
+
+```bash
+./scripts/export-shareable.sh
+```
 
