@@ -77,7 +77,7 @@ import './plugins/wallet-transaction-card.js';
 
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
 const PUSH_DEVICE_ID_KEY = 'openclaw-web-channel-push-device-id-v1';
-const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-12-ios-keyboard-bottom-001';
+const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-12-ios-keyboard-scroll-001';
 const CLIENT_API_VERSION = 1;
 const elements = {
   loginScreen: document.querySelector('#loginScreen'),
@@ -187,6 +187,9 @@ function syncViewportHeight() {
     document.documentElement.style.setProperty('--ios-keyboard-bottom', `${keyboardBottom}px`);
     document.documentElement.style.setProperty('--composer-height', `${composerHeight}px`);
     window.scrollTo(0, 0);
+    scrollToBottom({ force: true });
+    window.setTimeout(() => scrollToBottom({ force: true }), 80);
+    window.setTimeout(() => scrollToBottom({ force: true }), 240);
   } else {
     document.documentElement.style.setProperty('--ios-keyboard-top', `${height}px`);
     document.documentElement.style.setProperty('--ios-keyboard-bottom', '0px');
@@ -2576,6 +2579,6 @@ renderModelPicker();
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-12-ios-keyboard-bottom-001').catch(() => {});
+    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-12-ios-keyboard-scroll-001').catch(() => {});
   });
 }

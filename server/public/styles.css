@@ -1158,6 +1158,11 @@ body.ios-keyboard-open .composer {
   transform: translateZ(0);
 }
 
+body.ios-composer-focus-pending .messages,
+body.ios-keyboard-open .messages {
+  padding-bottom: calc(var(--composer-height, 96px) + 14px);
+}
+
 body.ios-composer-focus-pending .floating-action-menu,
 body.ios-keyboard-open .floating-action-menu {
   display: none;
