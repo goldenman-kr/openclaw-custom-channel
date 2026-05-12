@@ -77,7 +77,7 @@ import './plugins/wallet-transaction-card.js';
 
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
 const PUSH_DEVICE_ID_KEY = 'openclaw-web-channel-push-device-id-v1';
-const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-12-ios-keyboard-composer-001';
+const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-12-ios-keyboard-prefocus-001';
 const CLIENT_API_VERSION = 1;
 const elements = {
   loginScreen: document.querySelector('#loginScreen'),
@@ -186,8 +186,11 @@ function syncViewportHeight() {
     document.documentElement.style.setProperty('--composer-height', `${composerHeight}px`);
     window.scrollTo(0, 0);
   } else {
-    document.documentElement.style.removeProperty('--ios-keyboard-top');
-    document.documentElement.style.removeProperty('--composer-height');
+    document.documentElement.style.setProperty('--ios-keyboard-top', `${height}px`);
+    if (!isComposerInputFocused()) {
+      document.body.classList.remove('ios-composer-focus-pending');
+      document.documentElement.style.removeProperty('--composer-height');
+    }
   }
 }
 
@@ -2507,8 +2510,20 @@ bindAppEventListeners({
     handleComposerDragLeave,
     handleComposerDrop,
     handleSubmit,
-    messageInputFocus: () => window.setTimeout(syncViewportHeight, 0),
-    messageInputBlur: () => window.setTimeout(syncViewportHeight, 0),
+    messageInputFocus: () => {
+      if (isIosLikeBrowser()) {
+        document.body.classList.add('ios-composer-focus-pending');
+      }
+      syncViewportHeight();
+      window.setTimeout(syncViewportHeight, 0);
+      window.setTimeout(syncViewportHeight, 80);
+      window.setTimeout(syncViewportHeight, 220);
+      window.setTimeout(syncViewportHeight, 420);
+    },
+    messageInputBlur: () => {
+      document.body.classList.remove('ios-composer-focus-pending');
+      window.setTimeout(syncViewportHeight, 0);
+    },
     messageInputChanged: () => {
       saveComposerDraft();
       autoResizeTextarea();
@@ -2558,6 +2573,6 @@ renderModelPicker();
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-12-ios-keyboard-composer-001').catch(() => {});
+    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-12-ios-keyboard-prefocus-001').catch(() => {});
   });
 }

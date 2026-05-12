@@ -1147,16 +1147,18 @@ html[data-theme="light"] .message-cancel-button {
   background: linear-gradient(180deg, transparent, var(--bg) 22%);
 }
 
+body.ios-composer-focus-pending .composer,
 body.ios-keyboard-open .composer {
   position: fixed;
   left: 0;
   right: 0;
-  top: calc(var(--ios-keyboard-top, 100vh) - var(--composer-height, 96px));
+  top: calc(var(--ios-keyboard-top, var(--app-viewport-height, 100vh)) - var(--composer-height, 96px));
   bottom: auto;
   z-index: 45;
   transform: translateZ(0);
 }
 
+body.ios-composer-focus-pending .floating-action-menu,
 body.ios-keyboard-open .floating-action-menu {
   display: none;
 }
