@@ -279,3 +279,32 @@ test("updates conversation version without moving message order", () => {
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("renaming a conversation does not update its sort timestamp", () => {
+  const dir = tempDir();
+  const store = new SqliteChatStore(join(dir, "chat.sqlite"));
+  try {
+    const older = store.createConversation({
+      ownerId: "usr_rename",
+      title: "이전 대화",
+      now: "2026-04-29T00:00:00.000Z",
+    });
+    const newer = store.createConversation({
+      ownerId: "usr_rename",
+      title: "최근 대화",
+      now: "2026-04-29T00:01:00.000Z",
+    });
+
+    const renamed = store.updateConversation(older.id, {
+      title: "제목만 변경",
+      now: "2026-04-29T00:02:00.000Z",
+    });
+
+    assert.equal(renamed?.title, "제목만 변경");
+    assert.equal(renamed?.updatedAt, older.updatedAt);
+    assert.deepEqual(store.listConversations({ ownerId: "usr_rename" }).map((conversation) => conversation.id), [newer.id, older.id]);
+  } finally {
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

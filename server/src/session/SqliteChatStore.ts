@@ -218,7 +218,10 @@ export class SqliteChatStore implements ConversationStore, MessageStore, JobStor
     if (!current) {
       return null;
     }
-    const now = patch.now ?? new Date().toISOString();
+    const nextPinned = patch.pinned === undefined ? current.pinned : patch.pinned;
+    const nextArchivedAt = patch.archivedAt === undefined ? current.archivedAt ?? null : patch.archivedAt;
+    const shouldTouchUpdatedAt = nextPinned !== current.pinned || nextArchivedAt !== (current.archivedAt ?? null);
+    const updatedAt = shouldTouchUpdatedAt ? patch.now ?? new Date().toISOString() : current.updatedAt;
     this.db
       .prepare(
         `UPDATE conversations
@@ -231,9 +234,9 @@ export class SqliteChatStore implements ConversationStore, MessageStore, JobStor
       .run({
         id,
         title: patch.title ?? current.title,
-        pinned: patch.pinned === undefined ? (current.pinned ? 1 : 0) : patch.pinned ? 1 : 0,
-        archivedAt: patch.archivedAt === undefined ? current.archivedAt ?? null : patch.archivedAt,
-        updatedAt: now,
+        pinned: nextPinned ? 1 : 0,
+        archivedAt: nextArchivedAt,
+        updatedAt,
       });
     return this.getConversation(id);
   }
