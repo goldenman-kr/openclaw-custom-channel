@@ -430,14 +430,15 @@ body.drawer-open .conversation-sidebar {
   position: fixed;
   overscroll-behavior-y: contain;
   top: 0;
-  bottom: 0;
+  bottom: auto;
   left: 0;
   z-index: 42;
   width: min(320px, calc(100vw - 42px));
+  height: var(--app-viewport-height, 100dvh);
   display: flex;
   flex-direction: column;
   gap: 12px;
-  padding: 0 14px max(18px, env(safe-area-inset-bottom));
+  padding: 0 14px clamp(10px, env(safe-area-inset-bottom), 22px);
   border-right: 1px solid var(--border);
   background: #1E2020;
   box-shadow: 18px 0 48px rgba(8, 8, 8, 0.44);
@@ -1464,10 +1465,10 @@ html[data-theme="light"] .toast--success {
 .sidebar-header {
   position: relative;
   justify-content: center;
-  height: 54px;
-  min-height: 54px;
+  height: calc(54px + env(safe-area-inset-top));
+  min-height: calc(54px + env(safe-area-inset-top));
   margin: 0 -14px;
-  padding: 0 14px;
+  padding: env(safe-area-inset-top) 14px 0;
   border-bottom: 1px solid var(--border);
 }
 
