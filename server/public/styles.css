@@ -1167,11 +1167,6 @@ body.ios-keyboard-open .messages {
   padding-bottom: 14px;
 }
 
-body.ios-composer-focus-pending .messages:not(:has(> .message.system:only-child))::before,
-body.ios-keyboard-open .messages:not(:has(> .message.system:only-child))::before {
-  margin-top: 0;
-}
-
 body.ios-composer-focus-pending .floating-action-menu,
 body.ios-keyboard-open .floating-action-menu {
   display: none;

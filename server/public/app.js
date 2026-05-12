@@ -77,7 +77,7 @@ import './plugins/wallet-transaction-card.js';
 
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
 const PUSH_DEVICE_ID_KEY = 'openclaw-web-channel-push-device-id-v1';
-const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-12-ios-message-height-001';
+const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-12-ios-focus-scroll-001';
 const CLIENT_API_VERSION = 1;
 const elements = {
   loginScreen: document.querySelector('#loginScreen'),
@@ -167,6 +167,32 @@ function isComposerInputFocused() {
   return document.activeElement === elements.messageInput || elements.messageForm?.contains(document.activeElement);
 }
 
+function forceMessagesToLatest() {
+  if (!elements.messages) {
+    return;
+  }
+  elements.messages.scrollTop = elements.messages.scrollHeight;
+  hideScrollToLatestButton();
+}
+
+function stabilizeIosComposerAfterFocus() {
+  if (!isIosLikeBrowser()) {
+    return;
+  }
+  const stabilize = () => {
+    syncViewportHeight();
+    forceMessagesToLatest();
+  };
+  stabilize();
+  requestAnimationFrame(() => {
+    stabilize();
+    requestAnimationFrame(stabilize);
+  });
+  window.setTimeout(stabilize, 80);
+  window.setTimeout(stabilize, 180);
+  window.setTimeout(stabilize, 360);
+}
+
 function syncViewportHeight() {
   const viewport = window.visualViewport;
   const height = viewport?.height || window.innerHeight;
@@ -187,9 +213,10 @@ function syncViewportHeight() {
     document.documentElement.style.setProperty('--ios-keyboard-bottom', `${keyboardBottom}px`);
     document.documentElement.style.setProperty('--composer-height', `${composerHeight}px`);
     window.scrollTo(0, 0);
-    scrollToBottom({ force: true });
-    window.setTimeout(() => scrollToBottom({ force: true }), 80);
-    window.setTimeout(() => scrollToBottom({ force: true }), 240);
+    forceMessagesToLatest();
+    requestAnimationFrame(forceMessagesToLatest);
+    window.setTimeout(forceMessagesToLatest, 80);
+    window.setTimeout(forceMessagesToLatest, 240);
   } else {
     document.documentElement.style.setProperty('--ios-keyboard-top', `${height}px`);
     document.documentElement.style.setProperty('--ios-keyboard-bottom', '0px');
@@ -2520,11 +2547,7 @@ bindAppEventListeners({
       if (isIosLikeBrowser()) {
         document.body.classList.add('ios-composer-focus-pending');
       }
-      syncViewportHeight();
-      window.setTimeout(syncViewportHeight, 0);
-      window.setTimeout(syncViewportHeight, 80);
-      window.setTimeout(syncViewportHeight, 220);
-      window.setTimeout(syncViewportHeight, 420);
+      stabilizeIosComposerAfterFocus();
     },
     messageInputBlur: () => {
       document.body.classList.remove('ios-composer-focus-pending');
@@ -2579,6 +2602,6 @@ renderModelPicker();
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-12-ios-message-height-001').catch(() => {});
+    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-12-ios-focus-scroll-001').catch(() => {});
   });
 }
