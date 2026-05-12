@@ -1404,7 +1404,7 @@ html[data-theme="light"] .message-cancel-button {
 .toast-stack {
   position: fixed;
   left: 50%;
-  bottom: calc(max(22px, env(safe-area-inset-bottom)) + 112px);
+  bottom: calc(var(--composer-height, 96px) + max(18px, env(safe-area-inset-bottom)));
   z-index: 80;
   display: grid;
   justify-items: center;

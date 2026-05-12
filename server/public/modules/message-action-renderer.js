@@ -12,7 +12,7 @@ export function retryTextForNode(node, messageTextWithoutAttachmentPreview) {
   return '';
 }
 
-export function appendCopyAction(node, role, text, options = {}, copyTextToClipboard) {
+export function appendCopyAction(node, role, text, options = {}, copyTextToClipboard, showToast = null) {
   if (options.pending || !['user', 'assistant', 'system'].includes(role)) {
     return;
   }
@@ -20,7 +20,10 @@ export function appendCopyAction(node, role, text, options = {}, copyTextToClipb
   if (!copyText) {
     return;
   }
-  node.append(createCopyButton(copyText, copyTextToClipboard));
+  node.append(createCopyButton(copyText, async (value) => {
+    await copyTextToClipboard(value);
+    showToast?.('복사했어요.', { kind: 'success', durationMs: 1600 });
+  }));
 }
 
 export function appendRetryAction(node, role, text, deps) {
