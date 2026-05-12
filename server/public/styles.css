@@ -555,6 +555,10 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); }
   margin-top: auto;
 }
 
+.messages.ios-scroll-nudge {
+  -webkit-overflow-scrolling: auto;
+}
+
 .history-load-more {
   display: flex;
   justify-content: center;

@@ -77,7 +77,7 @@ import './plugins/wallet-transaction-card.js';
 
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
 const PUSH_DEVICE_ID_KEY = 'openclaw-web-channel-push-device-id-v1';
-const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-12-ios-focus-scroll-001';
+const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-12-ios-scroll-nudge-001';
 const CLIENT_API_VERSION = 1;
 const elements = {
   loginScreen: document.querySelector('#loginScreen'),
@@ -167,11 +167,26 @@ function isComposerInputFocused() {
   return document.activeElement === elements.messageInput || elements.messageForm?.contains(document.activeElement);
 }
 
-function forceMessagesToLatest() {
-  if (!elements.messages) {
+function forceMessagesToLatest({ nudge = false } = {}) {
+  const messages = elements.messages;
+  if (!messages) {
     return;
   }
-  elements.messages.scrollTop = elements.messages.scrollHeight;
+  const maxScrollTop = Math.max(0, messages.scrollHeight - messages.clientHeight);
+  messages.scrollTop = maxScrollTop;
+  if (nudge) {
+    messages.classList.add('ios-scroll-nudge');
+    if (maxScrollTop > 0) {
+      messages.scrollTop = Math.max(0, maxScrollTop - 1);
+    }
+    // Force iOS standalone Safari to flush the scroll container layout. A real
+    // one-pixel scroll fixes the black gap; this reproduces that scroll without
+    // visibly moving the chat.
+    void messages.offsetHeight;
+    messages.scrollTop = maxScrollTop;
+    messages.dispatchEvent(new Event('scroll', { bubbles: true }));
+    requestAnimationFrame(() => messages.classList.remove('ios-scroll-nudge'));
+  }
   hideScrollToLatestButton();
 }
 
@@ -181,7 +196,7 @@ function stabilizeIosComposerAfterFocus() {
   }
   const stabilize = () => {
     syncViewportHeight();
-    forceMessagesToLatest();
+    forceMessagesToLatest({ nudge: true });
   };
   stabilize();
   requestAnimationFrame(() => {
@@ -213,10 +228,10 @@ function syncViewportHeight() {
     document.documentElement.style.setProperty('--ios-keyboard-bottom', `${keyboardBottom}px`);
     document.documentElement.style.setProperty('--composer-height', `${composerHeight}px`);
     window.scrollTo(0, 0);
-    forceMessagesToLatest();
-    requestAnimationFrame(forceMessagesToLatest);
-    window.setTimeout(forceMessagesToLatest, 80);
-    window.setTimeout(forceMessagesToLatest, 240);
+    forceMessagesToLatest({ nudge: true });
+    requestAnimationFrame(() => forceMessagesToLatest({ nudge: true }));
+    window.setTimeout(() => forceMessagesToLatest({ nudge: true }), 80);
+    window.setTimeout(() => forceMessagesToLatest({ nudge: true }), 240);
   } else {
     document.documentElement.style.setProperty('--ios-keyboard-top', `${height}px`);
     document.documentElement.style.setProperty('--ios-keyboard-bottom', '0px');
@@ -2602,6 +2617,6 @@ renderModelPicker();
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-12-ios-focus-scroll-001').catch(() => {});
+    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-12-ios-scroll-nudge-001').catch(() => {});
   });
 }
