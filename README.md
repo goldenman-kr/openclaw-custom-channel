@@ -31,18 +31,13 @@ npm install
 OPENCLAW_TRANSPORT=mock npm run dev
 ```
 
-서버 기본 바인딩은 `0.0.0.0:29999`입니다. 외부 공개 시에는 `CORS_ALLOW_ORIGIN`, `BRIDGE_API_KEYS`, `AUTH_*` 값을 환경변수로 명시하고, 필요하면 방화벽/리버스 프록시에서 노출 범위를 제한하세요.
+서버 기본 바인딩은 `0.0.0.0:29999`입니다. 외부 공개 시에는 `CORS_ALLOW_ORIGIN`, `AUTH_*` 값을 환경변수로 명시하고, 필요하면 방화벽/리버스 프록시에서 노출 범위를 제한하세요.
 
 Web/PWA:
 
 ```bash
 open http://localhost:29999/
 ```
-
-Web/PWA Settings에는 다음 값을 입력합니다.
-
-- API URL: `http://localhost:29999`
-- API Key: 개발/테스트 기본값은 `dev-api-key`입니다. 운영에서는 반드시 `BRIDGE_API_KEYS`로 긴 랜덤 값을 지정하세요.
 
 ## 첫 관리자 계정 추가
 
