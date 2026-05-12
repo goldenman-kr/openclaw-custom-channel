@@ -20,7 +20,6 @@
 - `android-webview/`, `ios-webview/`: 서버 Web/PWA를 감싸는 네이티브 WebView 클라이언트
 - API 계약은 `specification.md`를 기준으로 유지
 - 고정 계약은 `specification.md`의 `8.1.1 API Contract v1 (Locked for MVP)`를 기준으로 구현
-- 예전 Flutter `client/` 구현은 `multi-session` 브랜치에서 제거하고 Web/PWA 중심으로 정리
 
 ## 시작 순서 (권장)
 
@@ -52,7 +51,24 @@ Web/PWA Settings에는 다음 값을 입력합니다.
 - API URL: `http://localhost:29999`
 - API Key: 개발/테스트 기본값은 `dev-api-key`입니다. 운영에서는 반드시 `BRIDGE_API_KEYS`로 긴 랜덤 값을 지정하세요.
 
-Android/iOS 앱은 별도 Flutter 클라이언트가 아니라 서버 Web/PWA를 감싸는 WebView 방식으로 유지합니다.
+## 첫 관리자 계정 추가
+
+서버를 처음 띄운 뒤 `server/` 디렉토리에서 관리자 계정을 생성합니다.
+
+```bash
+cd server
+npm run user:create -- admin --role admin
+```
+
+비밀번호를 직접 지정하려면 다음처럼 실행합니다.
+
+```bash
+npm run user:create -- admin --role admin --password '<strong-password>'
+```
+
+`--password`를 생략하면 강한 임시 비밀번호가 생성되어 한 번 출력됩니다. 기본 DB 경로는 `server/state/chat.sqlite`이며, 다른 DB를 쓰려면 `CHAT_DB_PATH` 환경변수나 `--db <path>`를 지정합니다.
+
+Android/iOS 앱은 서버 Web/PWA를 감싸는 WebView 방식으로 유지합니다.
 
 공유용 아카이브는 반드시 git 기준으로 생성하세요. `server/state/`, 빌드 산출물, 내부 임시 문서는 공유 대상에서 제외됩니다.
 
