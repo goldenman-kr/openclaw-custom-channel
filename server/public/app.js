@@ -77,7 +77,7 @@ import './plugins/wallet-transaction-card.js';
 
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
 const PUSH_DEVICE_ID_KEY = 'openclaw-web-channel-push-device-id-v1';
-const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-12-ios-keyboard-scroll-001';
+const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-12-ios-bleed-only-001';
 const CLIENT_API_VERSION = 1;
 const elements = {
   loginScreen: document.querySelector('#loginScreen'),
@@ -173,7 +173,7 @@ function syncViewportHeight() {
   if (height > 0) {
     document.documentElement.style.setProperty('--app-viewport-height', `${height}px`);
   }
-  const bottomBleed = window.matchMedia?.('(display-mode: standalone)')?.matches
+  const bottomBleed = isIosLikeBrowser() && window.matchMedia?.('(display-mode: standalone)')?.matches
     ? Math.max(0, Math.round((window.screen?.height || 0) - window.innerHeight))
     : 0;
   document.documentElement.style.setProperty('--app-bottom-bleed', `${Math.min(bottomBleed, 96)}px`);
@@ -2579,6 +2579,6 @@ renderModelPicker();
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-12-ios-keyboard-scroll-001').catch(() => {});
+    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-12-ios-bleed-only-001').catch(() => {});
   });
 }
