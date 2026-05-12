@@ -2086,6 +2086,11 @@ html[data-theme="light"] .markdown-table-wrapper {
   background: rgba(248, 250, 252, 0.82);
 }
 
+html[data-theme="light"] .message blockquote {
+  border-left-color: rgba(14, 116, 144, 0.72);
+  color: #334155;
+}
+
 html[data-theme="light"] .code-block {
   border-color: rgba(148, 163, 184, 0.26);
   background: #f8fafc;
@@ -2212,6 +2217,11 @@ html[data-theme="light"] .message th {
 
   html[data-theme="system"] .markdown-table-wrapper {
     background: rgba(248, 250, 252, 0.82);
+  }
+
+  html[data-theme="system"] .message blockquote {
+    border-left-color: rgba(14, 116, 144, 0.72);
+    color: #334155;
   }
 
   html[data-theme="system"] .code-block {
