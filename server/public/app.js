@@ -77,7 +77,7 @@ import './plugins/wallet-transaction-card.js';
 
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
 const PUSH_DEVICE_ID_KEY = 'openclaw-web-channel-push-device-id-v1';
-const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-12-ios-keyboard-prefocus-001';
+const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-12-ios-keyboard-bottom-001';
 const CLIENT_API_VERSION = 1;
 const elements = {
   loginScreen: document.querySelector('#loginScreen'),
@@ -182,11 +182,14 @@ function syncViewportHeight() {
   document.body.classList.toggle('ios-keyboard-open', Boolean(keyboardOpen));
   if (keyboardOpen) {
     const composerHeight = Math.ceil(elements.messageForm?.getBoundingClientRect().height || 96);
+    const keyboardBottom = Math.max(0, Math.round(window.innerHeight - (viewport.offsetTop + viewport.height)));
     document.documentElement.style.setProperty('--ios-keyboard-top', `${Math.max(0, Math.round(viewport.offsetTop + viewport.height))}px`);
+    document.documentElement.style.setProperty('--ios-keyboard-bottom', `${keyboardBottom}px`);
     document.documentElement.style.setProperty('--composer-height', `${composerHeight}px`);
     window.scrollTo(0, 0);
   } else {
     document.documentElement.style.setProperty('--ios-keyboard-top', `${height}px`);
+    document.documentElement.style.setProperty('--ios-keyboard-bottom', '0px');
     if (!isComposerInputFocused()) {
       document.body.classList.remove('ios-composer-focus-pending');
       document.documentElement.style.removeProperty('--composer-height');
@@ -2573,6 +2576,6 @@ renderModelPicker();
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-12-ios-keyboard-prefocus-001').catch(() => {});
+    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-12-ios-keyboard-bottom-001').catch(() => {});
   });
 }

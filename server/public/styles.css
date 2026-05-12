@@ -1152,8 +1152,8 @@ body.ios-keyboard-open .composer {
   position: fixed;
   left: 0;
   right: 0;
-  top: calc(var(--ios-keyboard-top, var(--app-viewport-height, 100vh)) - var(--composer-height, 96px));
-  bottom: auto;
+  top: auto;
+  bottom: var(--ios-keyboard-bottom, 0px);
   z-index: 45;
   transform: translateZ(0);
 }
