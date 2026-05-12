@@ -77,7 +77,7 @@ import './plugins/wallet-transaction-card.js';
 
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
 const PUSH_DEVICE_ID_KEY = 'openclaw-web-channel-push-device-id-v1';
-const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-12-ios-bottom-bleed-001';
+const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-12-ios-keyboard-composer-001';
 const CLIENT_API_VERSION = 1;
 const elements = {
   loginScreen: document.querySelector('#loginScreen'),
@@ -159,8 +159,17 @@ const elements = {
   statusText: document.querySelector('#statusText'),
 };
 
+function isIosLikeBrowser() {
+  return /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+}
+
+function isComposerInputFocused() {
+  return document.activeElement === elements.messageInput || elements.messageForm?.contains(document.activeElement);
+}
+
 function syncViewportHeight() {
-  const height = window.visualViewport?.height || window.innerHeight;
+  const viewport = window.visualViewport;
+  const height = viewport?.height || window.innerHeight;
   if (height > 0) {
     document.documentElement.style.setProperty('--app-viewport-height', `${height}px`);
   }
@@ -168,6 +177,18 @@ function syncViewportHeight() {
     ? Math.max(0, Math.round((window.screen?.height || 0) - window.innerHeight))
     : 0;
   document.documentElement.style.setProperty('--app-bottom-bleed', `${Math.min(bottomBleed, 96)}px`);
+
+  const keyboardOpen = isIosLikeBrowser() && isComposerInputFocused() && viewport && viewport.height < window.innerHeight - 80;
+  document.body.classList.toggle('ios-keyboard-open', Boolean(keyboardOpen));
+  if (keyboardOpen) {
+    const composerHeight = Math.ceil(elements.messageForm?.getBoundingClientRect().height || 96);
+    document.documentElement.style.setProperty('--ios-keyboard-top', `${Math.max(0, Math.round(viewport.offsetTop + viewport.height))}px`);
+    document.documentElement.style.setProperty('--composer-height', `${composerHeight}px`);
+    window.scrollTo(0, 0);
+  } else {
+    document.documentElement.style.removeProperty('--ios-keyboard-top');
+    document.documentElement.style.removeProperty('--composer-height');
+  }
 }
 
 syncViewportHeight();
@@ -2486,11 +2507,14 @@ bindAppEventListeners({
     handleComposerDragLeave,
     handleComposerDrop,
     handleSubmit,
+    messageInputFocus: () => window.setTimeout(syncViewportHeight, 0),
+    messageInputBlur: () => window.setTimeout(syncViewportHeight, 0),
     messageInputChanged: () => {
       saveComposerDraft();
       autoResizeTextarea();
       selectedSlashCommandIndex = 0;
       renderSlashCommandPalette();
+      syncViewportHeight();
     },
     hideSlashCommandPalette,
     startSidebarResize,
@@ -2534,6 +2558,6 @@ renderModelPicker();
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-12-ios-bottom-bleed-001').catch(() => {});
+    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-12-ios-keyboard-composer-001').catch(() => {});
   });
 }

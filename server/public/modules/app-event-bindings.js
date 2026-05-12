@@ -98,7 +98,11 @@ export function bindAppEventListeners({ elements, actions, state, windowRef = wi
   elements.messageForm.addEventListener('drop', actions.handleComposerDrop);
   elements.messageForm.addEventListener('submit', actions.handleSubmit);
   elements.messageInput.addEventListener('input', actions.messageInputChanged);
-  elements.messageInput.addEventListener('blur', () => windowRef.setTimeout(actions.hideSlashCommandPalette, 160));
+  elements.messageInput.addEventListener('focus', actions.messageInputFocus);
+  elements.messageInput.addEventListener('blur', () => {
+    actions.messageInputBlur();
+    windowRef.setTimeout(actions.hideSlashCommandPalette, 160);
+  });
   elements.sidebarResizeHandle?.addEventListener('pointerdown', actions.startSidebarResize);
   windowRef.addEventListener('pointermove', actions.moveSidebarResize);
   windowRef.addEventListener('pointerup', actions.finishSidebarResize);

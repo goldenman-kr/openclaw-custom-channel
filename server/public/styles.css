@@ -1147,6 +1147,20 @@ html[data-theme="light"] .message-cancel-button {
   background: linear-gradient(180deg, transparent, var(--bg) 22%);
 }
 
+body.ios-keyboard-open .composer {
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: calc(var(--ios-keyboard-top, 100vh) - var(--composer-height, 96px));
+  bottom: auto;
+  z-index: 45;
+  transform: translateZ(0);
+}
+
+body.ios-keyboard-open .floating-action-menu {
+  display: none;
+}
+
 .composer.drag-over {
   border-radius: 18px;
   outline: 2px dashed rgba(212, 212, 212, 0.72);
