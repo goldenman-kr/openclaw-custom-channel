@@ -18,6 +18,7 @@
 node_modules/
 dist/
 server/state/
+server/public/download/
 TODO.md
 
 # Native build outputs

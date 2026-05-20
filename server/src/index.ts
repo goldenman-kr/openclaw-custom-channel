@@ -27,6 +27,7 @@ import { WebPushSender } from "./notifications/WebPushSender.js";
 import { GatewayAutonomousAnnounceBridge } from "./openclaw/GatewayAutonomousAnnounceBridge.js";
 import { createOpenClawClient } from "./openclaw/createOpenClawClient.js";
 import type { RuntimeWorkspaceScope } from "./openclaw/OpenClawClient.js";
+import { ensureSessionEntry } from "./openclaw/modelOverride.js";
 import { deleteOpenClawSession } from "./openclaw/SessionCleaner.js";
 import type { MessageJob } from "./runtime/MessageJob.js";
 import { attachmentsFromMediaRefs, MessageJobRunner } from "./runtime/MessageJobRunner.js";
@@ -731,6 +732,9 @@ const server = createServer(async (request, response) => {
         explicitSessionId: conversation.openclawSessionId,
         agentId: openClawAgentId,
       });
+    },
+    ensureConversationSession(conversation) {
+      ensureSessionEntry(conversation.openclawSessionId);
     },
     deleteConversationJobs(conversationId) {
       for (const [jobId, job] of jobs.entries()) {

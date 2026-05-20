@@ -46,6 +46,29 @@ function sessionKeyCandidates(sessionKey: string): string[] {
   ];
 }
 
+export function ensureSessionEntry(sessionKey: string): void {
+  const trimmed = sessionKey.trim();
+  if (!trimmed) {
+    return;
+  }
+
+  const store = readSessionStore();
+  const now = Date.now();
+  const keysToCreate = [trimmed, `agent:${process.env.OPENCLAW_AGENT ?? "main"}:explicit:${trimmed}`];
+  let changed = false;
+
+  for (const key of keysToCreate) {
+    if (!store[key]) {
+      store[key] = { updatedAt: now };
+      changed = true;
+    }
+  }
+
+  if (changed) {
+    writeSessionStore(store);
+  }
+}
+
 function readSessionEntry(sessionKey?: string): { targetKey: string; entry: SessionStoreEntry; store: Record<string, SessionStoreEntry> } | null {
   if (!sessionKey?.trim()) return null;
   const trimmedSessionKey = sessionKey.trim();

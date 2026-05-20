@@ -376,7 +376,7 @@ async function buildSessionStatusCard(context: NativeCommandContext): Promise<st
   const lines = [
     openClawVersionLine(),
     `🧠 Model: ${selected}`,
-    "🔄 Fallbacks: openai-codex/gpt-5.4, llamacpp/Qwen3.6-35B-A3B",
+    "🔄 Fallbacks: openai-codex/gpt-5.4, llamacpp/Qwen3.6-27B-MTP",
     usageLine,
     formatUsagePair(entry.inputTokens, entry.outputTokens),
     formatCache(entry),

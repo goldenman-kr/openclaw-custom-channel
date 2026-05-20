@@ -52,7 +52,7 @@ export async function waitForJobPolling({
   clearStreamingState,
   clearPendingJob,
   onTick = () => {},
-  maxAttempts = 240,
+  maxAttempts = 610,
 }) {
   let transientFailures = 0;
   let lastError = null;

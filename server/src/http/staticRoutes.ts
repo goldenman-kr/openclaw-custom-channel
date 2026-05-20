@@ -1,5 +1,5 @@
 import { createReadStream } from "node:fs";
-import { realpath, stat } from "node:fs/promises";
+import { readdir, realpath, stat } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { extname, normalize, resolve } from "node:path";
 import type { ErrorResponseDto } from "../contracts/apiContractV1.js";
@@ -38,6 +38,10 @@ export async function handleStaticRoute(request: IncomingMessage, response: Serv
   try {
     const fileStat = await stat(filePath);
     if (fileStat.isDirectory()) {
+      if (normalizedPath === "download" || normalizedPath.startsWith("download/")) {
+        await serveDirectoryListing(request, response, filePath, pathname);
+        return true;
+      }
       filePath = resolve(filePath, "index.html");
     } else if (!fileStat.isFile()) {
       return false;
@@ -70,6 +74,124 @@ export async function handleStaticRoute(request: IncomingMessage, response: Serv
   }
   createReadStream(filePath).pipe(response);
   return true;
+}
+
+
+async function serveDirectoryListing(
+  request: IncomingMessage,
+  response: ServerResponse,
+  directoryPath: string,
+  requestPathname: string,
+): Promise<void> {
+  const entries = await readdir(directoryPath, { withFileTypes: true });
+  const basePath = requestPathname.endsWith("/") ? requestPathname : `${requestPathname}/`;
+  const visibleEntries = entries
+    .filter((entry) => !entry.name.startsWith(".") && entry.name !== "index.html")
+    .sort((a, b) => Number(b.isDirectory()) - Number(a.isDirectory()) || a.name.localeCompare(b.name));
+
+  const rows = await Promise.all(visibleEntries.map(async (entry) => {
+    const entryPath = resolve(directoryPath, entry.name);
+    const entryStat = await stat(entryPath);
+    const label = entry.isDirectory() ? `${entry.name}/` : entry.name;
+    const href = `${basePath}${encodeURIComponent(entry.name)}${entry.isDirectory() ? "/" : ""}`;
+    const downloadAttribute = entry.isDirectory() ? "" : " download";
+    const size = entry.isDirectory() ? "-" : formatFileSize(entryStat.size);
+    const modified = formatDateTime(entryStat.mtime);
+
+    return `<tr>
+        <td class="name"><a href="${escapeHtml(href)}"${downloadAttribute}>${escapeHtml(label)}</a></td>
+        <td class="size">${escapeHtml(size)}</td>
+        <td class="modified">${escapeHtml(modified)}</td>
+      </tr>`;
+  }));
+
+  const html = `<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>파일 다운로드</title>
+  <style>
+    body { font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 40px; line-height: 1.5; color: #111827; }
+    main { max-width: 900px; }
+    h1 { margin-bottom: 8px; }
+    .note { color: #4b5563; margin-bottom: 24px; }
+    table { width: 100%; border-collapse: collapse; border: 1px solid #e5e7eb; }
+    th, td { padding: 10px 12px; border-bottom: 1px solid #e5e7eb; text-align: left; }
+    th { background: #f9fafb; color: #374151; font-weight: 700; }
+    tr:hover td { background: #f9fafb; }
+    a { color: #2563eb; text-decoration: none; font-weight: 600; }
+    a:hover { text-decoration: underline; }
+    .size { text-align: right; white-space: nowrap; color: #374151; }
+    .modified { white-space: nowrap; color: #6b7280; }
+    .empty { color: #6b7280; text-align: center; }
+    @media (max-width: 640px) { body { margin: 20px; } .modified { display: none; } }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>파일 다운로드</h1>
+    <p class="note">이 폴더의 현재 파일 목록입니다. 파일을 클릭하면 다운로드됩니다.</p>
+    <table>
+      <thead>
+        <tr><th>이름</th><th class="size">크기</th><th class="modified">수정한 날짜</th></tr>
+      </thead>
+      <tbody>
+      ${rows.length > 0 ? rows.join("\n      ") : '<tr><td class="empty" colspan="3">파일이 없습니다.</td></tr>'}
+      </tbody>
+    </table>
+  </main>
+</body>
+</html>`;
+
+  response.writeHead(200, {
+    "content-type": "text/html; charset=utf-8",
+    "cache-control": "no-cache",
+  });
+  if (request.method === "HEAD") {
+    response.end();
+    return;
+  }
+  response.end(html);
+}
+
+function formatFileSize(size: number): string {
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let value = size;
+  let unitIndex = 0;
+  while (value >= 1024 && unitIndex < units.length - 1) {
+    value /= 1024;
+    unitIndex += 1;
+  }
+  return unitIndex === 0 ? `${value} ${units[unitIndex]}` : `${value.toFixed(1)} ${units[unitIndex]}`;
+}
+
+function formatDateTime(date: Date): string {
+  return new Intl.DateTimeFormat("ko-KR", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(date);
+}
+
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>"]/g, (char) => {
+    switch (char) {
+      case "&":
+        return "&amp;";
+      case "<":
+        return "&lt;";
+      case ">":
+        return "&gt;";
+      case '"':
+        return "&quot;";
+      default:
+        return char;
+    }
+  });
 }
 
 export async function handleMediaRoute(request: IncomingMessage, response: ServerResponse, url: URL, deps: MediaRouteDeps): Promise<boolean> {

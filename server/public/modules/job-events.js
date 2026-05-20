@@ -16,7 +16,7 @@ export async function waitForJobEventStream({
   onExpired = () => {},
   onToolStart = () => {},
   onTerminal = () => {},
-  timeoutMs = 720_000,
+  timeoutMs = 1_800_000,
 }) {
   ensureJobEventStreamSupport();
 
