@@ -158,14 +158,14 @@
         <button id="scrollToLatestButton" class="ghost-button scroll-latest-button hidden" type="button" aria-label="최신 응답으로 이동" title="최신 응답으로 이동">↓</button>
 
         <section id="settingsPanel" class="settings-panel hidden" aria-label="설정">
-          <label>
-            API URL
-            <input id="apiUrlInput" type="url" placeholder="비워두면 현재 서버 사용" />
-          </label>
-          <label class="settings-checkbox">
-            <input id="autoLocationOnHereInput" type="checkbox" />
-            <span>‘여기’가 포함되면 현재 위치 자동 첨부</span>
-          </label>
+          <input id="apiUrlInput" type="hidden" />
+          <div class="settings-group" role="group" aria-labelledby="locationSettingsTitle">
+            <div class="settings-group-title" id="locationSettingsTitle">위치 자동 첨부</div>
+            <label class="settings-checkbox">
+              <input id="autoLocationOnHereInput" type="checkbox" />
+              <span>‘여기’가 포함되면 현재 위치 자동 첨부</span>
+            </label>
+          </div>
           <label>
             Theme
             <select id="themeModeInput">
