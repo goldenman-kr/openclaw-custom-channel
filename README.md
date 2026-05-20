@@ -21,6 +21,12 @@
 - API 계약은 `specification.md`를 기준으로 유지
 - 고정 계약은 `specification.md`의 `8.1.1 API Contract v1 (Locked for MVP)`를 기준으로 구현
 
+## 설치 가이드
+
+다른 OpenClaw 환경에 이 PWA custom channel을 연결해 설치하려면 [docs/INSTALL_OPENCLAW_PWA.md](docs/INSTALL_OPENCLAW_PWA.md)를 먼저 보세요.
+
+이 문서는 clone 이후 환경변수, Gateway 연결, 관리자 계정, systemd 서비스, HTTPS reverse proxy, 데이터 저장 위치까지 한 번에 따라갈 수 있도록 작성되어 있습니다. 다른 AI 에이전트에게 설치를 맡길 때도 해당 문서를 참조시키면 됩니다.
+
 ## 빠른 로컬 검증
 
 서버:
