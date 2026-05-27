@@ -109,6 +109,27 @@ test("rejects slash commands with attachments", async () => {
   }
 });
 
+test("accepts markdown attachments", async () => {
+  const result = await handlePostMessage(
+    deps(),
+    { authorization: "Bearer test-key" },
+    {
+      message: "md 첨부 테스트",
+      attachments: [
+        {
+          type: "file",
+          name: "notes.md",
+          mime_type: "text/markdown",
+          content_base64: "IyBoZWxsbwoKd29ybGQ=",
+        },
+      ],
+    },
+  );
+
+  assert.equal(result.statusCode, 200);
+  assert.equal("reply" in result.body, true);
+});
+
 test("maps OpenClaw timeout errors to user-facing timeout response", async () => {
   const runtime: ChatRuntime = {
     async sendMessage() {

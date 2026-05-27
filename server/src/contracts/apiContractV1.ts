@@ -10,6 +10,7 @@ export const API_CONTRACT_V1 = {
     file: [
       "application/pdf",
       "text/plain",
+      "text/markdown",
       "text/csv",
       "application/csv",
       "application/vnd.ms-excel",
@@ -33,6 +34,7 @@ const ATTACHMENT_MIME_BY_EXTENSION: Record<string, string> = {
   svg: "image/svg+xml",
   pdf: "application/pdf",
   txt: "text/plain",
+  md: "text/markdown",
   csv: "text/csv",
   xls: "application/vnd.ms-excel",
   xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

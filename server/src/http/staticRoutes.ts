@@ -232,6 +232,8 @@ function contentTypeFor(filePath: string): string {
       return "application/zip";
     case ".txt":
       return "text/plain; charset=utf-8";
+    case ".md":
+      return "text/markdown; charset=utf-8";
     default:
       return "application/octet-stream";
   }

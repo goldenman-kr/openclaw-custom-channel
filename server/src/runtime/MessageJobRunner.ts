@@ -477,6 +477,8 @@ function mimeTypeForName(name: string): string {
       return "text/csv; charset=utf-8";
     case ".txt":
       return "text/plain; charset=utf-8";
+    case ".md":
+      return "text/markdown; charset=utf-8";
     case ".zip":
       return "application/zip";
     default:
