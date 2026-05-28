@@ -10,10 +10,10 @@
     <meta name="apple-mobile-web-app-title" content="OpenClaw" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <title>OpenClaw Mobile</title>
-    <link rel="manifest" href="/manifest.webmanifest?v=pwa-client-2026-05-18-timeout-30m-001" />
+    <link rel="manifest" href="/manifest.webmanifest?v=pwa-client-2026-05-28-copy-top-align-001" />
     <link rel="icon" type="image/png" sizes="192x192" href="/assets/openclaw-app-icon-192.png" />
     <link rel="apple-touch-icon" sizes="180x180" href="/assets/openclaw-app-icon-180.png" />
-    <link rel="stylesheet" href="/styles.css?v=pwa-client-2026-05-18-timeout-30m-001" />
+    <link rel="stylesheet" href="/styles.css?v=pwa-client-2026-05-28-copy-top-align-001" />
   </head>
   <body>
     <section id="loginScreen" class="login-screen hidden" aria-label="로그인">
@@ -39,32 +39,14 @@
       <aside id="conversationSidebar" class="conversation-sidebar" aria-label="대화 목록">
         <div class="sidebar-header">
           <button id="sidebarMenuButton" class="ghost-button mobile-menu-button" type="button" aria-label="대화 목록 닫기" aria-expanded="false" aria-controls="conversationSidebar">
-            <svg class="mobile-menu-icon" viewBox="0 0 512 512" aria-hidden="true" focusable="false">
-              <g fill="none" stroke="currentColor" stroke-width="40" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M492 285V60c0-22-18-40-40-40H60C38 20 20 38 20 60v392c0 22 18 40 40 40h231" />
-                <circle cx="398" cy="397" r="70" />
-                <path d="M448 447l44 44" />
-              </g>
-              <g fill="currentColor">
-                <circle cx="125" cy="133" r="25" />
-                <circle cx="125" cy="253" r="25" />
-                <circle cx="125" cy="381" r="25" />
-                <rect x="200" y="113" width="201" height="40" />
-                <rect x="200" y="233" width="201" height="40" />
-                <rect x="200" y="360" width="68" height="41" />
-              </g>
-            </svg>
+            <img class="mobile-menu-icon" src="/icons/list.svg?v=pwa-client-2026-05-28-copy-top-align-001" alt="" aria-hidden="true" />
           </button>
           <div class="sidebar-title-block" aria-live="polite">
             <strong id="sidebarOwnerTitle">대화</strong>
             <span id="sidebarConversationCount">대화 0개</span>
           </div>
           <button id="newConversationButton" class="ghost-button sidebar-new-button" type="button" aria-label="새 대화" title="새 대화">
-            <svg class="sidebar-new-icon" viewBox="0 0 19 19" aria-hidden="true" focusable="false" fill="none">
-              <path d="M8.75 2H2.25C1.56 2 1 2.56 1 3.25v13.5C1 17.44 1.56 18 2.25 18h13.5c.69 0 1.25-.56 1.25-1.25v-6.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-              <path d="M15.25 1.25a1.77 1.77 0 0 1 2.5 2.5L8.6 12.9 5 14l1.1-3.6 9.15-9.15Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-              <path d="M13.75 2.75l2.5 2.5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-            </svg>
+            <img class="sidebar-new-icon" src="/icons/newchat2.svg?v=pwa-client-2026-05-28-copy-top-align-001" alt="" aria-hidden="true" />
           </button>
         </div>
         <nav id="conversationList" class="conversation-list" aria-label="대화 목록"></nav>
@@ -90,21 +72,7 @@
       <section class="chat-panel" aria-label="채팅">
         <header class="chat-titlebar">
           <button id="mobileMenuButton" class="ghost-button mobile-menu-button" type="button" aria-label="대화 목록 열기" aria-expanded="false" aria-controls="conversationSidebar">
-            <svg class="mobile-menu-icon" viewBox="0 0 512 512" aria-hidden="true" focusable="false">
-              <g fill="none" stroke="currentColor" stroke-width="40" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M492 285V60c0-22-18-40-40-40H60C38 20 20 38 20 60v392c0 22 18 40 40 40h231" />
-                <circle cx="398" cy="397" r="70" />
-                <path d="M448 447l44 44" />
-              </g>
-              <g fill="currentColor">
-                <circle cx="125" cy="133" r="25" />
-                <circle cx="125" cy="253" r="25" />
-                <circle cx="125" cy="381" r="25" />
-                <rect x="200" y="113" width="201" height="40" />
-                <rect x="200" y="233" width="201" height="40" />
-                <rect x="200" y="360" width="68" height="41" />
-              </g>
-            </svg>
+            <img class="mobile-menu-icon" src="/icons/list.svg?v=pwa-client-2026-05-28-copy-top-align-001" alt="" aria-hidden="true" />
           </button>
           <h1 id="chatTitle" class="chat-title">OpenClaw</h1>
           <div class="chat-titlebar-actions">
@@ -268,6 +236,6 @@
       </form>
     </dialog>
 
-    <script type="module" src="/app.js?v=pwa-client-2026-05-18-timeout-30m-001"></script>
+    <script type="module" src="/app.js?v=pwa-client-2026-05-28-copy-top-align-001"></script>
   </body>
 </html>

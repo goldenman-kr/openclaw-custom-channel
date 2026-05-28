@@ -157,10 +157,11 @@ html[data-theme="system"] .danger-button { color: #991b1b; }
 }
 
 .mobile-menu-icon {
-  width: 23px;
-  height: 23px;
+  width: 24px;
+  height: 24px;
   display: block;
-  color: currentColor;
+  object-fit: contain;
+  filter: invert(1);
 }
 
 .chat-title {
@@ -1103,7 +1104,7 @@ html[data-theme="light"] .message-cancel-button {
 
 .message-copy-button {
   position: absolute;
-  bottom: 0;
+  top: 0;
   width: 18px;
   height: 18px;
   min-width: 18px;
@@ -1237,9 +1238,28 @@ html[data-theme="light"] .message-cancel-button {
 }
 
 .location-toggle:has(input:checked) {
-  border-color: rgba(229, 229, 229, 0.82);
-  background: rgba(212, 212, 212, 0.14);
-  box-shadow: 0 0 0 2px rgba(229, 229, 229, 0.14) inset;
+  border-color: #38bdf8;
+  background: linear-gradient(135deg, rgba(14, 165, 233, 0.34), rgba(2, 132, 199, 0.22));
+  box-shadow:
+    0 0 0 2px rgba(56, 189, 248, 0.26) inset,
+    0 8px 18px rgba(2, 132, 199, 0.22);
+}
+
+.location-toggle:has(input:checked)::after {
+  content: '';
+  position: absolute;
+  right: 6px;
+  top: 6px;
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  background: #38bdf8;
+  box-shadow: 0 0 0 2px #082f49;
+}
+
+.location-toggle:has(input:checked) span {
+  filter: grayscale(0);
+  transform: scale(1.08);
 }
 
 .hidden-file-input { display: none; }
@@ -1563,10 +1583,11 @@ html[data-theme="light"] .toast--success {
 }
 
 .sidebar-new-icon {
-  width: 22px;
-  height: 22px;
+  width: 24px;
+  height: 24px;
   display: block;
-  color: currentColor;
+  object-fit: contain;
+  filter: invert(1);
 }
 
 .sidebar-archive-button,
@@ -1631,7 +1652,7 @@ html[data-theme="light"] .toast--success {
 
 .conversation-item.active {
   border-color: rgba(229, 229, 229, 0.22);
-  background: #203760;
+  background: #171717;
 }
 
 .conversation-item.has-unread:not(.active) {
@@ -1681,7 +1702,7 @@ html[data-theme="light"] .toast--success {
 
   .conversation-item.active:hover {
     border-color: rgba(229, 229, 229, 0.22);
-    background: #203760;
+    background: #171717;
   }
 }
 
@@ -1939,7 +1960,7 @@ html[data-theme="light"] .toast--success {
 
   .conversation-item.active {
     border-color: rgba(229, 229, 229, 0.22);
-    background: #203760;
+    background: #171717;
   }
 
   @media (hover: hover) and (pointer: fine) {
@@ -1950,7 +1971,7 @@ html[data-theme="light"] .toast--success {
 
     .conversation-item.active:hover {
       border-color: rgba(229, 229, 229, 0.22);
-      background: rgba(212, 212, 212, 0.10);
+      background: #171717;
     }
   }
 
@@ -2027,6 +2048,36 @@ html[data-theme="light"] .slash-command-palette { background: rgba(255, 255, 255
 
 html[data-theme="light"] .composer { background: linear-gradient(180deg, transparent, var(--bg) 20%); }
 
+html[data-theme="light"] .mobile-menu-icon,
+html[data-theme="light"] .sidebar-new-icon {
+  filter: none;
+}
+
+html[data-theme="light"] .location-toggle {
+  border-color: rgba(15, 23, 42, 0.18);
+  background: #ffffff;
+  color: #475569;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+}
+
+html[data-theme="light"] .location-toggle:has(input:checked) {
+  border-color: #0284c7;
+  background: linear-gradient(135deg, #e0f2fe, #bae6fd);
+  box-shadow:
+    0 0 0 2px rgba(2, 132, 199, 0.22) inset,
+    0 8px 18px rgba(2, 132, 199, 0.22);
+}
+
+html[data-theme="light"] .location-toggle:has(input:checked)::after {
+  background: #0284c7;
+  box-shadow: 0 0 0 2px #e0f2fe;
+}
+
+html[data-theme="light"] .location-toggle:has(input:focus-visible) {
+  outline: 2px solid rgba(2, 132, 199, 0.45);
+  outline-offset: 2px;
+}
+
 html[data-theme="light"] .conversation-search {
   border-color: rgba(21, 21, 21, 0.14);
   background: rgba(255, 255, 255, 0.92);
@@ -2047,8 +2098,8 @@ html[data-theme="light"] .conversation-search input {
 
 html[data-theme="light"] .conversation-item.active,
 html[data-theme="light"] .conversation-item.active:hover {
-  background: #D3E3FD;
-  border-color: rgba(11, 87, 208, 0.18);
+  background: #D9D7D7;
+  border-color: rgba(21, 21, 21, 0.14);
 }
 
 html[data-theme="light"] .message.user {
@@ -2060,7 +2111,7 @@ html[data-theme="light"] .message.user a { color: #075985; }
 
 html[data-theme="light"] .chat-titlebar,
 html[data-theme="light"] .conversation-sidebar {
-  background: #E9EEF6;
+  background: #F1F4F9;
   box-shadow: 0 10px 28px rgba(21, 21, 21, 0.10);
 }
 
