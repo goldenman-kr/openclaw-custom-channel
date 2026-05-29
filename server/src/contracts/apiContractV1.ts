@@ -2,8 +2,8 @@ export const API_CONTRACT_V1 = {
   endpoint: "/v1/message",
   limits: {
     maxAttachments: 3,
-    maxAttachmentBytes: 5 * 1024 * 1024,
-    maxTotalAttachmentBytes: 10 * 1024 * 1024,
+    maxAttachmentBytes: 10 * 1024 * 1024,
+    maxTotalAttachmentBytes: 20 * 1024 * 1024,
   },
   allowedMimeTypes: {
     image: ["image/jpeg", "image/png", "image/webp", "image/svg+xml"],
