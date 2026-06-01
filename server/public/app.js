@@ -33,8 +33,8 @@ import { getCurrentLocationMetadata } from './modules/location.js';
 import { messageTextWithoutAttachmentPreview, renderedHistorySignature } from './modules/history-render-signature.js';
 import { sendMessage as sendMessageToApi } from './modules/message-api.js';
 import { isPendingHistoryMessage, isPlaceholderPendingText, isRunningJobHistoryMessage, shouldRerenderHistory as shouldRerenderHistorySnapshot } from './modules/history-state.js';
-import { cancelJobById, fetchJobById, isAlreadyFinishedJobError, isJobResolvedInHistory as isJobResolvedInHistoryFromApi, waitForJobPolling } from './modules/job-api.js?v=pwa-client-2026-05-28-attachment-size-001';
-import { waitForJobEventStream } from './modules/job-events.js?v=pwa-client-2026-05-28-attachment-size-001';
+import { cancelJobById, fetchJobById, isAlreadyFinishedJobError, isJobResolvedInHistory as isJobResolvedInHistoryFromApi, waitForJobPolling } from './modules/job-api.js?v=pwa-client-2026-06-02-chat-search-001';
+import { waitForJobEventStream } from './modules/job-events.js?v=pwa-client-2026-06-02-chat-search-001';
 import { delay, isTerminalJobState, parseSseBlock } from './modules/job-utils.js';
 import { appendMarkdown as appendMarkdownView } from './modules/markdown-renderer.js';
 import { canonicalMediaRefKey, extractMediaRefs, mediaRefsFromHistoryAttachments } from './modules/media.js';
@@ -77,7 +77,7 @@ import './plugins/wallet-transaction-card.js';
 
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
 const PUSH_DEVICE_ID_KEY = 'openclaw-web-channel-push-device-id-v1';
-const CLIENT_ASSET_VERSION = 'pwa-client-2026-05-28-attachment-size-001';
+const CLIENT_ASSET_VERSION = 'pwa-client-2026-06-02-chat-search-001';
 const CLIENT_API_VERSION = 1;
 const elements = {
   loginScreen: document.querySelector('#loginScreen'),
@@ -92,12 +92,20 @@ const elements = {
   floatingActionMenu: document.querySelector('#floatingActionMenu'),
   floatingActionPanel: document.querySelector('#floatingActionPanel'),
   floatingActionToggle: document.querySelector('#floatingActionToggle'),
+  floatingChatSearchButton: document.querySelector('#floatingChatSearchButton'),
   floatingSettingsButton: document.querySelector('#floatingSettingsButton'),
   floatingRefreshButton: document.querySelector('#floatingRefreshButton'),
   floatingScrollTopButton: document.querySelector('#floatingScrollTopButton'),
   floatingScrollBottomButton: document.querySelector('#floatingScrollBottomButton'),
   continueNewSessionButton: document.querySelector('#continueNewSessionButton'),
   scrollToLatestButton: document.querySelector('#scrollToLatestButton'),
+  chatSearchOverlay: document.querySelector('#chatSearchOverlay'),
+  chatSearchInput: document.querySelector('#chatSearchInput'),
+  chatSearchSubmitButton: document.querySelector('#chatSearchSubmitButton'),
+  chatSearchPrevButton: document.querySelector('#chatSearchPrevButton'),
+  chatSearchNextButton: document.querySelector('#chatSearchNextButton'),
+  chatSearchStatus: document.querySelector('#chatSearchStatus'),
+  chatSearchCloseButton: document.querySelector('#chatSearchCloseButton'),
   sidebarSettingsButton: document.querySelector('#sidebarSettingsButton'),
   archiveToggleButton: document.querySelector('#archiveToggleButton'),
   mobileMenuButton: document.querySelector('#mobileMenuButton'),
@@ -189,6 +197,115 @@ function scrollMessagesToLatest() {
   hideScrollToLatestButton();
 }
 
+function isChatSearchOpen() {
+  return Boolean(elements.chatSearchOverlay && !elements.chatSearchOverlay.classList.contains('hidden'));
+}
+
+function updateChatSearchControls() {
+  const hasMatches = chatSearchMatches.length > 0;
+  if (elements.chatSearchPrevButton) {
+    elements.chatSearchPrevButton.disabled = !hasMatches;
+  }
+  if (elements.chatSearchNextButton) {
+    elements.chatSearchNextButton.disabled = !hasMatches;
+  }
+  if (!elements.chatSearchStatus) {
+    return;
+  }
+  if (!chatSearchQuery) {
+    elements.chatSearchStatus.textContent = '';
+  } else if (!hasMatches) {
+    elements.chatSearchStatus.textContent = '결과 없음';
+  } else {
+    elements.chatSearchStatus.textContent = `${chatSearchIndex + 1}/${chatSearchMatches.length}`;
+  }
+}
+
+function clearChatSearchCurrentMatch() {
+  elements.messages?.querySelectorAll('.message.chat-search-current').forEach((node) => {
+    node.classList.remove('chat-search-current');
+  });
+}
+
+function collectChatSearchMatches(query) {
+  const normalizedQuery = String(query || '').trim().toLocaleLowerCase();
+  if (!normalizedQuery || !elements.messages) {
+    return [];
+  }
+  return [...elements.messages.querySelectorAll('.message')].filter((node) => {
+    const text = node.textContent || '';
+    return text.toLocaleLowerCase().includes(normalizedQuery);
+  });
+}
+
+function scrollToChatSearchMatch(index) {
+  clearChatSearchCurrentMatch();
+  if (index < 0 || index >= chatSearchMatches.length) {
+    chatSearchIndex = -1;
+    updateChatSearchControls();
+    return;
+  }
+  chatSearchIndex = index;
+  const node = chatSearchMatches[chatSearchIndex];
+  node.classList.add('chat-search-current');
+  node.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  updateChatSearchControls();
+}
+
+function runChatSearch({ keepNearest = false } = {}) {
+  chatSearchQuery = elements.chatSearchInput?.value || '';
+  const previousNode = chatSearchMatches[chatSearchIndex];
+  chatSearchMatches = collectChatSearchMatches(chatSearchQuery);
+  if (chatSearchMatches.length === 0) {
+    scrollToChatSearchMatch(-1);
+    return;
+  }
+  if (keepNearest && previousNode) {
+    const preservedIndex = chatSearchMatches.indexOf(previousNode);
+    if (preservedIndex >= 0) {
+      scrollToChatSearchMatch(preservedIndex);
+      return;
+    }
+  }
+  scrollToChatSearchMatch(chatSearchMatches.length - 1);
+}
+
+function openChatSearch() {
+  if (!elements.chatSearchOverlay) {
+    return;
+  }
+  elements.chatSearchOverlay.classList.remove('hidden');
+  setFloatingActionsExpanded(false);
+  window.setTimeout(() => {
+    elements.chatSearchInput?.focus();
+    elements.chatSearchInput?.select?.();
+  }, 0);
+  chatSearchQuery = elements.chatSearchInput?.value || '';
+  chatSearchMatches = collectChatSearchMatches(chatSearchQuery);
+  chatSearchIndex = chatSearchMatches.length ? chatSearchMatches.length - 1 : -1;
+  updateChatSearchControls();
+}
+
+function closeChatSearch() {
+  elements.chatSearchOverlay?.classList.add('hidden');
+  clearChatSearchCurrentMatch();
+  chatSearchQuery = '';
+  chatSearchMatches = [];
+  chatSearchIndex = -1;
+  if (elements.chatSearchInput) {
+    elements.chatSearchInput.value = '';
+  }
+  updateChatSearchControls();
+}
+
+function moveChatSearchMatch(delta) {
+  if (chatSearchMatches.length === 0) {
+    return;
+  }
+  const nextIndex = (chatSearchIndex + delta + chatSearchMatches.length) % chatSearchMatches.length;
+  scrollToChatSearchMatch(nextIndex);
+}
+
 function syncViewportHeight() {
   const viewport = window.visualViewport;
   // Mobile browsers can pan the visual viewport upward when the keyboard opens.
@@ -237,6 +354,9 @@ let composerDragDepth = 0;
 let lastHistoryVersion = null;
 let activeHistoryLimit = normalizeHistoryPageSize(settings.historyPageSize);
 let lastHistoryHasMore = false;
+let chatSearchQuery = '';
+let chatSearchMatches = [];
+let chatSearchIndex = -1;
 let loadingOlderHistory = false;
 let activeConversation = null;
 let openConversationMenuId = null;
@@ -1450,6 +1570,9 @@ async function renderHistory(options = {}) {
     for (const item of history) {
       renderHistoryItem(item);
     }
+    if (isChatSearchOpen()) {
+      runChatSearch({ keepNearest: true });
+    }
     if (scrollToLatest || shouldFollow) {
       scrollToBottom({ force: true });
       if (scrollToLatest) {
@@ -1587,6 +1710,9 @@ function renderHistorySnapshot(history) {
   renderHistoryLoadMoreControl();
   for (const item of history) {
     renderHistoryItem(item);
+  }
+  if (isChatSearchOpen()) {
+    runChatSearch({ keepNearest: true });
   }
   if (shouldFollow) {
     scrollToBottom({ force: true });
@@ -1897,6 +2023,9 @@ function appendMessage(role, text, options = {}) {
     }
   } else {
     scrollToBottom(options);
+  }
+  if (isChatSearchOpen() && chatSearchQuery) {
+    runChatSearch({ keepNearest: true });
   }
   return node;
 }
@@ -2447,6 +2576,11 @@ bindAppEventListeners({
     healthCheck,
     toggleFloatingActions,
     openSettingsPanel,
+    openChatSearch,
+    closeChatSearch,
+    runChatSearch,
+    chatSearchPrevious: () => moveChatSearchMatch(-1),
+    chatSearchNext: () => moveChatSearchMatch(1),
     scrollToBottom,
     continueInNewSession,
     messagesScroll: () => {
@@ -2500,6 +2634,10 @@ bindAppEventListeners({
     documentKeydown: (event) => {
       if (event.key === 'Escape' && !elements.mediaViewer.classList.contains('hidden')) {
         closeMediaViewer();
+        return;
+      }
+      if (event.key === 'Escape' && isChatSearchOpen()) {
+        closeChatSearch();
         return;
       }
       if (event.key === 'Escape' && floatingActionsExpanded) {
@@ -2584,6 +2722,6 @@ renderModelPicker();
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-05-28-attachment-size-001').catch(() => {});
+    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-06-02-chat-search-001').catch(() => {});
   });
 }

@@ -55,6 +55,10 @@ export function bindAppEventListeners({ elements, actions, state, windowRef = wi
   elements.healthCheckButton?.addEventListener('click', actions.healthCheck);
   elements.refreshAppButton.addEventListener('click', () => windowRef.location.reload());
   elements.floatingActionToggle?.addEventListener('click', actions.toggleFloatingActions);
+  elements.floatingChatSearchButton?.addEventListener('click', (event) => {
+    event.stopPropagation();
+    actions.openChatSearch();
+  });
   elements.floatingSettingsButton?.addEventListener('click', (event) => {
     event.stopPropagation();
     actions.setFloatingActionsExpanded(false);
@@ -70,6 +74,16 @@ export function bindAppEventListeners({ elements, actions, state, windowRef = wi
     actions.scrollToBottom({ force: true, smooth: true });
   });
   elements.continueNewSessionButton?.addEventListener('click', actions.continueInNewSession);
+  elements.chatSearchSubmitButton?.addEventListener('click', () => actions.runChatSearch());
+  elements.chatSearchPrevButton?.addEventListener('click', actions.chatSearchPrevious);
+  elements.chatSearchNextButton?.addEventListener('click', actions.chatSearchNext);
+  elements.chatSearchCloseButton?.addEventListener('click', actions.closeChatSearch);
+  elements.chatSearchInput?.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      actions.runChatSearch();
+    }
+  });
   elements.scrollToLatestButton?.addEventListener('click', () => actions.scrollToBottom({ force: true }));
   elements.messages.addEventListener('scroll', actions.messagesScroll);
   elements.clearCacheButton.addEventListener('click', actions.clearAppCacheAndReload);
