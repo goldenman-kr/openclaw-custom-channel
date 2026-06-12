@@ -1,8 +1,8 @@
 {
   "id": "/",
-  "name": "OpenClaw Web Channel",
-  "short_name": "OpenClaw",
-  "description": "Location-aware OpenClaw chat channel",
+  "name": "RODY Agent",
+  "short_name": "RODY",
+  "description": "RODY Agent chat channel",
   "lang": "ko-KR",
   "categories": ["productivity", "utilities"],
   "start_url": "/",

@@ -14,6 +14,7 @@ export interface ConversationRecord {
   openclawSessionId: string;
   createdAt: string;
   updatedAt: string;
+  sortAt: string;
   archivedAt?: string;
   pinned: boolean;
 }
@@ -87,6 +88,7 @@ interface ConversationRow {
   openclaw_session_id: string;
   created_at: string;
   updated_at: string;
+  sort_at: string;
   archived_at: string | null;
   pinned: number;
 }
@@ -145,8 +147,8 @@ export class SqliteChatStore implements ConversationStore, MessageStore, JobStor
     const openclawSessionId = input.openclawSessionId ?? `web-${id}`;
     this.db
       .prepare(
-        `INSERT INTO conversations (id, owner_id, title, openclaw_session_id, created_at, updated_at)
-         VALUES (@id, @ownerId, @title, @openclawSessionId, @now, @now)`,
+        `INSERT INTO conversations (id, owner_id, title, openclaw_session_id, created_at, updated_at, sort_at)
+         VALUES (@id, @ownerId, @title, @openclawSessionId, @now, @now, @now)`,
       )
       .run({ id, ownerId, title: input.title ?? "새 대화", openclawSessionId, now });
     const conversation = this.getConversation(id);
@@ -179,7 +181,7 @@ export class SqliteChatStore implements ConversationStore, MessageStore, JobStor
     }
     const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
     const rows = this.db
-      .prepare(`SELECT * FROM conversations ${where} ORDER BY pinned DESC, updated_at DESC, created_at DESC LIMIT ?`)
+      .prepare(`SELECT * FROM conversations ${where} ORDER BY pinned DESC, sort_at DESC, created_at DESC LIMIT ?`)
       .all(...params, limit) as ConversationRow[];
     return rows.map(mapConversation);
   }
@@ -202,11 +204,11 @@ export class SqliteChatStore implements ConversationStore, MessageStore, JobStor
     }
     const rows = this.db
       .prepare(
-        `SELECT DISTINCT conversations.id, conversations.pinned, conversations.updated_at, conversations.created_at
+        `SELECT DISTINCT conversations.id, conversations.pinned, conversations.sort_at, conversations.created_at
          FROM conversations
          JOIN messages ON messages.conversation_id = conversations.id
          WHERE ${conditions.join(" AND ")}
-         ORDER BY conversations.pinned DESC, conversations.updated_at DESC, conversations.created_at DESC
+         ORDER BY conversations.pinned DESC, conversations.sort_at DESC, conversations.created_at DESC
          LIMIT ?`,
       )
       .all(...params, limit) as Array<{ id: string }>;
@@ -274,7 +276,11 @@ export class SqliteChatStore implements ConversationStore, MessageStore, JobStor
           completedAt: input.completedAt ?? null,
         });
       this.insertAttachments(id, input.attachments ?? [], createdAt);
-      this.db.prepare("UPDATE conversations SET updated_at = ? WHERE id = ?").run(createdAt, input.conversationId);
+      if (input.role === "user") {
+        this.db.prepare("UPDATE conversations SET updated_at = ?, sort_at = ? WHERE id = ?").run(createdAt, createdAt, input.conversationId);
+      } else {
+        this.db.prepare("UPDATE conversations SET updated_at = ? WHERE id = ?").run(createdAt, input.conversationId);
+      }
     });
     insert();
     const row = this.db.prepare("SELECT * FROM messages WHERE id = ?").get(id) as MessageRow | undefined;
@@ -450,6 +456,7 @@ export class SqliteChatStore implements ConversationStore, MessageStore, JobStor
           owner_id TEXT NOT NULL DEFAULT 'admin',
           created_at TEXT NOT NULL,
           updated_at TEXT NOT NULL,
+          sort_at TEXT NOT NULL,
           archived_at TEXT,
           pinned INTEGER NOT NULL DEFAULT 0
         );
@@ -507,6 +514,10 @@ export class SqliteChatStore implements ConversationStore, MessageStore, JobStor
       }
       if (!conversationColumns.has("owner_id")) {
         this.db.exec("ALTER TABLE conversations ADD COLUMN owner_id TEXT NOT NULL DEFAULT 'admin'");
+      }
+      if (!conversationColumns.has("sort_at")) {
+        this.db.exec("ALTER TABLE conversations ADD COLUMN sort_at TEXT");
+        this.db.exec("UPDATE conversations SET sort_at = COALESCE(sort_at, updated_at, created_at)");
       }
       const messageColumns = new Set(
         (this.db.prepare("PRAGMA table_info(messages)").all() as Array<{ name: string }>).map((column) => column.name),
@@ -606,6 +617,7 @@ function mapConversation(row: ConversationRow): ConversationRecord {
     openclawSessionId: row.openclaw_session_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    sortAt: row.sort_at ?? row.updated_at ?? row.created_at,
     ...(row.archived_at ? { archivedAt: row.archived_at } : {}),
     pinned: row.pinned === 1,
   };

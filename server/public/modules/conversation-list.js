@@ -27,5 +27,5 @@ export function visibleConversations(conversations, input) {
 }
 
 export function sortConversations(items) {
-  return [...items].sort((first, second) => Number(Boolean(second.pinned)) - Number(Boolean(first.pinned)) || Date.parse(second.updated_at || second.created_at || '') - Date.parse(first.updated_at || first.created_at || ''));
+  return [...items].sort((first, second) => Number(Boolean(second.pinned)) - Number(Boolean(first.pinned)) || Date.parse(second.sort_at || second.updated_at || second.created_at || '') - Date.parse(first.sort_at || first.updated_at || first.created_at || ''));
 }

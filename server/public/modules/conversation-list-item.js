@@ -10,7 +10,7 @@ function createConversationSelectButton(conversation, deps) {
 
   const meta = document.createElement('span');
   meta.className = 'conversation-meta';
-  meta.textContent = deps.formatConversationDate(conversation.updated_at || conversation.created_at);
+  meta.textContent = deps.formatConversationDate(conversation.sort_at || conversation.updated_at || conversation.created_at);
 
   selectButton.append(title, meta);
   return selectButton;

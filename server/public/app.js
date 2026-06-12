@@ -26,15 +26,15 @@ import { fetchConversationHistory as fetchConversationHistoryFromApi, fetchHisto
 import { fetchChangedHistory as fetchChangedHistoryFromApi, reconcilePendingJobWithHistory as reconcilePendingJobWithHistoryFromHistory, shouldPollHistory as shouldPollHistoryFromState } from './modules/history-refresh.js';
 import { buildNewSessionHandoffMessage } from './modules/history-handoff.js';
 import { createHistoryLoadMoreControl, resetHistoryLoadMoreButton } from './modules/history-controls.js';
-import { createHomeScreen } from './modules/home-screen.js';
+import { createHomeScreen } from './modules/home-screen.js?v=pwa-client-2026-06-05-rody-agent-title-001';
 import { isMobileLikeInput, slashCommandUsesCurrentLocation } from './modules/input-context.js';
 import { hideLoginScreen as hideLoginScreenView, showLoginScreen as showLoginScreenView } from './modules/login-screen.js';
 import { getCurrentLocationMetadata } from './modules/location.js';
 import { messageTextWithoutAttachmentPreview, renderedHistorySignature } from './modules/history-render-signature.js';
 import { sendMessage as sendMessageToApi } from './modules/message-api.js';
 import { isPendingHistoryMessage, isPlaceholderPendingText, isRunningJobHistoryMessage, shouldRerenderHistory as shouldRerenderHistorySnapshot } from './modules/history-state.js';
-import { cancelJobById, fetchJobById, isAlreadyFinishedJobError, isJobResolvedInHistory as isJobResolvedInHistoryFromApi, waitForJobPolling } from './modules/job-api.js?v=pwa-client-2026-06-02-chat-search-001';
-import { waitForJobEventStream } from './modules/job-events.js?v=pwa-client-2026-06-02-chat-search-001';
+import { cancelJobById, fetchJobById, isAlreadyFinishedJobError, isJobResolvedInHistory as isJobResolvedInHistoryFromApi, waitForJobPolling } from './modules/job-api.js?v=pwa-client-2026-06-05-markdown-heading-size-001';
+import { waitForJobEventStream } from './modules/job-events.js?v=pwa-client-2026-06-05-markdown-heading-size-001';
 import { delay, isTerminalJobState, parseSseBlock } from './modules/job-utils.js';
 import { appendMarkdown as appendMarkdownView } from './modules/markdown-renderer.js';
 import { canonicalMediaRefKey, extractMediaRefs, mediaRefsFromHistoryAttachments } from './modules/media.js';
@@ -58,6 +58,7 @@ import { openSettingsPanel as openSettingsPanelView, closeSettingsPanel as close
 import { continueInNewSessionFlow } from './modules/session-handoff-controller.js';
 import { loadSettings, normalizeHistoryPageSize, saveSettings } from './modules/settings.js';
 import { isNearBottom as isMessagesNearBottom, hideMessagesScrollIndicator, hideScrollToLatestButton as hideScrollButton, preserveScrollAfterRender as preserveMessagesScrollAfterRender, scheduleScrollToBottom, showScrollToLatestButton as showScrollButton, updateMessagesScrollIndicator as updateMessagesScrollIndicatorUi } from './modules/scroll-ui.js';
+import { captureScrollPosition, restoreScrollPosition } from './modules/scroll-position.js';
 import { createSidebarResizeController } from './modules/sidebar-resize-controller.js';
 import { canResizeSidebar as canResizeSidebarView, sidebarResizeStateFromEvent, sidebarResizeWidth } from './modules/sidebar-resize.js';
 import { applyStoredSidebarWidth, clampSidebarWidth, saveSidebarWidth, SIDEBAR_RESIZE_MEDIA } from './modules/sidebar-width.js';
@@ -77,7 +78,7 @@ import './plugins/wallet-transaction-card.js';
 
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
 const PUSH_DEVICE_ID_KEY = 'openclaw-web-channel-push-device-id-v1';
-const CLIENT_ASSET_VERSION = 'pwa-client-2026-06-02-chat-search-001';
+const CLIENT_ASSET_VERSION = 'pwa-client-2026-06-05-markdown-heading-size-001';
 const CLIENT_API_VERSION = 1;
 const elements = {
   loginScreen: document.querySelector('#loginScreen'),
@@ -1125,9 +1126,11 @@ function renderConversationList() {
   if (!elements.conversationList) {
     return;
   }
+  const previousScrollPosition = captureScrollPosition(elements.conversationList);
   elements.conversationList.replaceChildren();
   if (!canUseApi()) {
     renderConversationListEmptyState('로그인하면 대화 목록이 표시됩니다.');
+    restoreScrollPosition(elements.conversationList, previousScrollPosition);
     return;
   }
   updateArchiveToggleButton();
@@ -1135,6 +1138,7 @@ function renderConversationList() {
   const query = normalizedConversationSearchQuery();
   if (list.length === 0) {
     renderConversationListEmptyState(conversationListEmptyMessage(query));
+    restoreScrollPosition(elements.conversationList, previousScrollPosition);
     return;
   }
   const activeId = activeConversationId();
@@ -1173,6 +1177,7 @@ function renderConversationList() {
       },
     }));
   }
+  restoreScrollPosition(elements.conversationList, previousScrollPosition);
 }
 
 function syncActiveConversationFromList() {
@@ -2722,6 +2727,6 @@ renderModelPicker();
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-06-02-chat-search-001').catch(() => {});
+    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-06-05-markdown-heading-size-001').catch(() => {});
   });
 }

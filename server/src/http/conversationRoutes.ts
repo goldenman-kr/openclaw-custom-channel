@@ -29,6 +29,7 @@ export function conversationToDto(conversation: ConversationRecord) {
     title: conversation.title,
     created_at: conversation.createdAt,
     updated_at: conversation.updatedAt,
+    sort_at: conversation.sortAt,
     ...(conversation.archivedAt ? { archived_at: conversation.archivedAt } : {}),
     pinned: conversation.pinned,
   };

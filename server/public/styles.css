@@ -664,9 +664,13 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); }
 .message h4,
 .message h5 {
   margin: 0 0 0.35rem;
-  font-size: 1rem;
-  line-height: 1.35;
+  line-height: 1.28;
+  font-weight: 800;
 }
+
+.message h3 { font-size: 1.35rem; }
+.message h4 { font-size: 1.18rem; }
+.message h5 { font-size: 1.06rem; }
 
 .message ul,
 .message ol {

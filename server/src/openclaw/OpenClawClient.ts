@@ -15,12 +15,18 @@ export interface RuntimeWorkspaceScope {
 export interface OpenClawClientInput {
   sessionId: string;
   message: string;
+  history?: OpenClawConversationMessage[];
   userId?: string;
   runtimeWorkspace?: RuntimeWorkspaceScope;
   attachments?: MessageAttachment[];
   metadata?: MessageRequestMetadata;
   callbacks?: ChatRuntimeCallbacks;
   abortSignal?: AbortSignal;
+}
+
+export interface OpenClawConversationMessage {
+  role: "user" | "assistant" | "system";
+  content: string;
 }
 
 export interface OpenClawClientResult {

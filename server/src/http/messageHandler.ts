@@ -8,10 +8,10 @@ import {
   type MessageResponseDto,
   validateMessageRequestDto,
 } from "../contracts/apiContractV1.js";
-import type { RuntimeWorkspaceScope } from "../openclaw/OpenClawClient.js";
+import type { OpenClawConversationMessage, RuntimeWorkspaceScope } from "../openclaw/OpenClawClient.js";
 import type { ChatRuntime, ChatRuntimeCallbacks } from "../runtime/ChatRuntime.js";
 import type { AuthContext } from "./authRoutes.js";
-import type { ConversationStore } from "../session/SqliteChatStore.js";
+import type { ChatMessageRecord, ConversationStore, MessageStore } from "../session/SqliteChatStore.js";
 import type { SessionStore } from "../session/SessionStore.js";
 
 export interface HttpResult {
@@ -23,7 +23,7 @@ export interface MessageHandlerDeps {
   chatRuntime: ChatRuntime;
   sessionStore: SessionStore;
   validApiKeys: Set<string>;
-  conversationStore?: Pick<ConversationStore, "getConversation">;
+  conversationStore?: Pick<ConversationStore, "getConversation"> & Partial<Pick<MessageStore, "listMessages">>;
   authContext?: AuthContext | null;
   runtimeWorkspace?: RuntimeWorkspaceScope;
   runtimeCallbacks?: ChatRuntimeCallbacks;
@@ -151,11 +151,15 @@ export async function handlePostMessage(
     });
   }
   const sessionId = conversation?.openclawSessionId ?? deps.sessionStore.getSessionId({ deviceId, userId });
+  const history = conversation && deps.conversationStore?.listMessages
+    ? recentConversationHistory(deps.conversationStore.listMessages(conversation.id, { limit: 80 }), payload.message)
+    : undefined;
 
   try {
     const result = await deps.chatRuntime.sendMessage({
       sessionId,
       message: payload.message,
+      history,
       userId,
       runtimeWorkspace: deps.runtimeWorkspace,
       attachments: payload.attachments,
@@ -191,4 +195,79 @@ export async function handlePostMessage(
       },
     });
   }
+}
+
+const PLACEHOLDER_TEXTS = new Set(["응답 대기 중입니다…", "응답을 처리 중입니다…", "요청이 취소되었습니다."]);
+const MAX_HISTORY_MESSAGES = Number(process.env.PWA_GATEWAY_HISTORY_MESSAGES ?? 24);
+const MAX_HISTORY_CHARS = Number(process.env.PWA_GATEWAY_HISTORY_CHARS ?? 24_000);
+const MAX_HISTORY_MESSAGE_CHARS = Number(process.env.PWA_GATEWAY_HISTORY_MESSAGE_CHARS ?? 4_000);
+
+function recentConversationHistory(messages: ChatMessageRecord[], currentMessage: string): OpenClawConversationMessage[] {
+  const eligible = messages.filter((message) => isHistoryMessageEligible(message));
+  const withoutCurrentUser = dropCurrentUserMessage(eligible, currentMessage);
+  const bounded = boundHistory(withoutCurrentUser.map(toOpenClawHistoryMessage));
+  return bounded;
+}
+
+function isHistoryMessageEligible(message: ChatMessageRecord): boolean {
+  const text = message.text.trim();
+  if (!text || PLACEHOLDER_TEXTS.has(text) || message.id.includes(":partial:")) {
+    return false;
+  }
+  if (message.role === "assistant") {
+    return Boolean(message.completedAt);
+  }
+  return message.role === "user" || message.role === "system";
+}
+
+function dropCurrentUserMessage(messages: ChatMessageRecord[], currentMessage: string): ChatMessageRecord[] {
+  const normalizedCurrent = normalizeHistoryText(currentMessage);
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message?.role !== "user") {
+      continue;
+    }
+    const normalizedText = normalizeHistoryText(message.text);
+    if (normalizedText === normalizedCurrent || normalizedText.startsWith(normalizedCurrent)) {
+      return [...messages.slice(0, index), ...messages.slice(index + 1)];
+    }
+    break;
+  }
+  return messages;
+}
+
+function toOpenClawHistoryMessage(message: ChatMessageRecord): OpenClawConversationMessage {
+  return {
+    role: message.role,
+    content: truncateHistoryMessage(message.text.trim()),
+  };
+}
+
+function boundHistory(messages: OpenClawConversationMessage[]): OpenClawConversationMessage[] {
+  const maxMessages = Math.max(0, MAX_HISTORY_MESSAGES);
+  const maxChars = Math.max(0, MAX_HISTORY_CHARS);
+  const selected: OpenClawConversationMessage[] = [];
+  let totalChars = 0;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (!message || selected.length >= maxMessages) {
+      break;
+    }
+    const nextTotal = totalChars + message.content.length;
+    if (selected.length > 0 && nextTotal > maxChars) {
+      break;
+    }
+    selected.push(message);
+    totalChars = nextTotal;
+  }
+  return selected.reverse();
+}
+
+function truncateHistoryMessage(text: string): string {
+  const maxChars = Math.max(1, MAX_HISTORY_MESSAGE_CHARS);
+  return text.length > maxChars ? `${text.slice(0, maxChars)}\n[history message truncated]` : text;
+}
+
+function normalizeHistoryText(text: string): string {
+  return text.trim().replace(/\s+/g, " ");
 }

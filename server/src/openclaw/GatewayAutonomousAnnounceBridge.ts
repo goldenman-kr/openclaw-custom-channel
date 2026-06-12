@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { HistoryAttachment } from "../session/HistoryStore.js";
 import type { ConversationRecord, MessageStore } from "../session/SqliteChatStore.js";
+import { pwaConversationSessionIdFromGatewayKey } from "./sessionKeys.js";
 
 export interface AutonomousAnnouncementRecord {
   id: string;
@@ -16,6 +17,7 @@ export interface AutonomousAnnouncementRecord {
 export interface GatewayAutonomousAnnounceBridgeOptions {
   baseUrl?: string;
   token?: string;
+  password?: string;
   agentId?: string;
   sessionsDir?: string;
   getConversationByOpenClawSessionId(openclawSessionId: string): ConversationRecord | null;
@@ -169,11 +171,11 @@ export class GatewayAutonomousAnnounceBridge {
       const nonce = typeof (parsed.payload as { nonce?: unknown } | null)?.nonce === "string" ? (parsed.payload as { nonce: string }).nonce : "";
       if (nonce) {
         await this.request("connect", {
-          minProtocol: 3,
-          maxProtocol: 3,
+          minProtocol: 4,
+          maxProtocol: 4,
           client: { id: "gateway-client", displayName: "PWA autonomous announce bridge", version: "1.0.0", platform: process.platform, mode: "backend" },
           caps: [],
-          auth: this.options.token ? { token: this.options.token } : undefined,
+          auth: this.gatewayAuth(),
           role: "operator",
           scopes: ["operator.read"],
         });
@@ -184,6 +186,18 @@ export class GatewayAutonomousAnnounceBridge {
     if (parsed.type === "event" && parsed.event === "sessions.changed") {
       this.handleSessionsChanged(parsed.payload as SessionsChangedPayload | null);
     }
+  }
+
+  private gatewayAuth(): { token?: string; password?: string } | undefined {
+    const token = this.options.token?.trim();
+    const password = (this.options.password ?? process.env.OPENCLAW_GATEWAY_PASSWORD)?.trim();
+    if (!token && !password) {
+      return undefined;
+    }
+    return {
+      ...(token ? { token } : {}),
+      ...(password ? { password } : {}),
+    };
   }
 
   private handleSessionsChanged(payload: SessionsChangedPayload | null): void {
@@ -308,11 +322,7 @@ export class GatewayAutonomousAnnounceBridge {
   }
 
   private openclawSessionIdFromGatewayKey(sessionKey: string): string | null {
-    const prefix = `agent:${this.options.agentId ?? "main"}:`;
-    if (sessionKey.startsWith(prefix)) {
-      return sessionKey.slice(prefix.length);
-    }
-    return sessionKey.startsWith("web-conv_") ? sessionKey : null;
+    return pwaConversationSessionIdFromGatewayKey(sessionKey, this.options.agentId ?? "main");
   }
 
   private wsUrl(): string {

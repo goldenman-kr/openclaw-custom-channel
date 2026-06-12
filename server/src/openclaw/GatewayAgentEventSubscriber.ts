@@ -11,6 +11,7 @@ export interface GatewayAgentEventPayload {
 export interface GatewayAgentEventSubscriberOptions {
   baseUrl?: string;
   token?: string;
+  password?: string;
   sessionKey: string;
   onEvent(event: GatewayAgentEventPayload): void;
   timeoutMs?: number;
@@ -173,10 +174,10 @@ export class GatewayAgentEventSubscriber {
   }
 
   private async connect(nonce: string): Promise<void> {
-    const auth = this.options.token ? { token: this.options.token } : undefined;
+    const auth = this.gatewayAuth();
     await this.request("connect", {
-      minProtocol: 3,
-      maxProtocol: 3,
+      minProtocol: 4,
+      maxProtocol: 4,
       client: {
         id: "gateway-client",
         displayName: "OpenClaw Custom Channel PWA",
@@ -189,6 +190,18 @@ export class GatewayAgentEventSubscriber {
       role: "operator",
       scopes: ["operator.read"],
     });
+  }
+
+  private gatewayAuth(): { token?: string; password?: string } | undefined {
+    const token = this.options.token?.trim();
+    const password = (this.options.password ?? process.env.OPENCLAW_GATEWAY_PASSWORD)?.trim();
+    if (!token && !password) {
+      return undefined;
+    }
+    return {
+      ...(token ? { token } : {}),
+      ...(password ? { password } : {}),
+    };
   }
 
   private request(method: string, params: Record<string, unknown>): Promise<unknown> {

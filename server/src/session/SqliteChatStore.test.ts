@@ -274,6 +274,49 @@ test("updates conversation version without moving message order", () => {
     const updated = store.getConversation(conversation.id);
     assert.equal(message?.createdAt, "2026-04-29T00:01:00.000Z");
     assert.notEqual(updated?.updatedAt, conversation.updatedAt);
+    assert.equal(updated?.sortAt, conversation.sortAt);
+  } finally {
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("assistant completion does not move older conversations above newer user activity", () => {
+  const dir = tempDir();
+  const store = new SqliteChatStore(join(dir, "chat.sqlite"));
+  try {
+    const older = store.createConversation({
+      ownerId: "usr_sort",
+      title: "이전 대화",
+      now: "2026-04-29T00:00:00.000Z",
+    });
+    const newer = store.createConversation({
+      ownerId: "usr_sort",
+      title: "최근 대화",
+      now: "2026-04-29T00:02:00.000Z",
+    });
+    store.addMessage({
+      id: "job_old_late",
+      conversationId: older.id,
+      role: "assistant",
+      text: "응답 대기 중입니다…",
+      createdAt: "2026-04-29T00:01:00.000Z",
+    });
+    store.addMessage({
+      conversationId: newer.id,
+      role: "user",
+      text: "새 질문",
+      createdAt: "2026-04-29T00:03:00.000Z",
+    });
+    store.updateMessage("job_old_late", {
+      role: "assistant",
+      text: "늦은 완료",
+      createdAt: "2026-04-29T00:04:00.000Z",
+    });
+
+    const sortedIds = store.listConversations({ ownerId: "usr_sort" }).map((conversation) => conversation.id);
+    assert.deepEqual(sortedIds, [newer.id, older.id]);
+    assert.equal(store.getConversation(older.id)?.sortAt, older.sortAt);
   } finally {
     store.close();
     rmSync(dir, { recursive: true, force: true });
@@ -302,6 +345,7 @@ test("renaming a conversation does not update its sort timestamp", () => {
 
     assert.equal(renamed?.title, "제목만 변경");
     assert.equal(renamed?.updatedAt, older.updatedAt);
+    assert.equal(renamed?.sortAt, older.sortAt);
     assert.deepEqual(store.listConversations({ ownerId: "usr_rename" }).map((conversation) => conversation.id), [newer.id, older.id]);
   } finally {
     store.close();

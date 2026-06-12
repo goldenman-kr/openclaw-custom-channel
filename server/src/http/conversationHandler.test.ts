@@ -8,17 +8,19 @@ import type { ConversationStore } from "../session/SqliteChatStore.js";
 let capturedSessionId = "";
 let capturedRuntimeWorkspaceUserDir = "";
 let capturedUserId = "";
+let capturedHistory: Array<{ role: string; content: string }> | undefined;
 
 const fakeChatRuntime: ChatRuntime = {
   async sendMessage(input) {
     capturedSessionId = input.sessionId;
     capturedRuntimeWorkspaceUserDir = input.runtimeWorkspace?.userDir ?? "";
     capturedUserId = input.userId ?? "";
+    capturedHistory = input.history;
     return { reply: `reply:${input.message}` };
   },
 };
 
-const conversationStore: Pick<ConversationStore, "getConversation"> = {
+const conversationStore: Pick<ConversationStore, "getConversation"> & { listMessages: NonNullable<Parameters<typeof handlePostMessage>[0]["conversationStore"]>["listMessages"] } = {
   getConversation(id) {
     if (id !== "conv_test") {
       return null;
@@ -30,8 +32,45 @@ const conversationStore: Pick<ConversationStore, "getConversation"> = {
       openclawSessionId: "openclaw-session-test",
       createdAt: "2026-04-29T00:00:00.000Z",
       updatedAt: "2026-04-29T00:00:00.000Z",
+      sortAt: "2026-04-29T00:00:00.000Z",
       pinned: false,
     };
+  },
+  listMessages(id) {
+    if (id !== "conv_test") {
+      return [];
+    }
+    return [
+      {
+        id: "msg_old_user",
+        conversationId: id,
+        role: "user",
+        text: "이전 질문",
+        createdAt: "2026-04-29T00:00:00.000Z",
+      },
+      {
+        id: "msg_old_assistant",
+        conversationId: id,
+        role: "assistant",
+        text: "이전 답변",
+        createdAt: "2026-04-29T00:00:01.000Z",
+        completedAt: "2026-04-29T00:00:01.000Z",
+      },
+      {
+        id: "job_pending",
+        conversationId: id,
+        role: "assistant",
+        text: "응답을 처리 중입니다…",
+        createdAt: "2026-04-29T00:00:02.000Z",
+      },
+      {
+        id: "msg_current_user",
+        conversationId: id,
+        role: "user",
+        text: "hello",
+        createdAt: "2026-04-29T00:00:03.000Z",
+      },
+    ];
   },
 };
 
@@ -46,6 +85,7 @@ function deps() {
 
 test("uses conversation openclawSessionId when conversation_id is provided", async () => {
   capturedSessionId = "";
+  capturedHistory = undefined;
   const result = await handlePostMessage(
     deps(),
     {
@@ -60,6 +100,10 @@ test("uses conversation openclawSessionId when conversation_id is provided", asy
 
   assert.equal(result.statusCode, 200);
   assert.equal(capturedSessionId, "openclaw-session-test");
+  assert.deepEqual(capturedHistory, [
+    { role: "user", content: "이전 질문" },
+    { role: "assistant", content: "이전 답변" },
+  ]);
   assert.equal("reply" in result.body, true);
   if ("reply" in result.body) {
     assert.equal(result.body.session_id, "openclaw-session-test");

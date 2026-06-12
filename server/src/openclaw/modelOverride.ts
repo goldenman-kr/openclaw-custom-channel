@@ -1,5 +1,6 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
+import { openClawSessionKeyCandidates, scopedOpenClawSessionKey } from "./sessionKeys.js";
 
 interface SessionStoreEntry {
   updatedAt?: number;
@@ -36,14 +37,7 @@ function writeSessionStore(store: Record<string, SessionStoreEntry>): void {
 }
 
 function sessionKeyCandidates(sessionKey: string): string[] {
-  const trimmed = sessionKey.trim();
-  const agentId = process.env.OPENCLAW_AGENT ?? "main";
-  return [
-    trimmed,
-    `agent:${agentId}:${trimmed}`,
-    `agent:${agentId}:explicit:${trimmed}`,
-    `agent:${agentId}:legacy:${trimmed}`,
-  ];
+  return openClawSessionKeyCandidates(sessionKey);
 }
 
 export function ensureSessionEntry(sessionKey: string): void {
@@ -54,7 +48,7 @@ export function ensureSessionEntry(sessionKey: string): void {
 
   const store = readSessionStore();
   const now = Date.now();
-  const keysToCreate = [trimmed, `agent:${process.env.OPENCLAW_AGENT ?? "main"}:explicit:${trimmed}`];
+  const keysToCreate = [scopedOpenClawSessionKey(trimmed), trimmed];
   let changed = false;
 
   for (const key of keysToCreate) {
@@ -73,7 +67,7 @@ function readSessionEntry(sessionKey?: string): { targetKey: string; entry: Sess
   if (!sessionKey?.trim()) return null;
   const trimmedSessionKey = sessionKey.trim();
   const store = readSessionStore();
-  const targetKey = sessionKeyCandidates(trimmedSessionKey).find((key) => store[key]) ?? `agent:${process.env.OPENCLAW_AGENT ?? "main"}:${trimmedSessionKey}`;
+  const targetKey = sessionKeyCandidates(trimmedSessionKey).find((key) => store[key]) ?? scopedOpenClawSessionKey(trimmedSessionKey);
   return { targetKey, entry: { ...(store[targetKey] ?? {}) }, store };
 }
 

@@ -131,7 +131,10 @@ export class GatewayOpenAiOpenClawClient implements OpenClawClient {
         headers["x-openclaw-runtime-identity-file"] = input.runtimeWorkspace.identityFile;
       }
     }
-    if (this.token) {
+    const password = process.env.OPENCLAW_GATEWAY_PASSWORD?.trim();
+    if (password) {
+      headers.authorization = `Bearer ${password}`;
+    } else if (this.token) {
       headers.authorization = `Bearer ${this.token}`;
     }
     return headers;
@@ -139,11 +142,18 @@ export class GatewayOpenAiOpenClawClient implements OpenClawClient {
 
   private requestBody(input: OpenClawClientInput, stream: boolean, attachments: SavedAttachment[]): Record<string, unknown> {
     const thinking = getSessionThinkingOverride(input.sessionId) ?? process.env.OPENCLAW_THINKING;
+    const historyMessages = (input.history ?? [])
+      .filter((message) => message.content.trim())
+      .map((message) => ({
+        role: message.role,
+        content: message.content,
+      }));
     return {
       model: this.activeModel(),
       stream,
       ...(thinking ? { thinking } : {}),
       messages: [
+        ...historyMessages,
         {
           role: "user",
           content: this.buildContent(input.message, attachments, input.metadata, input.runtimeWorkspace),
@@ -390,6 +400,8 @@ function stringsFromUnknown(value: unknown): string[] {
 type UndiciRequestInit = RequestInit & { dispatcher?: Agent };
 
 interface OpenAiChatCompletionChunk {
+  type?: string;
+  delta?: unknown;
   choices?: Array<{
     delta?: {
       content?: string | Array<unknown>;
@@ -417,6 +429,11 @@ function extractVisibleText(value: unknown): string | null {
   const parsed = asRecord(value) as OpenAiChatCompletionChunk | null;
   if (!parsed) {
     return typeof value === "string" && value.trim() ? value.trim() : null;
+  }
+
+  const responseDeltaText = responseDeltaEventText(parsed);
+  if (responseDeltaText) {
+    return responseDeltaText;
   }
 
   const choiceText = parsed.choices
@@ -458,6 +475,30 @@ function extractVisibleText(value: unknown): string | null {
   }
 
   return null;
+}
+
+function responseDeltaEventText(parsed: OpenAiChatCompletionChunk): string | null {
+  const type = typeof parsed.type === "string" ? parsed.type : "";
+  if (!type.endsWith(".delta") && !type.includes("_delta")) {
+    return null;
+  }
+  return textFromDelta(parsed.delta);
+}
+
+function textFromDelta(delta: unknown): string | null {
+  if (typeof delta === "string") {
+    return delta.length > 0 ? delta : null;
+  }
+
+  const record = asRecord(delta);
+  if (!record) {
+    return null;
+  }
+
+  return textFromContent(record.text)
+    ?? textFromContent(record.content)
+    ?? textFromContent(record.output_text)
+    ?? textFromContent(record.value);
 }
 
 function payloadsText(payloads: unknown[] | undefined): string | null {

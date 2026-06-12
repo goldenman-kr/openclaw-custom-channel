@@ -110,10 +110,10 @@ test("ensureSessionEntry pre-creates a bare web conversation session before the 
 
   let store = JSON.parse(readFileSync(process.env.OPENCLAW_SESSION_STORE_PATH!, "utf8")) as Record<string, { thinkingLevel?: string }>;
   assert.ok(store[sessionKey]);
-  assert.ok(store[`agent:main:explicit:${sessionKey}`]);
+  assert.ok(store[`agent:main:${sessionKey}`]);
 
   setSessionThinkingOverride(sessionKey, "medium");
   store = JSON.parse(readFileSync(process.env.OPENCLAW_SESSION_STORE_PATH!, "utf8")) as Record<string, { thinkingLevel?: string }>;
-  assert.equal(store[sessionKey]?.thinkingLevel, "medium");
+  assert.equal(store[`agent:main:${sessionKey}`]?.thinkingLevel, "medium");
   assert.equal(getSessionThinkingOverride(sessionKey), "medium");
 });

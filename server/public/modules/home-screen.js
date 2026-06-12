@@ -3,7 +3,7 @@ export function createHomeScreen({ canUseApi, showingArchived, onOpenSettings, o
   home.className = 'home-screen';
 
   const title = document.createElement('h1');
-  title.textContent = 'OpenClaw Web Channel';
+  title.textContent = 'RODY Agent';
 
   const description = document.createElement('p');
   if (!canUseApi) {

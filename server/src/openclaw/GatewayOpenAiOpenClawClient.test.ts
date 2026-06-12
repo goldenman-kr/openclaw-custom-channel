@@ -105,6 +105,39 @@ test("extracts OpenClaw payload text from Gateway SSE chunks", async () => {
   }
 });
 
+test("streams Responses-style Gateway delta events as runtime tokens", async () => {
+  const server = await withServer(async (_req, res) => {
+    res.writeHead(200, {
+      "content-type": "text/event-stream; charset=utf-8",
+      "cache-control": "no-cache",
+    });
+    res.write('data: {"type":"response.created","response":{"id":"resp_test"}}\n\n');
+    res.write('data: {"type":"response.output_text.delta","delta":"hello"}\n\n');
+    res.write('data: {"type":"response.output_text.delta","delta":" world"}\n\n');
+    res.end('data: {"type":"response.completed","response":{"id":"resp_test"}}\n\ndata: [DONE]\n\n');
+  });
+
+  try {
+    const tokens: string[] = [];
+    const client = new GatewayOpenAiOpenClawClient(server.baseUrl, undefined, "openclaw-test", 5_000);
+    const result = await client.sendMessage({
+      sessionId: "session-responses-delta-test",
+      message: "hello",
+      callbacks: {
+        async onToken(token) {
+          tokens.push(token);
+        },
+      },
+    });
+
+    assert.equal(result.reply, "hello world");
+    assert.deepEqual(tokens, ["hello", " world"]);
+    assert.equal((result.raw as { usedNonStreamFallback?: boolean }).usedNonStreamFallback, false);
+  } finally {
+    await server.close();
+  }
+});
+
 test("falls back to non-stream response when Gateway SSE has no visible text", async () => {
   const requests: Array<Record<string, unknown>> = [];
   const server = await withServer(async (req, res) => {
@@ -219,6 +252,35 @@ test("includes session thinking override in Gateway requests", async () => {
     assert.equal(requests[0]?.thinking, "high");
   } finally {
     setSessionThinkingOverride("session-thinking-test", null);
+    await server.close();
+  }
+});
+
+test("sends bounded conversation history before the current user message", async () => {
+  const requests: Array<Record<string, unknown>> = [];
+  const server = await withServer(async (req, res) => {
+    requests.push(await readJson(req));
+    res.writeHead(200, { "content-type": "text/event-stream; charset=utf-8" });
+    res.end('data: {"choices":[{"delta":{"content":"ok"}}]}\n\ndata: [DONE]\n\n');
+  });
+
+  try {
+    const client = new GatewayOpenAiOpenClawClient(server.baseUrl, undefined, "openclaw-test", 5_000);
+    await client.sendMessage({
+      sessionId: "session-history-test",
+      message: "현재 질문",
+      history: [
+        { role: "user", content: "이전 질문" },
+        { role: "assistant", content: "이전 답변" },
+      ],
+    });
+
+    assert.deepEqual(requests[0]?.messages, [
+      { role: "user", content: "이전 질문" },
+      { role: "assistant", content: "이전 답변" },
+      { role: "user", content: "현재 질문" },
+    ]);
+  } finally {
     await server.close();
   }
 });

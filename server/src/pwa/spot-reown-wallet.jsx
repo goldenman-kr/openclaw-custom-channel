@@ -12,8 +12,8 @@ const APP_ORIGIN = import.meta.env.VITE_APP_ORIGIN || window.location.origin;
 const PROJECT_ID = import.meta.env.VITE_REOWN_PROJECT_ID || '';
 const SUPPORTED_NETWORKS = [mainnet, arbitrum, base, polygon, bsc];
 const METADATA = {
-  name: import.meta.env.VITE_APP_NAME || 'OpenClaw',
-  description: import.meta.env.VITE_APP_DESCRIPTION || 'OpenClaw Custom Channel',
+  name: import.meta.env.VITE_APP_NAME || 'RODY Agent',
+  description: import.meta.env.VITE_APP_DESCRIPTION || 'RODY Agent chat channel',
   url: `${APP_ORIGIN}/`,
   icons: [`${APP_ORIGIN}/assets/openclaw-app-icon-512.png`],
 };
@@ -24,6 +24,19 @@ const wagmiAdapter = new WagmiAdapter({
   projectId: PROJECT_ID,
   ssr: false,
 });
+
+function redactAddress(value) {
+  const address = String(value || '');
+  return address.length > 14 ? `${address.slice(0, 8)}...${address.slice(-6)}` : address || '';
+}
+
+function reownDebug(event, details = {}) {
+  console.debug('[spot-reown-wallet]', event, {
+    ...details,
+    projectIdConfigured: Boolean(PROJECT_ID),
+    iosPwa: isIosPwa(),
+  });
+}
 
 function isIosPwa() {
   if (typeof window === 'undefined') {
@@ -53,12 +66,20 @@ function renderIosPwaWalletLink() {
     return;
   }
   if (!explicitWalletConnectInProgress || getConnectedAddress()) {
+    reownDebug('ios wallet link hidden', {
+      explicitWalletConnectInProgress,
+      hasAddress: Boolean(getConnectedAddress()),
+    });
     removeIosPwaWalletLink();
     return;
   }
   const wcUri = ConnectionController.state.wcUri;
   const wallet = PublicStateController.state.connectingWallet;
   if (!wcUri || !isMetaMaskWallet(wallet)) {
+    reownDebug('ios wallet link waiting', {
+      hasWcUri: Boolean(wcUri),
+      wallet: wallet?.name || wallet?.id || '',
+    });
     removeIosPwaWalletLink();
     return;
   }
@@ -87,6 +108,10 @@ function renderIosPwaWalletLink() {
   if (node.dataset.href === href) {
     return;
   }
+  reownDebug('ios metamask universal link rendered', {
+    wallet: wallet?.name || wallet?.id || '',
+    wcUriLength: wcUri.length,
+  });
   node.dataset.href = href;
   node.innerHTML = `
     <div style="font-size:13px;line-height:1.35;margin-bottom:8px;opacity:.92">
@@ -176,7 +201,16 @@ function emit(event, payload) {
 
 function ensureReconnect() {
   if (!reconnectPromise) {
-    reconnectPromise = reconnect(wagmiConfig).catch(() => null);
+    reownDebug('reconnect start');
+    reconnectPromise = reconnect(wagmiConfig)
+      .then((result) => {
+        reownDebug('reconnect complete', { hasAddress: Boolean(getConnectedAddress()), resultType: typeof result });
+        return result;
+      })
+      .catch((error) => {
+        reownDebug('reconnect failed', { error: error instanceof Error ? error.message : String(error) });
+        return null;
+      });
   }
   return reconnectPromise;
 }
@@ -190,6 +224,10 @@ function waitForAccount(timeoutMs = 120_000) {
     let settled = false;
     const unwatch = watchAccount(wagmiConfig, {
       onChange(account) {
+        reownDebug('waitForAccount account change', {
+          address: redactAddress(account?.address),
+          status: account?.status,
+        });
         const address = account?.address || '';
         if (address && !settled) {
           settled = true;
@@ -205,6 +243,7 @@ function waitForAccount(timeoutMs = 120_000) {
       }
       settled = true;
       unwatch?.();
+      reownDebug('waitForAccount timeout', { timeoutMs });
       reject(new Error('지갑 연결 시간이 초과되었습니다. 다시 시도해주세요.'));
     }, timeoutMs);
   });
@@ -224,11 +263,13 @@ function requireWalletProvider() {
 
 async function readProviderChainId(provider = getWalletProvider()) {
   if (!provider?.request) {
+    reownDebug('readProviderChainId missing provider');
     return '';
   }
   try {
     return toHexChainId(await provider.request({ method: 'eth_chainId' }));
-  } catch {
+  } catch (error) {
+    reownDebug('readProviderChainId failed', { error: error instanceof Error ? error.message : String(error) });
     return '';
   }
 }
@@ -252,18 +293,22 @@ async function waitForProviderChain(targetChainId, timeoutMs = 15_000) {
 async function switchToChain(chainId) {
   const numericChainId = parseChainId(chainId);
   if (!numericChainId) {
+    reownDebug('switchToChain skipped invalid chain', { chainId });
     return;
   }
   const network = SUPPORTED_NETWORKS.find((item) => Number(item.id) === numericChainId);
   if (!network) {
+    reownDebug('switchToChain unsupported network', { numericChainId });
     throw new Error(`지원하지 않는 EVM 네트워크입니다: ${numericChainId}`);
   }
   const targetChainId = toHexChainId(numericChainId);
   const provider = requireWalletProvider();
+  reownDebug('switchToChain start', { numericChainId, targetChainId });
 
   if ((await readProviderChainId(provider)).toLowerCase() === targetChainId.toLowerCase()) {
     currentChainId = targetChainId;
     emit('chainChanged', currentChainId);
+    reownDebug('switchToChain already on target', { targetChainId });
     return;
   }
 
@@ -276,33 +321,45 @@ async function switchToChain(chainId) {
       params: [{ chainId: targetChainId }],
     });
     await waitForProviderChain(targetChainId);
+    reownDebug('switchToChain provider switch confirmed', { targetChainId });
     return;
   } catch (error) {
     providerError = error;
+    reownDebug('switchToChain provider switch failed', { error: error instanceof Error ? error.message : String(error) });
   }
 
   try {
     await appKit.switchNetwork?.(network, { throwOnFailure: true });
     await waitForProviderChain(targetChainId);
+    reownDebug('switchToChain appkit switch confirmed', { targetChainId });
     return;
   } catch (appKitError) {
+    reownDebug('switchToChain appkit switch failed', { error: appKitError instanceof Error ? appKitError.message : String(appKitError) });
     throw providerError || appKitError;
   }
 }
 
 async function connect(options = {}) {
+  reownDebug('connect start', { requestedChainId: options.chainId || '' });
   await ensureReconnect();
   let address = getConnectedAddress();
   let provider = getWalletProvider();
+  reownDebug('connect after reconnect', {
+    address: redactAddress(address),
+    hasProvider: Boolean(provider?.request),
+  });
   if (!address || !provider?.request) {
     explicitWalletConnectInProgress = true;
     try {
+      reownDebug('appkit open connect');
       await appKit.open({ view: 'Connect', namespace: 'eip155' });
       renderIosPwaWalletLink();
       address = await waitForAccount();
+      reownDebug('account connected', { address: redactAddress(address) });
       await appKit.close?.();
       provider = getWalletProvider();
       if (!provider?.request) {
+        reownDebug('connect missing provider after account');
         throw new Error('지갑 provider를 찾지 못했습니다. 지갑 연결을 다시 승인해주세요.');
       }
     } finally {
@@ -313,17 +370,21 @@ async function connect(options = {}) {
   if (options.chainId) {
     await switchToChain(options.chainId);
   }
+  reownDebug('connect complete', { address: redactAddress(address), chainId: currentChainId || toHexChainId(getChainId(wagmiConfig)) });
   return [address];
 }
 
 async function disconnect() {
   try {
+    reownDebug('disconnect start');
     await appKit.disconnect?.('eip155');
-  } catch {
+  } catch (error) {
+    reownDebug('disconnect appkit failed', { error: error instanceof Error ? error.message : String(error) });
     // Fall back to wagmi state reset when the AppKit disconnect path is unavailable.
   }
   currentChainId = '';
   emit('accountsChanged', []);
+  reownDebug('disconnect complete');
 }
 
 async function reconnectChain(chainId) {
@@ -338,6 +399,7 @@ async function openNetworks() {
 }
 
 async function request({ method, params = [] }) {
+  reownDebug('provider request', { method, paramsCount: Array.isArray(params) ? params.length : 0 });
   switch (method) {
     case 'eth_requestAccounts': {
       const requestedChainId = params?.[0]?.chainId;
@@ -359,6 +421,7 @@ async function request({ method, params = [] }) {
       await ensureReconnect();
       let provider = getWalletProvider();
       if (!provider?.request) {
+        reownDebug('provider request needs connect', { method });
         await connect();
         provider = requireWalletProvider();
       }
@@ -388,6 +451,10 @@ function off(event, handler) {
 
 watchAccount(wagmiConfig, {
   onChange(account) {
+    reownDebug('watchAccount change', {
+      address: redactAddress(account?.address),
+      status: account?.status,
+    });
     if (account?.address) {
       removeIosPwaWalletLink();
     }
@@ -398,6 +465,7 @@ watchAccount(wagmiConfig, {
 watchChainId(wagmiConfig, {
   onChange(chainId) {
     currentChainId = toHexChainId(chainId);
+    reownDebug('watchChainId change', { chainId: currentChainId });
     emit('chainChanged', currentChainId);
   },
 });
@@ -405,6 +473,11 @@ watchChainId(wagmiConfig, {
 function SpotReownBridgeRoot() {
   useEffect(() => {
     installIosPwaWalletLinkFallback();
+    reownDebug('bridge root ready', {
+      networks: SUPPORTED_NETWORKS.map((network) => network.id),
+      metadataName: METADATA.name,
+      appOrigin: APP_ORIGIN,
+    });
     window.dispatchEvent(new CustomEvent('spot-reown-ready'));
   }, []);
   return null;
