@@ -20,6 +20,13 @@ interface PendingRequest {
   timeout: NodeJS.Timeout;
 }
 
+type GatewayAuthMode = "auto" | "token" | "password";
+
+function normalizeGatewayAuthMode(value: string | undefined): GatewayAuthMode {
+  const normalized = value?.trim().toLowerCase();
+  return normalized === "token" || normalized === "password" ? normalized : "auto";
+}
+
 export class GatewayNativeWebChatOpenClawClient implements OpenClawClient {
   constructor(
     private readonly baseUrl = process.env.OPENCLAW_GATEWAY_URL ?? "http://127.0.0.1:18789",
@@ -27,6 +34,7 @@ export class GatewayNativeWebChatOpenClawClient implements OpenClawClient {
     private readonly password = process.env.OPENCLAW_GATEWAY_PASSWORD,
     private readonly timeoutMs = Number(process.env.OPENCLAW_GATEWAY_TIMEOUT_MS ?? process.env.OPENCLAW_TIMEOUT_MS ?? 600_000),
     private readonly agentId = process.env.OPENCLAW_AGENT ?? "main",
+    private readonly authMode = process.env.OPENCLAW_GATEWAY_AUTH_MODE,
   ) {}
 
   async sendMessage(input: OpenClawClientInput): Promise<OpenClawClientResult> {
@@ -123,7 +131,7 @@ export class GatewayNativeWebChatOpenClawClient implements OpenClawClient {
             mode: "backend",
           },
           caps: [],
-          auth: this.authSecret() ? { [this.password?.trim() ? "password" : "token"]: this.authSecret() } : undefined,
+          auth: this.authPayload(),
           role: "operator",
           scopes: ["operator.read", "operator.write"],
         }, 10_000);
@@ -171,7 +179,24 @@ export class GatewayNativeWebChatOpenClawClient implements OpenClawClient {
     return url.toString();
   }
 
-  private authSecret(): string {
-    return this.password?.trim() || this.token?.trim() || "";
+  private resolveAuth(): { mode: "token" | "password"; value: string } | null {
+    const token = this.token?.trim() || "";
+    const password = this.password?.trim() || "";
+    const mode = normalizeGatewayAuthMode(this.authMode);
+    if (mode === "token") {
+      return token ? { mode, value: token } : null;
+    }
+    if (mode === "password") {
+      return password ? { mode, value: password } : null;
+    }
+    if (token) {
+      return { mode: "token", value: token };
+    }
+    return password ? { mode: "password", value: password } : null;
+  }
+
+  private authPayload(): { token?: string; password?: string } | undefined {
+    const auth = this.resolveAuth();
+    return auth ? { [auth.mode]: auth.value } : undefined;
   }
 }
