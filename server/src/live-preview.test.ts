@@ -24,6 +24,14 @@ test('formats tool start and completion events as live preview text', () => {
     text: '명령 처리를 마쳤습니다…',
     stream: 'tool',
   });
+
+  assert.deepEqual(formatAgentLivePreview({
+    stream: 'session.tool',
+    data: { phase: 'start', name: 'exec' },
+  }), {
+    text: '명령 처리 중입니다…',
+    stream: 'session.tool',
+  });
 });
 
 test('formats Codex lifecycle and item events without exposing assistant text', () => {

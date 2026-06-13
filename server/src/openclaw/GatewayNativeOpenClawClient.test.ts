@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { extractGatewayChatDelta, extractGatewayChatDraftPartial } from "./GatewayNativeOpenClawClient.js";
+import { GatewayNativeOpenClawClient, extractGatewayChatDelta, extractGatewayChatDraftPartial } from "./GatewayNativeOpenClawClient.js";
 
 test("extracts native Gateway chat deltaText as stream token", () => {
   const delta = extractGatewayChatDelta({
@@ -69,4 +69,22 @@ test("extracts native Gateway reasoning draft partial from message content", () 
     text: "thinking",
     kind: "reasoning",
   });
+});
+
+test("adds bounded PWA conversation history to native Gateway message text", () => {
+  const client = new GatewayNativeOpenClawClient();
+  const text = (client as unknown as {
+    buildMessage(
+      message: string,
+      history: Array<{ role: "user" | "assistant" | "system"; content: string }>,
+    ): string;
+  }).buildMessage("현재 질문", [
+    { role: "user", content: "이전 질문" },
+    { role: "assistant", content: "이전 답변" },
+  ]);
+
+  assert.match(text, /^현재 질문/);
+  assert.match(text, /비공개 Web\/PWA 화면 대화 맥락/);
+  assert.match(text, /사용자: 이전 질문/);
+  assert.match(text, /OpenClaw: 이전 답변/);
 });

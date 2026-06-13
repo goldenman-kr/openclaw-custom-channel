@@ -59,7 +59,11 @@ export async function waitForJobEventStream({
           onToken(String(message.data.token));
           continue;
         }
-        if (message.event === 'agent' && message.data?.stream === 'tool' && message.data?.data?.phase === 'start') {
+        if (
+          message.event === 'agent'
+          && (message.data?.stream === 'tool' || message.data?.stream === 'session.tool')
+          && message.data?.data?.phase === 'start'
+        ) {
           onToolStart();
         }
         if (message.event === 'agent') {

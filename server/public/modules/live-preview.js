@@ -126,7 +126,7 @@ export function formatAgentLivePreview(event) {
     return null;
   }
 
-  const text = stream === 'tool'
+  const text = stream === 'tool' || stream === 'session.tool'
     ? previewTextForTool(data)
     : previewTextForItem(stream, data) || previewTextForLifecycle(stream, data);
 

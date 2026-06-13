@@ -20,7 +20,7 @@ export class GatewayNativeOpenClawClient implements OpenClawClient {
 
   async sendMessage(input: OpenClawClientInput): Promise<OpenClawClientResult> {
     const runId = randomUUID();
-    const message = this.buildMessage(input.message, input.metadata, input.runtimeWorkspace);
+    const message = this.buildMessage(input.message, input.history, input.metadata, input.runtimeWorkspace);
     const gateway = await GatewayRpcConnection.connect({
       url: this.wsUrl(),
       token: this.token,
@@ -103,8 +103,17 @@ export class GatewayNativeOpenClawClient implements OpenClawClient {
     }));
   }
 
-  private buildMessage(message: string, metadata?: MessageRequestMetadata, runtimeWorkspace?: RuntimeWorkspaceScope): string {
+  private buildMessage(
+    message: string,
+    history?: OpenClawClientInput["history"],
+    metadata?: MessageRequestMetadata,
+    runtimeWorkspace?: RuntimeWorkspaceScope,
+  ): string {
     const sections = [message];
+    const historyText = this.historyContextText(history ?? []);
+    if (historyText) {
+      sections.push(historyText);
+    }
     if (runtimeWorkspace) {
       sections.push(this.runtimeWorkspaceText(runtimeWorkspace));
     }
@@ -117,6 +126,36 @@ export class GatewayNativeOpenClawClient implements OpenClawClient {
       );
     }
     return sections.join("\n\n");
+  }
+
+  private historyContextText(history: NonNullable<OpenClawClientInput["history"]>): string {
+    const lines = history
+      .filter((entry) => entry.content.trim())
+      .map((entry) => `${this.historyRoleLabel(entry.role)}: ${this.truncateHistoryContent(entry.content.trim())}`);
+    if (lines.length === 0) {
+      return "";
+    }
+
+    return [
+      "비공개 Web/PWA 화면 대화 맥락:",
+      "아래 내용은 사용자가 현재 PWA 대화창에서 보고 있는 최근 대화입니다. OpenClaw 세션 기억이 비어 있거나 화면 기록과 다를 때는 이 화면 기록을 기준으로 자연스럽게 이어서 답하세요. 이 블록 자체를 답변에 언급하지 마세요.",
+      ...lines,
+    ].join("\n");
+  }
+
+  private historyRoleLabel(role: OpenClawConversationRole): string {
+    if (role === "user") {
+      return "사용자";
+    }
+    if (role === "assistant") {
+      return "OpenClaw";
+    }
+    return "시스템";
+  }
+
+  private truncateHistoryContent(text: string): string {
+    const maxChars = 2_000;
+    return text.length > maxChars ? `${text.slice(0, maxChars)}\n[이전 메시지 일부 생략]` : text;
   }
 
   private runtimeWorkspaceText(runtimeWorkspace: RuntimeWorkspaceScope): string {
@@ -281,7 +320,7 @@ class GatewayRpcConnection {
     }
     const payload = frame.payload ?? {};
     const runId = typeof payload.runId === "string" ? payload.runId : "";
-    const waiter = runId ? this.chatFinalWaiters.get(runId) : undefined;
+    const waiter = this.waiterForPayload(payload, runId);
     if (!waiter) {
       return;
     }
@@ -300,18 +339,70 @@ class GatewayRpcConnection {
       }
     }
     if (frame.event === "chat" && payload.state === "final") {
-      this.chatFinalWaiters.delete(runId);
+      this.deleteWaiter(runId, waiter);
       waiter.resolve({
         reply: extractGatewayChatMessageText(payload.message),
         streamedText: waiter.streamedText,
       });
     }
     if (frame.event === "chat.error" || payload.state === "error") {
-      this.chatFinalWaiters.delete(runId);
+      this.deleteWaiter(runId, waiter);
       waiter.reject(new Error(extractGatewayChatMessageText(payload.message) || "OpenClaw Gateway chat failed."));
     }
   }
+
+  private waiterForPayload(
+    payload: Record<string, unknown>,
+    runId: string,
+  ): {
+    sessionKey: string;
+    streamedText: string;
+    resolve(value: { reply: string; streamedText: string }): void;
+    reject(error: Error): void;
+    onAgentEvent?: (event: Record<string, unknown>) => void | Promise<void>;
+    onToken?: (token: string) => void | Promise<void>;
+    onDraftPartial?: (event: { text: string; delta?: string; kind?: "assistant" | "reasoning"; sequence?: number }) => void | Promise<void>;
+  } | undefined {
+    if (runId) {
+      return this.chatFinalWaiters.get(runId);
+    }
+
+    const sessionKey = typeof payload.sessionKey === "string" ? payload.sessionKey : "";
+    if (sessionKey) {
+      for (const waiter of this.chatFinalWaiters.values()) {
+        if (waiter.sessionKey === sessionKey) {
+          return waiter;
+        }
+      }
+    }
+
+    return this.chatFinalWaiters.size === 1 ? [...this.chatFinalWaiters.values()][0] : undefined;
+  }
+
+  private deleteWaiter(
+    runId: string,
+    waiter: {
+      sessionKey: string;
+      streamedText: string;
+      resolve(value: { reply: string; streamedText: string }): void;
+      reject(error: Error): void;
+    },
+  ): void {
+    if (runId) {
+      this.chatFinalWaiters.delete(runId);
+      return;
+    }
+
+    for (const [id, candidate] of this.chatFinalWaiters.entries()) {
+      if (candidate === waiter) {
+        this.chatFinalWaiters.delete(id);
+        return;
+      }
+    }
+  }
 }
+
+type OpenClawConversationRole = NonNullable<OpenClawClientInput["history"]>[number]["role"];
 
 export function extractGatewayChatDraftPartial(
   payload: Record<string, unknown>,
