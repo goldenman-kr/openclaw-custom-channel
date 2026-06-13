@@ -1,3 +1,5 @@
+import { formatAgentLivePreview } from './live-preview.js';
+
 export function ensureJobEventStreamSupport() {
   if (!window.ReadableStream || !window.TextDecoder || !window.AbortController) {
     throw new Error('이 브라우저는 SSE fetch stream을 지원하지 않습니다.');
@@ -15,6 +17,7 @@ export async function waitForJobEventStream({
   onToken = () => {},
   onExpired = () => {},
   onToolStart = () => {},
+  onAgentPreview = () => {},
   onTerminal = () => {},
   timeoutMs = 1_800_000,
 }) {
@@ -58,6 +61,12 @@ export async function waitForJobEventStream({
         }
         if (message.event === 'agent' && message.data?.stream === 'tool' && message.data?.data?.phase === 'start') {
           onToolStart();
+        }
+        if (message.event === 'agent') {
+          const preview = formatAgentLivePreview(message.data);
+          if (preview) {
+            onAgentPreview(preview);
+          }
           continue;
         }
         if (message.event === 'job' && message.data) {

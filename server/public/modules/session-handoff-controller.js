@@ -26,6 +26,7 @@ export async function continueInNewSessionFlow(deps) {
     isActiveConversation,
     isTerminalJobState,
     applyStreamingToken,
+    applyLivePreview = () => {},
     renderHistory,
     refreshConversations,
     isMobileLikeInput,
@@ -69,16 +70,20 @@ export async function continueInNewSessionFlow(deps) {
       await refreshHistoryIfChanged();
       ensurePendingJobBubble(response.job_id, conversationId);
       let receivedStreamingToken = false;
+      let receivedLivePreview = false;
       const job = await waitForJob(response.job_id, (jobUpdate) => {
         if (!isActiveConversation(conversationId)) {
           return;
         }
-        if (!receivedStreamingToken || isTerminalJobState(jobUpdate.state)) {
+        if ((!receivedStreamingToken && !receivedLivePreview) || isTerminalJobState(jobUpdate.state)) {
           refreshHistoryIfChanged();
         }
       }, conversationId, (token) => {
         receivedStreamingToken = true;
         applyStreamingToken(response.job_id, token, conversationId);
+      }, (preview) => {
+        receivedLivePreview = true;
+        applyLivePreview(response.job_id, preview, conversationId);
       });
       if (isActiveConversation(conversationId)) {
         await renderHistory({ scrollToLatest: true });

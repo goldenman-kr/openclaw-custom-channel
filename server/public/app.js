@@ -26,15 +26,15 @@ import { fetchConversationHistory as fetchConversationHistoryFromApi, fetchHisto
 import { fetchChangedHistory as fetchChangedHistoryFromApi, reconcilePendingJobWithHistory as reconcilePendingJobWithHistoryFromHistory, shouldPollHistory as shouldPollHistoryFromState } from './modules/history-refresh.js';
 import { buildNewSessionHandoffMessage } from './modules/history-handoff.js';
 import { createHistoryLoadMoreControl, resetHistoryLoadMoreButton } from './modules/history-controls.js';
-import { createHomeScreen } from './modules/home-screen.js?v=pwa-client-2026-06-05-markdown-heading-size-001';
+import { createHomeScreen } from './modules/home-screen.js?v=pwa-client-2026-06-13-live-preview-001';
 import { isMobileLikeInput, slashCommandUsesCurrentLocation } from './modules/input-context.js';
 import { hideLoginScreen as hideLoginScreenView, showLoginScreen as showLoginScreenView } from './modules/login-screen.js';
 import { getCurrentLocationMetadata } from './modules/location.js';
 import { messageTextWithoutAttachmentPreview, renderedHistorySignature } from './modules/history-render-signature.js';
 import { sendMessage as sendMessageToApi } from './modules/message-api.js';
 import { isPendingHistoryMessage, isPlaceholderPendingText, isRunningJobHistoryMessage, shouldRerenderHistory as shouldRerenderHistorySnapshot } from './modules/history-state.js';
-import { cancelJobById, fetchJobById, isAlreadyFinishedJobError, isJobResolvedInHistory as isJobResolvedInHistoryFromApi, waitForJobPolling } from './modules/job-api.js?v=pwa-client-2026-06-05-markdown-heading-size-001';
-import { waitForJobEventStream } from './modules/job-events.js?v=pwa-client-2026-06-05-markdown-heading-size-001';
+import { cancelJobById, fetchJobById, isAlreadyFinishedJobError, isJobResolvedInHistory as isJobResolvedInHistoryFromApi, waitForJobPolling } from './modules/job-api.js?v=pwa-client-2026-06-13-live-preview-001';
+import { waitForJobEventStream } from './modules/job-events.js?v=pwa-client-2026-06-13-live-preview-001';
 import { delay, isTerminalJobState, parseSseBlock } from './modules/job-utils.js';
 import { appendMarkdown as appendMarkdownView } from './modules/markdown-renderer.js';
 import { canonicalMediaRefKey, extractMediaRefs, mediaRefsFromHistoryAttachments } from './modules/media.js';
@@ -78,7 +78,7 @@ import './plugins/wallet-transaction-card.js';
 
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
 const PUSH_DEVICE_ID_KEY = 'openclaw-web-channel-push-device-id-v1';
-const CLIENT_ASSET_VERSION = 'pwa-client-2026-06-05-markdown-heading-size-001';
+const CLIENT_ASSET_VERSION = 'pwa-client-2026-06-13-live-preview-001';
 const CLIENT_API_VERSION = 1;
 const elements = {
   loginScreen: document.querySelector('#loginScreen'),
@@ -1496,6 +1496,7 @@ async function continueInNewSession() {
     isActiveConversation,
     isTerminalJobState,
     applyStreamingToken,
+    applyLivePreview,
     renderHistory,
     refreshConversations,
     isMobileLikeInput,
@@ -1688,7 +1689,8 @@ function renderHistoryItem(item) {
     return;
   }
 
-  appendMessage(item.role, item.text, {
+  const livePreviewText = isPendingHistoryMessage(item) ? streaming.previewText(item.id) : '';
+  const node = appendMessage(item.role, livePreviewText || item.text, {
     id: item.id,
     savedAt: item.savedAt,
     completedAt: item.completedAt,
@@ -1698,6 +1700,11 @@ function renderHistoryItem(item) {
     mediaRefs: mediaRefsFromHistoryAttachments(item.attachments),
     pending: isPendingHistoryMessage(item),
   });
+  if (livePreviewText) {
+    node.dataset.historyText = item.text;
+    node.dataset.livePreview = '1';
+    node._livePreviewText = livePreviewText;
+  }
 }
 
 function currentRenderedHistorySignature() {
@@ -2118,6 +2125,10 @@ function applyStreamingToken(jobId, token, conversationId = activeConversationId
   streaming.applyToken(jobId, token, conversationId);
 }
 
+function applyLivePreview(jobId, preview, conversationId = activeConversationId()) {
+  streaming.applyPreview(jobId, preview, conversationId);
+}
+
 function clearStreamingState(jobId) {
   streaming.clear(jobId);
 }
@@ -2130,7 +2141,7 @@ function scheduleStreamingIdleCheckpoint(jobId, conversationId = activeConversat
   streaming.scheduleIdleCheckpoint(jobId, conversationId);
 }
 
-async function waitForJobViaSse(jobId, onTick = () => {}, conversationId = activeConversationId(), onToken = () => {}) {
+async function waitForJobViaSse(jobId, onTick = () => {}, conversationId = activeConversationId(), onToken = () => {}, onAgentPreview = () => {}) {
   return waitForJobEventStream({
     jobId,
     conversationId,
@@ -2140,6 +2151,7 @@ async function waitForJobViaSse(jobId, onTick = () => {}, conversationId = activ
     isTerminalJobState,
     onTick,
     onToken,
+    onAgentPreview,
     onExpired: () => {
       clearStreamingState(jobId);
       clearPendingJob(conversationId);
@@ -2163,7 +2175,7 @@ async function isJobResolvedInHistory(jobId, conversationId = activeConversation
   });
 }
 
-async function waitForJob(jobId, onTick = () => {}, conversationId = activeConversationId(), onToken = () => {}) {
+async function waitForJob(jobId, onTick = () => {}, conversationId = activeConversationId(), onToken = () => {}, onAgentPreview = () => {}) {
   ensurePendingJobBubble(jobId, conversationId);
   try {
     return await waitForJobViaSse(jobId, (job) => {
@@ -2171,7 +2183,7 @@ async function waitForJob(jobId, onTick = () => {}, conversationId = activeConve
         ensurePendingJobBubble(jobId, conversationId);
       }
       onTick(job);
-    }, conversationId, onToken);
+    }, conversationId, onToken, onAgentPreview);
   } catch (error) {
     console.warn('SSE job events unavailable; falling back to polling.', error);
   }
@@ -2250,6 +2262,7 @@ async function handleSubmit(event) {
     waitForJob,
     isTerminalJobState,
     applyStreamingToken,
+    applyLivePreview,
     renderHistory,
     notifyJobResult,
     notifyReplyReady,
@@ -2727,6 +2740,6 @@ renderModelPicker();
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-06-05-markdown-heading-size-001').catch(() => {});
+    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-06-13-live-preview-001').catch(() => {});
   });
 }

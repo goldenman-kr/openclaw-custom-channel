@@ -13,6 +13,7 @@ export function createStreamingController({
 }) {
   const idleTimers = new Map();
   const textByJob = new Map();
+  const previewByJob = new Map();
 
   function nodeText(node) {
     return streamingNodeText(node, {
@@ -29,6 +30,13 @@ export function createStreamingController({
     windowRef.clearTimeout(idleTimers.get(jobId));
     idleTimers.delete(jobId);
     textByJob.delete(jobId);
+    previewByJob.delete(jobId);
+    const node = messagesRoot.querySelector(`[data-message-id="${jobId}"]`);
+    if (node) {
+      delete node._livePreviewText;
+      delete node.dataset.livePreview;
+      delete node.dataset.historyText;
+    }
   }
 
   function nextSegmentId(jobId) {
@@ -51,12 +59,50 @@ export function createStreamingController({
     }
 
     const visibleText = messageText(node);
-    const currentText = textByJob.get(jobId) || node._streamingText || (isPlaceholderPendingText(visibleText) ? '' : visibleText);
+    const livePreviewText = previewByJob.get(jobId) || node._livePreviewText || '';
+    const currentText = textByJob.get(jobId)
+      || node._streamingText
+      || (isPlaceholderPendingText(visibleText) || visibleText === livePreviewText ? '' : visibleText);
     const nextText = `${currentText}${token}`;
     textByJob.set(jobId, nextText);
     node._streamingText = nextText;
+    previewByJob.delete(jobId);
+    delete node._livePreviewText;
+    delete node.dataset.livePreview;
+    delete node.dataset.historyText;
     renderMessageNode(node, 'assistant', nextText, { pending: true });
     scheduleIdleCheckpoint(jobId, conversationId);
+  }
+
+  function applyPreview(jobId, preview, conversationId) {
+    const text = typeof preview === 'string' ? preview : preview?.text;
+    if (!jobId || !text || !isActiveConversation(conversationId)) {
+      return;
+    }
+    if (textByJob.get(jobId)) {
+      return;
+    }
+
+    let node = messagesRoot.querySelector(`[data-message-id="${jobId}"]`);
+    if (!node) {
+      node = appendMessage('assistant', '', { id: jobId, persist: false, pending: true });
+    }
+    if (node._streamingText) {
+      return;
+    }
+
+    const visibleText = messageText(node).trim();
+    if (!node.dataset.historyText) {
+      node.dataset.historyText = isPlaceholderPendingText(visibleText) ? visibleText : '응답을 처리 중입니다…';
+    }
+    previewByJob.set(jobId, text);
+    node._livePreviewText = text;
+    node.dataset.livePreview = '1';
+    renderMessageNode(node, 'assistant', text, { pending: true, autoScroll: false, suppressScrollButton: true });
+  }
+
+  function previewText(jobId) {
+    return previewByJob.get(jobId) || '';
   }
 
   function flushCheckpointNow(jobId, conversationId) {
@@ -92,6 +138,8 @@ export function createStreamingController({
 
   return {
     applyToken,
+    applyPreview,
+    previewText,
     nodeText,
     clear,
     nextSegmentId,

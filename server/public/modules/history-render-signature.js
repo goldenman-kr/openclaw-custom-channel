@@ -6,6 +6,9 @@ export function messageTextWithoutAttachmentPreview(node) {
 
 export function renderedHistorySignature(messagesRoot) {
   return [...messagesRoot.querySelectorAll('.message')]
-    .map((node) => `${[...node.classList].find((className) => className !== 'message') || ''}:${messageTextWithoutAttachmentPreview(node)}`)
+    .map((node) => {
+      const text = node.dataset.historyText || messageTextWithoutAttachmentPreview(node);
+      return `${[...node.classList].find((className) => className !== 'message') || ''}:${text}`;
+    })
     .join('\n---\n');
 }
