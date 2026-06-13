@@ -2,7 +2,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { randomUUID, timingSafeEqual } from "node:crypto";
 import type { ConversationStore, JobStore, MessageStore } from "../session/SqliteChatStore.js";
 import type { ConversationEventRecord } from "../events/ConversationEventPublisher.js";
-import type { JobEventRecord } from "../events/SseJobEventPublisher.js";
+import type { JobEventRecord, JobTokenEventRecord } from "../events/SseJobEventPublisher.js";
 
 export interface WebchatDeliveryRouteDeps {
   conversationStore: ConversationStore & MessageStore & JobStore;
@@ -10,6 +10,7 @@ export interface WebchatDeliveryRouteDeps {
   sendJson(response: ServerResponse, statusCode: number, body: unknown): void;
   publishConversationEvent(event: ConversationEventRecord): void;
   publishJobEvent(event: JobEventRecord): void;
+  publishJobToken(event: JobTokenEventRecord): void;
 }
 
 interface WebchatDeliveryBody {
@@ -18,6 +19,7 @@ interface WebchatDeliveryBody {
   jobId?: string;
   messageId?: string;
   text?: string;
+  token?: string;
   createdAt?: string;
 }
 
@@ -50,8 +52,8 @@ function readBody(value: unknown): WebchatDeliveryBody | null {
   return value as WebchatDeliveryBody;
 }
 
-function validPhase(phase: string | undefined): phase is "partial" | "boundary" | "final" | "error" {
-  return phase === "partial" || phase === "boundary" || phase === "final" || phase === "error";
+function validPhase(phase: string | undefined): phase is "partial" | "boundary" | "final" | "error" | "event" {
+  return phase === "partial" || phase === "boundary" || phase === "final" || phase === "error" || phase === "event";
 }
 
 export async function handleOpenClawWebchatDeliveryRoute(
@@ -89,7 +91,16 @@ export async function handleOpenClawWebchatDeliveryRoute(
   const messageId = body.messageId?.trim() || `oc_${randomUUID()}`;
 
   if (body.phase === "boundary") {
-    deps.conversationStore.updateMessage(messageId, { completedAt: now });
+    const existing = deps.conversationStore.updateMessage(messageId, { completedAt: now });
+    if (existing) {
+      deps.publishConversationEvent({
+        id: `evt_${randomUUID()}`,
+        type: "message",
+        messageId,
+        conversationId: conversation.id,
+        createdAt: now,
+      });
+    }
     deps.sendJson(response, 200, { ok: true });
     return true;
   }
@@ -112,6 +123,23 @@ export async function handleOpenClawWebchatDeliveryRoute(
       createdAt: now,
       completedAt: body.phase === "partial" ? null : now,
     });
+  }
+
+  if (body.phase === "partial") {
+    const token = body.token ?? "";
+    if (body.jobId && token) {
+      deps.publishJobToken({ id: body.jobId, token });
+    } else {
+      deps.publishConversationEvent({
+        id: `evt_${randomUUID()}`,
+        type: "message",
+        messageId,
+        conversationId: conversation.id,
+        createdAt: now,
+      });
+    }
+    deps.sendJson(response, 200, { ok: true, messageId });
+    return true;
   }
 
   if (body.phase === "final" && body.jobId) {

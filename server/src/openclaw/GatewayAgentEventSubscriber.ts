@@ -11,6 +11,7 @@ export interface GatewayAgentEventPayload {
 export interface GatewayAgentEventSubscriberOptions {
   baseUrl?: string;
   token?: string;
+  password?: string;
   sessionKey: string;
   onEvent(event: GatewayAgentEventPayload): void;
   timeoutMs?: number;
@@ -166,17 +167,17 @@ export class GatewayAgentEventSubscriber {
 
     if (frame.event === "agent" || frame.event === "session.tool") {
       const payload = frame.payload as GatewayAgentEventPayload;
-      if (payload?.sessionKey === this.options.sessionKey) {
+      if (matchesSessionKey(payload?.sessionKey, this.options.sessionKey)) {
         this.options.onEvent(payload);
       }
     }
   }
 
   private async connect(nonce: string): Promise<void> {
-    const auth = this.options.token ? { token: this.options.token } : undefined;
+    const auth = this.gatewayAuth();
     await this.request("connect", {
-      minProtocol: 3,
-      maxProtocol: 3,
+      minProtocol: 4,
+      maxProtocol: 4,
       client: {
         id: "gateway-client",
         displayName: "OpenClaw Custom Channel PWA",
@@ -189,6 +190,15 @@ export class GatewayAgentEventSubscriber {
       role: "operator",
       scopes: ["operator.read"],
     });
+  }
+
+  private gatewayAuth(): { token?: string; password?: string } | undefined {
+    const password = this.options.password?.trim();
+    if (password) {
+      return { password };
+    }
+    const token = this.options.token?.trim();
+    return token ? { token } : undefined;
   }
 
   private request(method: string, params: Record<string, unknown>): Promise<unknown> {
@@ -232,4 +242,11 @@ export class GatewayAgentEventSubscriber {
     }
     return event;
   }
+}
+
+function matchesSessionKey(actual: unknown, expected: string): boolean {
+  if (typeof actual !== "string") {
+    return false;
+  }
+  return actual === expected || actual.endsWith(`:${expected}`);
 }

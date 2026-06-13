@@ -456,7 +456,7 @@ test("publishes runtime tokens for queued message jobs", async () => {
   assert.equal((await historyStore.list(job.sessionId))[0]?.text, "hello world");
 });
 
-test("persists streamed numbered sections as separate conversation messages", async () => {
+test("does not persist streamed numbered sections as separate conversation messages", async () => {
   const addedMessages: Array<{ id: string; role: string; text: string }> = [];
   const updates: Array<{ id: string; patch: { text?: string; completedAt?: string | null } }> = [];
   const conversationStore = {
@@ -538,10 +538,7 @@ test("persists streamed numbered sections as separate conversation messages", as
   runner.enqueue(job, { authorization: "Bearer test-key" }, { message: "stream sections", conversation_id: job.conversationId });
 
   await waitUntil(() => job.state === "completed");
-  assert.deepEqual(addedMessages.map((message) => message.text), [
-    "1. 요청 이해\n\n첫 단계 설명입니다.",
-    "2. 접근 방식 선택\n\n두 번째 단계 설명입니다.",
-  ]);
+  assert.deepEqual(addedMessages.map((message) => message.text), []);
   assert.equal(updates.at(-1)?.id, job.id);
-  assert.equal(updates.at(-1)?.patch.text, "3. 최종 답변\n\n마지막 답변입니다.");
+  assert.equal(updates.at(-1)?.patch.text, reply);
 });

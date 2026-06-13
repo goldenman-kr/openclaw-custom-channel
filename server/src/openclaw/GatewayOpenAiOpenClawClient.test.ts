@@ -74,6 +74,32 @@ test("streams OpenAI-compatible Gateway chunks as runtime tokens", async () => {
   }
 });
 
+test("prefers Gateway password over token for OpenAI-compatible requests", async () => {
+  const requests: Array<{ headers: IncomingMessage["headers"]; body: Record<string, unknown> }> = [];
+  const server = await withServer(async (req, res) => {
+    requests.push({ headers: req.headers, body: await readJson(req) });
+    res.writeHead(200, { "content-type": "text/event-stream; charset=utf-8" });
+    res.end('data: {"choices":[{"delta":{"content":"ok"}}]}\n\ndata: [DONE]\n\n');
+  });
+
+  try {
+    const client = new GatewayOpenAiOpenClawClient(
+      server.baseUrl,
+      "gateway-token",
+      "openclaw-test",
+      5_000,
+      undefined,
+      undefined,
+      "gateway-password",
+    );
+    await client.sendMessage({ sessionId: "session-password-test", message: "hello" });
+
+    assert.equal(requests[0]?.headers.authorization, "Bearer gateway-password");
+  } finally {
+    await server.close();
+  }
+});
+
 
 test("extracts OpenClaw payload text from Gateway SSE chunks", async () => {
   const server = await withServer(async (_req, res) => {
@@ -101,6 +127,163 @@ test("extracts OpenClaw payload text from Gateway SSE chunks", async () => {
     assert.equal(result.reply, "payload answer");
     assert.deepEqual(tokens, ["payload answer"]);
   } finally {
+    await server.close();
+  }
+});
+
+test("ignores Gateway preamble progressText as runtime tokens", async () => {
+  const originalWebSocket = (globalThis as { WebSocket?: unknown }).WebSocket;
+  const sentFrames: Array<Record<string, unknown>> = [];
+
+  class FakeWebSocket {
+    private readonly listeners = new Map<string, Array<(event?: unknown) => void>>();
+
+    constructor(_url: string) {
+      setTimeout(() => {
+        this.dispatch("open");
+        this.dispatch("message", { data: JSON.stringify({ type: "event", event: "connect.challenge", payload: { nonce: "nonce-test" } }) });
+      }, 0);
+    }
+
+    addEventListener(event: string, listener: (event?: unknown) => void): void {
+      const listeners = this.listeners.get(event) ?? [];
+      listeners.push(listener);
+      this.listeners.set(event, listeners);
+    }
+
+    send(data: string): void {
+      const frame = JSON.parse(data) as Record<string, unknown>;
+      sentFrames.push(frame);
+      const id = frame.id;
+      if (typeof id !== "string") {
+        return;
+      }
+      setTimeout(() => {
+        this.dispatch("message", { data: JSON.stringify({ type: "res", id, ok: true, payload: {} }) });
+        if (frame.method === "sessions.subscribe") {
+          setTimeout(() => {
+            this.dispatch("message", {
+              data: JSON.stringify({
+                type: "event",
+                event: "agent",
+                payload: {
+                  sessionKey: "agent:main:session-agent-event-test",
+                  stream: "item",
+                  data: {
+                    itemId: "msg-preamble-1",
+                    kind: "preamble",
+                    phase: "update",
+                    progressText: "1. 요청 이해",
+                  },
+                },
+              }),
+            });
+            this.dispatch("message", {
+              data: JSON.stringify({
+                type: "event",
+                event: "agent",
+                payload: {
+                  sessionKey: "agent:main:session-agent-event-test",
+                  stream: "item",
+                  data: {
+                    itemId: "msg-preamble-1",
+                    kind: "preamble",
+                    phase: "update",
+                    progressText: "1. 요청 이해 완료",
+                  },
+                },
+              }),
+            });
+            this.dispatch("message", {
+              data: JSON.stringify({
+                type: "event",
+                event: "agent",
+                payload: {
+                  sessionKey: "agent:main:session-agent-event-test",
+                  stream: "item",
+                  data: {
+                    itemId: "msg-preamble-2",
+                    kind: "preamble",
+                    phase: "update",
+                    progressText: "2. 접근 방식",
+                  },
+                },
+              }),
+            });
+            this.dispatch("message", {
+              data: JSON.stringify({
+                type: "event",
+                event: "agent",
+                payload: {
+                  sessionKey: "agent:main:session-agent-event-test",
+                  stream: "item",
+                  data: {
+                    itemId: "raw-assistant-1",
+                    kind: "preamble",
+                    phase: "update",
+                    progressText: "2. 접근 방식",
+                  },
+                },
+              }),
+            });
+            this.dispatch("message", {
+              data: JSON.stringify({
+                type: "event",
+                event: "agent",
+                payload: {
+                  sessionKey: "agent:main:session-agent-event-test",
+                  stream: "assistant",
+                  data: { text: "final answer" },
+                },
+              }),
+            });
+          }, 5);
+        }
+      }, 0);
+    }
+
+    close(): void {
+      this.dispatch("close");
+    }
+
+    private dispatch(event: string, payload?: unknown): void {
+      for (const listener of this.listeners.get(event) ?? []) {
+        listener(payload);
+      }
+    }
+  }
+
+  (globalThis as { WebSocket?: unknown }).WebSocket = FakeWebSocket;
+  const server = await withServer(async (_req, res) => {
+    res.writeHead(200, { "content-type": "text/event-stream; charset=utf-8" });
+    setTimeout(() => {
+      res.end('data: {"choices":[{"delta":{"content":"final answer"}}]}\n\ndata: [DONE]\n\n');
+    }, 20);
+  });
+
+  try {
+    const tokens: string[] = [];
+    const agentEvents: unknown[] = [];
+    const client = new GatewayOpenAiOpenClawClient(server.baseUrl, "gateway-token", "openclaw-test", 5_000);
+    const result = await client.sendMessage({
+      sessionId: "session-agent-event-test",
+      message: "hello",
+      callbacks: {
+        onToken(token) {
+          tokens.push(token);
+        },
+        onAgentEvent(event) {
+          agentEvents.push(event);
+        },
+      },
+    });
+
+    assert.equal(result.reply, "final answer");
+    assert.deepEqual(tokens, ["final answer"]);
+    assert.equal(agentEvents.length, 5);
+    assert.ok(sentFrames.some((frame) => frame.method === "sessions.subscribe"));
+  } finally {
+    (globalThis as { WebSocket?: unknown }).WebSocket = originalWebSocket;
     await server.close();
   }
 });
@@ -199,7 +382,35 @@ test("passes runtime workspace metadata to Gateway requests", async () => {
     assert.match(messages[0]?.content, /user_dir=\/tmp\/workspaces\/alice/);
     assert.match(messages[0]?.content, /common_writable=false/);
     assert.match(messages[0]?.content, /Eddy가 아닙니다/);
+    assert.doesNotMatch(messages[0]?.content, /Web\/PWA 채팅 채널/);
   } finally {
+    await server.close();
+  }
+});
+
+test("can include optional webchat streaming hint when enabled", async () => {
+  const previousHint = process.env.OPENCLAW_WEBCHAT_STREAMING_HINT;
+  process.env.OPENCLAW_WEBCHAT_STREAMING_HINT = "1";
+  const requests: Array<{ body: Record<string, unknown> }> = [];
+  const server = await withServer(async (req, res) => {
+    requests.push({ body: await readJson(req) });
+    res.writeHead(200, { "content-type": "text/event-stream; charset=utf-8" });
+    res.end('data: {"choices":[{"delta":{"content":"ok"}}]}\n\ndata: [DONE]\n\n');
+  });
+
+  try {
+    const client = new GatewayOpenAiOpenClawClient(server.baseUrl, undefined, "openclaw-test", 5_000);
+    await client.sendMessage({ sessionId: "session-webchat-hint-test", message: "hello" });
+
+    const messages = requests[0]?.body.messages as Array<{ content: string }>;
+    assert.match(messages[0]?.content, /Web\/PWA 채팅 채널/);
+    assert.match(messages[0]?.content, /assistant 본문\/commentary로 사용자에게 보이게 작성/);
+  } finally {
+    if (previousHint === undefined) {
+      delete process.env.OPENCLAW_WEBCHAT_STREAMING_HINT;
+    } else {
+      process.env.OPENCLAW_WEBCHAT_STREAMING_HINT = previousHint;
+    }
     await server.close();
   }
 });

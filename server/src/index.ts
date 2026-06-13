@@ -11,7 +11,7 @@ import {
   type MessageRequestDto,
 } from "./contracts/apiContractV1.js";
 import { ConversationEventPublisher } from "./events/ConversationEventPublisher.js";
-import { SseJobEventPublisher, type JobEventRecord } from "./events/SseJobEventPublisher.js";
+import { SseJobEventPublisher, type JobEventRecord, type JobTokenEventRecord } from "./events/SseJobEventPublisher.js";
 import { AUTH_COOKIE_NAME, handleAuthRoute, parseCookies, type AuthContext } from "./http/authRoutes.js";
 import { conversationIdFromPath, handleConversationRoute } from "./http/conversationRoutes.js";
 import { handleHistoryRoute } from "./http/historyRoutes.js";
@@ -115,6 +115,9 @@ const openClawWebchatDeliveryRouteDeps = {
   },
   publishJobEvent(event: { id: string; state: string }) {
     jobEventPublisher.publishJob(event);
+  },
+  publishJobToken(event: JobTokenEventRecord) {
+    jobEventPublisher.publishToken(event);
   },
 };
 setImmediate(() => resumeSpotOrderPolling(spotOrderRouteDeps));

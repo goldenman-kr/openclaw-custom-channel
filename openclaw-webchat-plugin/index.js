@@ -6,11 +6,21 @@ import {
   defineChannelMessageAdapter,
 } from "/home/orbsian/.npm-global/lib/node_modules/openclaw/dist/plugin-sdk/channel-outbound.js";
 
-const CHANNEL_ID = "webchat";
+const CHANNEL_ID = "pwa-webchat";
+const LEGACY_CHANNEL_ID = "webchat";
 let runtime;
 
+const PWA_DELIVERY_SYSTEM_PROMPT = [
+  "PWA WebChat delivery rule:",
+  "- User-visible output for this channel is delivered through `message(action=send)`.",
+  "- When the user asks for step-by-step progress, intermediate answers, streaming checkpoints, or tool-before/tool-after separation, send each requested visible step as its own separate `message(action=send)` call in the requested order.",
+  "- Do not combine multiple requested visible numbered steps into one `message(action=send)` call.",
+  "- Tool invocations and tool outputs are not user-visible chat messages by themselves. If the user asks for a visible tool-call step, send that step as a normal `message(action=send)` message at the appropriate point around the actual tool call.",
+  "- Keep normal final assistant text private unless the visible answer has already been sent through `message(action=send)`.",
+].join("\n");
+
 function getChannelConfig(cfg) {
-  return cfg?.channels?.webchat ?? {};
+  return cfg?.channels?.[CHANNEL_ID] ?? cfg?.channels?.[LEGACY_CHANNEL_ID] ?? {};
 }
 
 function deliveryUrlFromConfig(cfg) {
@@ -38,6 +48,60 @@ async function postDelivery(cfg, payload) {
   }
 }
 
+function diffToken(previous, next) {
+  const prior = String(previous || "");
+  const current = String(next || "");
+  if (!current) {
+    return "";
+  }
+  if (!prior) {
+    return current;
+  }
+  if (current.startsWith(prior)) {
+    return current.slice(prior.length);
+  }
+
+  let index = 0;
+  const max = Math.min(prior.length, current.length);
+  while (index < max && prior.charCodeAt(index) === current.charCodeAt(index)) {
+    index += 1;
+  }
+  return current.slice(index);
+}
+
+function truncateText(text, maxChars = 1200) {
+  const value = String(text || "").trim();
+  if (value.length <= maxChars) {
+    return value;
+  }
+  return `${value.slice(0, maxChars)}\n...`;
+}
+
+function toolNameFromPayload(payload) {
+  const name = payload?.name || payload?.toolName || payload?.tool || payload?.command || payload?.cmd;
+  return typeof name === "string" && name.trim() ? name.trim() : "tool";
+}
+
+function textFromPayload(payload) {
+  const candidates = [
+    payload?.text,
+    payload?.message,
+    payload?.content,
+    payload?.progressText,
+    payload?.summary,
+    payload?.title,
+    payload?.output,
+    payload?.stdout,
+    payload?.stderr,
+  ];
+  for (const candidate of candidates) {
+    if (typeof candidate === "string" && candidate.trim()) {
+      return candidate.trim();
+    }
+  }
+  return "";
+}
+
 function parseTarget(to) {
   const raw = String(to || "");
   if (raw.startsWith("conversation:")) {
@@ -49,6 +113,21 @@ function parseTarget(to) {
     return { conversationId, jobId };
   }
   return { conversationId: raw, jobId: undefined };
+}
+
+function isWebchatTarget(value) {
+  const raw = String(value || "").trim();
+  if (!raw) {
+    return false;
+  }
+  if (raw.startsWith("conversation-job:")) {
+    const target = parseTarget(raw);
+    return Boolean(target.conversationId && target.jobId);
+  }
+  if (raw.startsWith("conversation:")) {
+    return Boolean(parseTarget(raw).conversationId);
+  }
+  return /^conv_[A-Za-z0-9-]+$/.test(raw);
 }
 
 async function sendWebchatText(ctx, phase = "final", messageId) {
@@ -65,9 +144,9 @@ async function sendWebchatText(ctx, phase = "final", messageId) {
   return {
     receipt: createMessageReceiptFromOutboundResults({
       results: [{
-        channel: CHANNEL_ID,
-        messageId: resolvedMessageId,
-        conversationId: target.conversationId,
+      channel: CHANNEL_ID,
+      messageId: resolvedMessageId,
+      conversationId: target.conversationId,
       }],
       kind: phase === "partial" ? "preview" : "text",
       replyToId: ctx.replyToId ?? undefined,
@@ -102,7 +181,7 @@ const messageAdapter = defineChannelMessageAdapter({
     },
   },
   send: {
-    text: async (ctx) => sendWebchatText(ctx, "final"),
+    text: async (ctx) => sendWebchatText(ctx, parseTarget(ctx.to).jobId ? "event" : "final"),
   },
 });
 
@@ -110,7 +189,7 @@ const plugin = {
   id: CHANNEL_ID,
   meta: {
     id: CHANNEL_ID,
-    label: "WebChat",
+    label: "PWA WebChat",
     supportsMarkdown: true,
   },
   capabilities: {
@@ -141,19 +220,43 @@ const plugin = {
       },
     },
     sendText: async (ctx) => {
-      const result = await sendWebchatText(ctx, "final");
+      const target = parseTarget(ctx.to);
+      const result = await sendWebchatText(ctx, target.jobId ? "event" : "final");
       return {
         channel: CHANNEL_ID,
         messageId: result.messageId,
-        conversationId: parseTarget(ctx.to).conversationId,
+        conversationId: target.conversationId,
         receipt: result.receipt,
       };
     },
   },
   messaging: {
+    normalizeTarget(raw) {
+      const value = String(raw || "").trim();
+      return isWebchatTarget(value) ? value : undefined;
+    },
+    inferTargetChatType({ to }) {
+      return isWebchatTarget(to) ? "direct" : undefined;
+    },
+    targetResolver: {
+      hint: "Use conversation:<conversation_id> or conversation-job:<conversation_id>:job:<job_id>.",
+      looksLikeId: (raw, normalized) => isWebchatTarget(raw) || isWebchatTarget(normalized),
+      resolveTarget: ({ input, normalized }) => {
+        const target = isWebchatTarget(input) ? input : normalized;
+        if (!isWebchatTarget(target)) {
+          return null;
+        }
+        return {
+          to: target,
+          kind: "user",
+          display: parseTarget(target).conversationId,
+          source: "normalized",
+        };
+      },
+    },
     resolveOutboundSessionRoute({ cfg, agentId, to, accountId }) {
       const target = parseTarget(to);
-      const sessionKey = `webchat:${target.conversationId}`;
+      const sessionKey = `${CHANNEL_ID}:${target.conversationId}`;
       return {
         channel: CHANNEL_ID,
         accountId: accountId ?? "default",
@@ -162,11 +265,17 @@ const plugin = {
         parentSessionKey: `agent:${agentId}`,
         peer: { kind: "direct", id: target.conversationId },
         chatType: "direct",
-        from: "webchat",
+        from: CHANNEL_ID,
         to,
         cfg,
       };
     },
+  },
+  agentPrompt: {
+    messageToolHints: () => [
+      "- PWA WebChat visible output is delivered through `message(action=send)`. When the user asks for step-by-step progress, intermediate answers, streaming checkpoints, or tool-before/tool-after separation, send each requested visible step as its own separate `message(action=send)` call.",
+      "- For tool workflows, send the visible pre-tool step before invoking the tool. After the tool result, send each requested follow-up step as separate `message(action=send)` calls instead of combining multiple numbered steps in one message.",
+    ],
   },
 };
 
@@ -215,8 +324,10 @@ async function handleSend(api, params) {
   const userId = typeof params?.userId === "string" && params.userId.trim() ? params.userId.trim() : "webchat-user";
   const agentId = typeof params?.agentId === "string" && params.agentId.trim() ? params.agentId.trim() : "main";
   const messageId = typeof params?.messageId === "string" && params.messageId.trim() ? params.messageId.trim() : `web_${randomUUID()}`;
-  const routeSessionKey = `webchat:${conversationId}`;
+  const routeSessionKey = `${CHANNEL_ID}:${conversationId}`;
   const target = jobId ? `conversation-job:${conversationId}:job:${jobId}` : `conversation:${conversationId}`;
+  const sourceReplyDeliveryMode = "message_tool_only";
+  const messageToolOwnsVisibleDelivery = sourceReplyDeliveryMode === "message_tool_only";
   const storePath = rt.channel.session.resolveStorePath(api.config.session?.store, { agentId });
   const ctxPayload = buildChannelInboundEventContext({
     channel: CHANNEL_ID,
@@ -280,7 +391,36 @@ async function handleSend(api, params) {
 
   let currentPreviewId;
   let finalText = "";
+  let lastPartialText = "";
   let partialCount = 0;
+  let toolStarted = false;
+  const visibleEventIds = new Map();
+  const visibleEventTexts = new Map();
+
+  const postVisibleEvent = async (key, text) => {
+    const body = truncateText(text);
+    if (!body) {
+      return;
+    }
+    if (visibleEventTexts.get(key) === body) {
+      return;
+    }
+    visibleEventTexts.set(key, body);
+    const messageId = visibleEventIds.get(key) || `oc_${randomUUID()}`;
+    visibleEventIds.set(key, messageId);
+    await flushBoundary();
+    await postDelivery(api.config, {
+      phase: "event",
+      conversationId,
+      jobId,
+      messageId,
+      text: body,
+      createdAt: new Date().toISOString(),
+    }).catch((err) => {
+      api.logger.warn(`webchat event delivery failed: ${err instanceof Error ? err.message : String(err)}`);
+    });
+  };
+
   const flushBoundary = async () => {
     if (!currentPreviewId) {
       return;
@@ -292,7 +432,9 @@ async function handleSend(api, params) {
       messageId: currentPreviewId,
       createdAt: new Date().toISOString(),
     }).catch(() => {});
+    deliverySignals.boundary += 1;
     currentPreviewId = undefined;
+    lastPartialText = "";
   };
 
   const deliverySignals = {
@@ -336,14 +478,57 @@ async function handleSend(api, params) {
     },
     replyOptions: {
       abortSignal: params?.abortSignal,
-      sourceReplyDeliveryMode: "automatic",
+      extraSystemPrompt: PWA_DELIVERY_SYSTEM_PROMPT,
+      sourceReplyDeliveryMode,
+      commentaryProgressEnabled: true,
+      allowProgressCallbacksWhenSourceDeliverySuppressed: true,
+      suppressDefaultToolProgressMessages: true,
       onAssistantMessageStart: async () => {
         await flushBoundary();
       },
       onReasoningEnd: async () => {
         await flushBoundary();
       },
+      onBlockReplyQueued: async (payload) => {
+        if (messageToolOwnsVisibleDelivery) {
+          return;
+        }
+        const text = textFromPayload(payload);
+        if (!toolStarted && partialCount === 0 && text) {
+          await postVisibleEvent("block", text);
+        }
+      },
+      onItemEvent: async (payload) => {
+        if (messageToolOwnsVisibleDelivery) {
+          return;
+        }
+        const kind = typeof payload?.kind === "string" ? payload.kind : "";
+        const text = textFromPayload(payload);
+        if (!toolStarted && partialCount === 0 && kind === "preamble" && text) {
+          await postVisibleEvent("preamble", text);
+        }
+      },
+      onToolStart: async (payload) => {
+        if (messageToolOwnsVisibleDelivery) {
+          return;
+        }
+        toolStarted = true;
+        await postVisibleEvent("tool-start", `**툴 호출**\n\n\`${toolNameFromPayload(payload)}\` 도구를 호출합니다.`);
+      },
+      onCommandOutput: async (payload) => {
+        if (messageToolOwnsVisibleDelivery) {
+          return;
+        }
+        const output = textFromPayload(payload);
+        if (!output) {
+          return;
+        }
+        await postVisibleEvent("tool-output", `**툴 결과**\n\n\`\`\`text\n${truncateText(output, 900)}\n\`\`\``);
+      },
       onPartialReply: async (payload) => {
+        if (messageToolOwnsVisibleDelivery) {
+          return;
+        }
         const text = typeof payload?.text === "string" ? payload.text : "";
         if (!text.trim()) {
           return;
@@ -353,12 +538,15 @@ async function handleSend(api, params) {
         }
         partialCount += 1;
         deliverySignals.partial += 1;
+        const token = diffToken(lastPartialText, text);
+        lastPartialText = text;
         await postDelivery(api.config, {
           phase: "partial",
           conversationId,
           jobId,
           messageId: currentPreviewId,
           text,
+          token,
           index: partialCount,
           createdAt: new Date().toISOString(),
         }).catch((err) => {
@@ -398,7 +586,7 @@ async function handleSend(api, params) {
 
 export default defineChannelPluginEntry({
   id: CHANNEL_ID,
-  name: "WebChat",
+  name: "PWA WebChat",
   description: "Native OpenClaw channel bridge for the PWA web chat service",
   plugin,
   setRuntime(nextRuntime) {

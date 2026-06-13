@@ -24,8 +24,6 @@ export interface MessageJobRunnerDeps {
 }
 
 const STREAMING_IDLE_CHECKPOINT_MS = Number(process.env.STREAMING_IDLE_CHECKPOINT_MS ?? 0);
-const MIN_STREAMING_CHECKPOINT_CHARS = Number(process.env.MIN_STREAMING_CHECKPOINT_CHARS ?? 12);
-const STREAMING_BOUNDARY_CHECKPOINTS = !["0", "false", "off"].includes((process.env.STREAMING_BOUNDARY_CHECKPOINTS ?? "1").toLowerCase());
 
 export class MessageJobRunner {
   private readonly queueTails = new Map<string, Promise<void>>();
@@ -91,11 +89,9 @@ export class MessageJobRunner {
     }
 
     let streamSegmentText = "";
-    let persistedPartialText = "";
     let lastPersistedStreamText = "";
     let lastStreamPersistAt = 0;
     let streamIdleTimer: NodeJS.Timeout | undefined;
-    let partialSegmentIndex = 0;
     const clearStreamIdleTimer = () => {
       if (streamIdleTimer) {
         clearTimeout(streamIdleTimer);
@@ -120,56 +116,16 @@ export class MessageJobRunner {
       lastPersistedStreamText = streamSegmentText;
       lastStreamPersistAt = now;
     };
-    const persistPartialMessage = (text: string, resetTimer = true, consumedText = text) => {
-      if (resetTimer) {
-        streamIdleTimer = undefined;
-      }
-      if (!job.conversationId || !this.deps.shouldPersistMessage(payload.message) || this.isCancelled(job)) {
-        return;
-      }
-      const segmentText = text.trim();
-      if (segmentText.length < MIN_STREAMING_CHECKPOINT_CHARS) {
-        return;
-      }
-      partialSegmentIndex += 1;
-      const partialMessageId = `${job.id}:partial:${partialSegmentIndex}`;
-      const nowMs = Date.now();
-      const now = new Date(nowMs).toISOString();
-      const placeholderCreatedAt = new Date(nowMs + 1_000).toISOString();
-      this.deps.conversationStore.addMessage({
-        id: partialMessageId,
-        conversationId: job.conversationId,
-        role: "assistant",
-        text: text.trimEnd(),
-        createdAt: now,
-        completedAt: now,
-      });
-      persistedPartialText = `${persistedPartialText}${consumedText}`;
-      lastPersistedStreamText = "";
-      this.deps.conversationStore.updateMessage(job.id, {
-        role: "assistant",
-        text: "응답을 처리 중입니다…",
-        createdAt: placeholderCreatedAt,
-        completedAt: null,
-      });
-    };
-    const persistIdlePartialMessage = (resetTimer = true) => {
-      const segmentText = streamSegmentText;
-      persistPartialMessage(segmentText, resetTimer);
-      if (segmentText.trim().length >= MIN_STREAMING_CHECKPOINT_CHARS) {
-        streamSegmentText = "";
-      }
-    };
     const persistBoundaryPartialMessage = () => {
       clearStreamIdleTimer();
-      persistIdlePartialMessage(false);
+      persistStreamCheckpoint(true);
     };
     const scheduleIdlePartialMessage = () => {
       if (STREAMING_IDLE_CHECKPOINT_MS <= 0) {
         return;
       }
       clearStreamIdleTimer();
-      streamIdleTimer = setTimeout(persistIdlePartialMessage, STREAMING_IDLE_CHECKPOINT_MS);
+      streamIdleTimer = setTimeout(() => persistStreamCheckpoint(true), STREAMING_IDLE_CHECKPOINT_MS);
       streamIdleTimer.unref?.();
     };
 
@@ -198,16 +154,6 @@ export class MessageJobRunner {
             runtimeCallbacks: {
               onToken: (token) => {
                 streamSegmentText += token;
-                if (STREAMING_BOUNDARY_CHECKPOINTS) {
-                  const split = splitCompletedStreamingSegments(streamSegmentText, MIN_STREAMING_CHECKPOINT_CHARS);
-                  for (const segment of split.segments) {
-                    persistPartialMessage(segment.text, false, segment.consumedText);
-                  }
-                  if (split.segments.length > 0) {
-                    clearStreamIdleTimer();
-                    streamSegmentText = split.remainder;
-                  }
-                }
                 persistStreamCheckpoint();
                 scheduleIdlePartialMessage();
                 this.deps.publishToken?.(job, token);
@@ -243,29 +189,20 @@ export class MessageJobRunner {
       }
       if (this.deps.shouldPersistMessage(payload.message)) {
         const fullText = sanitizeAssistantReply(result.body.reply);
-        const remainingText = persistedPartialText && fullText.startsWith(persistedPartialText)
-          ? fullText.slice(persistedPartialText.length).trimStart()
-          : fullText;
-        const text = remainingText || fullText;
-        const attachments = await attachmentsFromMediaRefs(text);
+        const attachments = await attachmentsFromMediaRefs(fullText);
         const savedAt = new Date().toISOString();
-        const shouldRemoveTerminalPlaceholder = Boolean(persistedPartialText) && !remainingText && attachments.length === 0;
         if (job.conversationId) {
-          if (shouldRemoveTerminalPlaceholder) {
-            this.deps.conversationStore.deleteMessage(job.id);
-          } else {
-            this.deps.conversationStore.updateMessage(job.id, {
-              role: "assistant",
-              text,
-              createdAt: savedAt,
-              completedAt: savedAt,
-              attachments,
-            });
-          }
+          this.deps.conversationStore.updateMessage(job.id, {
+            role: "assistant",
+            text: fullText,
+            createdAt: savedAt,
+            completedAt: savedAt,
+            attachments,
+          });
         } else {
           await this.deps.historyStore.replaceById(job.sessionId, job.id, {
             role: "assistant",
-            text,
+            text: fullText,
             savedAt,
           });
         }
@@ -415,39 +352,6 @@ function asArray(value: unknown): unknown[] | null {
 
 function asNonEmptyString(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
-}
-
-function splitCompletedStreamingSegments(text: string, minChars: number): { segments: Array<{ text: string; consumedText: string }>; remainder: string } {
-  const segments: Array<{ text: string; consumedText: string }> = [];
-  let cursor = 0;
-  const boundaryPattern = /\n{2,}(?=(?:#{1,6}\s+\S|(?:\d{1,2}|[A-Za-z])[.)]\s+\S|[가-힣A-Za-z0-9][^\n]{0,48}\n[-=]{3,}))/g;
-  let match: RegExpExecArray | null;
-
-  while ((match = boundaryPattern.exec(text)) !== null) {
-    if (isInsideFencedCode(text, match.index)) {
-      continue;
-    }
-
-    const segment = text.slice(cursor, match.index).trimEnd();
-    if (segment.trim().length < minChars) {
-      continue;
-    }
-
-    const nextCursor = match.index + match[0].length;
-    segments.push({ text: segment, consumedText: text.slice(cursor, nextCursor) });
-    cursor = nextCursor;
-  }
-
-  return {
-    segments,
-    remainder: cursor > 0 ? text.slice(cursor) : text,
-  };
-}
-
-function isInsideFencedCode(text: string, index: number): boolean {
-  const before = text.slice(0, index);
-  const fences = before.match(/(^|\n)```/g);
-  return Boolean(fences && fences.length % 2 === 1);
 }
 
 const MEDIA_REF_LINE = /^\s*`{0,3}\s*MEDIA:\s*(.+?)\s*`{0,3}\s*$/i;
