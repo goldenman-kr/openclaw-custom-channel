@@ -1,0 +1,20 @@
+{
+  "name": "@goldenman/openclaw-webchat-channel",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Native OpenClaw WebChat channel bridge for the PWA service",
+  "type": "module",
+  "openclaw": {
+    "extensions": [
+      "./index.js"
+    ],
+    "channel": {
+      "id": "webchat",
+      "label": "WebChat",
+      "selectionLabel": "Web/PWA Chat",
+      "detailLabel": "Web/PWA Chat",
+      "docsLabel": "webchat",
+      "markdownCapable": true
+    }
+  }
+}

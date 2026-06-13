@@ -1,0 +1,55 @@
+{
+  "id": "webchat",
+  "name": "WebChat",
+  "description": "Native OpenClaw channel bridge for the PWA web chat service",
+  "activation": {
+    "onStartup": false
+  },
+  "channels": [
+    "webchat"
+  ],
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  },
+  "channelConfigs": {
+    "webchat": {
+      "schema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "deliveryUrl": {
+            "type": "string"
+          },
+          "deliverySecret": {
+            "type": "string"
+          },
+          "streaming": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "off",
+                  "partial",
+                  "block",
+                  "progress"
+                ]
+              },
+              {
+                "type": "object",
+                "additionalProperties": true
+              }
+            ]
+          }
+        }
+      },
+      "label": "WebChat",
+      "description": "PWA web chat channel bridge."
+    }
+  }
+}

@@ -17,6 +17,7 @@ import { conversationIdFromPath, handleConversationRoute } from "./http/conversa
 import { handleHistoryRoute } from "./http/historyRoutes.js";
 import { handleJobRoute } from "./http/jobRoutes.js";
 import { handleMessageRoute } from "./http/messageRoutes.js";
+import { handleOpenClawWebchatDeliveryRoute } from "./http/openclawWebchatDeliveryRoute.js";
 import { handlePushRoute } from "./http/pushRoutes.js";
 import { applyNativeModelSelection, applyNativeThinkingSelection, getNativeModelMenu } from "./http/nativeCommands.js";
 import { handleOrbsBridgePluginRoute, resumeOrbsBridgeCheckpointPolling } from "./http/orbsBridgePluginRoutes.js";
@@ -103,6 +104,17 @@ const spotOrderRouteDeps = {
   readJsonBody,
   publishConversationEvent(event: { id: string; type: "message"; messageId: string; conversationId: string; createdAt: string }) {
     conversationEventPublisher.publish(event);
+  },
+};
+const openClawWebchatDeliveryRouteDeps = {
+  conversationStore: chatStore,
+  readJsonBody,
+  sendJson,
+  publishConversationEvent(event: { id: string; type: "message"; messageId: string; conversationId: string; createdAt: string }) {
+    conversationEventPublisher.publish(event);
+  },
+  publishJobEvent(event: { id: string; state: string }) {
+    jobEventPublisher.publishJob(event);
   },
 };
 setImmediate(() => resumeSpotOrderPolling(spotOrderRouteDeps));
@@ -568,6 +580,7 @@ const conversationEventPublisher = new ConversationEventPublisher({
 const autonomousAnnounceBridge = process.env.OPENCLAW_AUTONOMOUS_ANNOUNCE_BRIDGE === "0" ? null : new GatewayAutonomousAnnounceBridge({
   baseUrl: process.env.OPENCLAW_GATEWAY_URL,
   token: process.env.OPENCLAW_GATEWAY_TOKEN,
+  password: process.env.OPENCLAW_GATEWAY_PASSWORD,
   agentId: openClawAgentId,
   getConversationByOpenClawSessionId: conversationForOpenClawSessionId,
   messageStore: chatStore,
@@ -766,6 +779,10 @@ const server = createServer(async (request, response) => {
     readJsonBody,
     sessionIdFromRequest: sessionIdFromHeaders,
   })) {
+    return;
+  }
+
+  if (await handleOpenClawWebchatDeliveryRoute(request, response, url, openClawWebchatDeliveryRouteDeps)) {
     return;
   }
 

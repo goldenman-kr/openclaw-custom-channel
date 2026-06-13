@@ -25,6 +25,7 @@ export interface MessageJobRunnerDeps {
 
 const STREAMING_IDLE_CHECKPOINT_MS = Number(process.env.STREAMING_IDLE_CHECKPOINT_MS ?? 0);
 const MIN_STREAMING_CHECKPOINT_CHARS = Number(process.env.MIN_STREAMING_CHECKPOINT_CHARS ?? 12);
+const STREAMING_BOUNDARY_CHECKPOINTS = !["0", "false", "off"].includes((process.env.STREAMING_BOUNDARY_CHECKPOINTS ?? "1").toLowerCase());
 
 export class MessageJobRunner {
   private readonly queueTails = new Map<string, Promise<void>>();
@@ -119,14 +120,14 @@ export class MessageJobRunner {
       lastPersistedStreamText = streamSegmentText;
       lastStreamPersistAt = now;
     };
-    const persistIdlePartialMessage = (resetTimer = true) => {
+    const persistPartialMessage = (text: string, resetTimer = true, consumedText = text) => {
       if (resetTimer) {
         streamIdleTimer = undefined;
       }
       if (!job.conversationId || !this.deps.shouldPersistMessage(payload.message) || this.isCancelled(job)) {
         return;
       }
-      const segmentText = streamSegmentText.trim();
+      const segmentText = text.trim();
       if (segmentText.length < MIN_STREAMING_CHECKPOINT_CHARS) {
         return;
       }
@@ -139,12 +140,11 @@ export class MessageJobRunner {
         id: partialMessageId,
         conversationId: job.conversationId,
         role: "assistant",
-        text: streamSegmentText,
+        text: text.trimEnd(),
         createdAt: now,
         completedAt: now,
       });
-      persistedPartialText = `${persistedPartialText}${streamSegmentText}`;
-      streamSegmentText = "";
+      persistedPartialText = `${persistedPartialText}${consumedText}`;
       lastPersistedStreamText = "";
       this.deps.conversationStore.updateMessage(job.id, {
         role: "assistant",
@@ -152,6 +152,13 @@ export class MessageJobRunner {
         createdAt: placeholderCreatedAt,
         completedAt: null,
       });
+    };
+    const persistIdlePartialMessage = (resetTimer = true) => {
+      const segmentText = streamSegmentText;
+      persistPartialMessage(segmentText, resetTimer);
+      if (segmentText.trim().length >= MIN_STREAMING_CHECKPOINT_CHARS) {
+        streamSegmentText = "";
+      }
     };
     const persistBoundaryPartialMessage = () => {
       clearStreamIdleTimer();
@@ -168,6 +175,18 @@ export class MessageJobRunner {
 
     const result = await (async () => {
       try {
+        const runtimePayload: MessageRequestDto = job.conversationId
+          ? {
+              ...payload,
+              metadata: {
+                ...payload.metadata,
+                webchat: {
+                  conversationId: job.conversationId,
+                  jobId: job.id,
+                },
+              },
+            }
+          : payload;
         return await handlePostMessage(
           {
             chatRuntime: this.deps.chatRuntime,
@@ -179,6 +198,16 @@ export class MessageJobRunner {
             runtimeCallbacks: {
               onToken: (token) => {
                 streamSegmentText += token;
+                if (STREAMING_BOUNDARY_CHECKPOINTS) {
+                  const split = splitCompletedStreamingSegments(streamSegmentText, MIN_STREAMING_CHECKPOINT_CHARS);
+                  for (const segment of split.segments) {
+                    persistPartialMessage(segment.text, false, segment.consumedText);
+                  }
+                  if (split.segments.length > 0) {
+                    clearStreamIdleTimer();
+                    streamSegmentText = split.remainder;
+                  }
+                }
                 persistStreamCheckpoint();
                 scheduleIdlePartialMessage();
                 this.deps.publishToken?.(job, token);
@@ -193,7 +222,7 @@ export class MessageJobRunner {
             abortSignal: abortController.signal,
           },
           headers,
-          payload,
+          runtimePayload,
         );
       } finally {
         clearStreamIdleTimer();
@@ -206,6 +235,12 @@ export class MessageJobRunner {
     }
 
     if (result.statusCode >= 200 && result.statusCode < 300 && "reply" in result.body) {
+      if (isNativeWebChatDeliveryHandled(result.body) && job.conversationId) {
+        this.deps.conversationStore.deleteMessage(job.id);
+        this.deps.updateJob(job, { state: "completed" });
+        await this.deps.notifyReplyReady?.(job);
+        return;
+      }
       if (this.deps.shouldPersistMessage(payload.message)) {
         const fullText = sanitizeAssistantReply(result.body.reply);
         const remainingText = persistedPartialText && fullText.startsWith(persistedPartialText)
@@ -282,6 +317,15 @@ export class MessageJobRunner {
       savedAt,
     }).catch(() => {});
   }
+}
+
+function isNativeWebChatDeliveryHandled(body: { _internal?: { raw?: unknown } }): boolean {
+  const raw = body._internal?.raw;
+  if (!raw || typeof raw !== "object") {
+    return false;
+  }
+  const record = raw as { transport?: unknown; deliveryHandled?: unknown };
+  return record.transport === "native-webchat" && record.deliveryHandled === true;
 }
 
 function failureTextForError(errorMessage: string, errorCode?: string): string {
@@ -371,6 +415,39 @@ function asArray(value: unknown): unknown[] | null {
 
 function asNonEmptyString(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function splitCompletedStreamingSegments(text: string, minChars: number): { segments: Array<{ text: string; consumedText: string }>; remainder: string } {
+  const segments: Array<{ text: string; consumedText: string }> = [];
+  let cursor = 0;
+  const boundaryPattern = /\n{2,}(?=(?:#{1,6}\s+\S|(?:\d{1,2}|[A-Za-z])[.)]\s+\S|[가-힣A-Za-z0-9][^\n]{0,48}\n[-=]{3,}))/g;
+  let match: RegExpExecArray | null;
+
+  while ((match = boundaryPattern.exec(text)) !== null) {
+    if (isInsideFencedCode(text, match.index)) {
+      continue;
+    }
+
+    const segment = text.slice(cursor, match.index).trimEnd();
+    if (segment.trim().length < minChars) {
+      continue;
+    }
+
+    const nextCursor = match.index + match[0].length;
+    segments.push({ text: segment, consumedText: text.slice(cursor, nextCursor) });
+    cursor = nextCursor;
+  }
+
+  return {
+    segments,
+    remainder: cursor > 0 ? text.slice(cursor) : text,
+  };
+}
+
+function isInsideFencedCode(text: string, index: number): boolean {
+  const before = text.slice(0, index);
+  const fences = before.match(/(^|\n)```/g);
+  return Boolean(fences && fences.length % 2 === 1);
 }
 
 const MEDIA_REF_LINE = /^\s*`{0,3}\s*MEDIA:\s*(.+?)\s*`{0,3}\s*$/i;
