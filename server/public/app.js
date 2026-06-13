@@ -26,7 +26,7 @@ import { fetchConversationHistory as fetchConversationHistoryFromApi, fetchHisto
 import { fetchChangedHistory as fetchChangedHistoryFromApi, reconcilePendingJobWithHistory as reconcilePendingJobWithHistoryFromHistory, shouldPollHistory as shouldPollHistoryFromState } from './modules/history-refresh.js';
 import { buildNewSessionHandoffMessage } from './modules/history-handoff.js';
 import { createHistoryLoadMoreControl, resetHistoryLoadMoreButton } from './modules/history-controls.js';
-import { createHomeScreen } from './modules/home-screen.js?v=pwa-client-2026-06-05-rody-agent-title-001';
+import { createHomeScreen } from './modules/home-screen.js?v=pwa-client-2026-06-05-markdown-heading-size-001';
 import { isMobileLikeInput, slashCommandUsesCurrentLocation } from './modules/input-context.js';
 import { hideLoginScreen as hideLoginScreenView, showLoginScreen as showLoginScreenView } from './modules/login-screen.js';
 import { getCurrentLocationMetadata } from './modules/location.js';

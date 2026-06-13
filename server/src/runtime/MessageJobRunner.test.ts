@@ -455,3 +455,70 @@ test("publishes runtime tokens for queued message jobs", async () => {
   assert.deepEqual(states, ["running", "completed"]);
   assert.equal((await historyStore.list(job.sessionId))[0]?.text, "hello world");
 });
+
+test("keeps conversation streaming tokens out of canonical messages", async () => {
+  const tokens: string[] = [];
+  const addedMessages: Array<{ id?: string; text: string }> = [];
+  const updatedMessages: Array<{ id: string; text?: string; completedAt?: string | null }> = [];
+  const deletedMessages: string[] = [];
+  const conversationStore = {
+    ...unusedConversationStore(),
+    addMessage(input: { id?: string; text: string }) {
+      addedMessages.push(input);
+      throw new Error("streaming partials must not be added to canonical messages");
+    },
+    updateMessage(id: string, patch: { text?: string; completedAt?: string | null }) {
+      updatedMessages.push({ id, ...patch });
+      return null;
+    },
+    deleteMessage(id: string) {
+      deletedMessages.push(id);
+      return false;
+    },
+  };
+  const runtime: ChatRuntime = {
+    async sendMessage(input) {
+      await input.callbacks?.onToken?.("hello");
+      await input.callbacks?.onAgentEvent?.({ stream: "tool", data: { phase: "start", name: "exec" } });
+      await input.callbacks?.onToken?.(" world");
+      return { reply: "hello world" };
+    },
+  };
+  const job: MessageJob = {
+    id: "job_runner_conversation_stream_test",
+    sessionId: "session-runner-conversation-stream-test",
+    conversationId: "conv-runner-conversation-stream-test",
+    state: "queued",
+    createdAt: "2026-04-29T00:00:00.000Z",
+    updatedAt: "2026-04-29T00:00:00.000Z",
+  };
+
+  const runner = new MessageJobRunner({
+    chatRuntime: runtime,
+    sessionStore: new InMemorySessionStore(),
+    validApiKeys: new Set(["test-key"]),
+    conversationStore,
+    historyStore: memoryHistoryStore(),
+    shouldPersistMessage: () => true,
+    updateJob(jobToUpdate, patch) {
+      Object.assign(jobToUpdate, patch);
+    },
+    publishToken(jobToPublish, token) {
+      assert.equal(jobToPublish.id, job.id);
+      tokens.push(token);
+    },
+  });
+
+  runner.enqueue(job, { authorization: "Bearer test-key" }, { message: "hello" });
+
+  await waitUntil(() => job.state === "completed");
+  assert.deepEqual(tokens, ["hello", " world"]);
+  assert.deepEqual(addedMessages, []);
+  assert.deepEqual(deletedMessages, []);
+  assert.equal(updatedMessages.some((message) => message.id.includes(":partial:")), false);
+  assert.deepEqual(
+    updatedMessages.map((message) => message.text),
+    ["응답을 처리 중입니다…", "hello world"],
+  );
+  assert.ok(updatedMessages.at(-1)?.completedAt);
+});

@@ -55059,24 +55059,24 @@ var LBe = o((() => {
 		CONNECTOR_TYPE_W3M_AUTH: "AUTH",
 		getSDKVersionWarningMessage(e, t) {
 			return `
-     @@@@@@@           @@@@@@@@@@@@@@@@@@
-   @@@@@@@@@@@      @@@@@@@@@@@@@@@@@@@@@@@@
-  @@@@@@@@@@@@@    @@@@@@@@@@@@@@@@@@@@@@@@@@
- @@@@@@@@@@@@@@@  @@@@@@@@@@@@@@@@@@@@@@@@@@@
- @@@@@@@@@@@@@@@  @@@@@@@@@@@@@@   @@@@@@@@@@@
- @@@@@@@@@@@@@@@  @@@@@@@@@@@@@   @@@@@@@@@@@@
+     @@@@@@@           @@@@@@@@@@@@@@@@@@      
+   @@@@@@@@@@@      @@@@@@@@@@@@@@@@@@@@@@@@   
+  @@@@@@@@@@@@@    @@@@@@@@@@@@@@@@@@@@@@@@@@  
+ @@@@@@@@@@@@@@@  @@@@@@@@@@@@@@@@@@@@@@@@@@@  
+ @@@@@@@@@@@@@@@  @@@@@@@@@@@@@@   @@@@@@@@@@@ 
+ @@@@@@@@@@@@@@@  @@@@@@@@@@@@@   @@@@@@@@@@@@ 
  @@@@@@@@@@@@@@@  @@@@@@@@@@@@@  @@@@@@@@@@@@@
- @@@@@@@@@@@@@@@  @@@@@@@@@@@@   @@@@@@@@@@@@@
- @@@@@@   @@@@@@  @@@@@@@@@@@   @@@@@@@@@@@@@@
- @@@@@@   @@@@@@  @@@@@@@@@@@  @@@@@@@@@@@@@@@
- @@@@@@@@@@@@@@@  @@@@@@@@@@   @@@@@@@@@@@@@@@
- @@@@@@@@@@@@@@@  @@@@@@@@@@@@@@@@@@@@@@@@@@@
-  @@@@@@@@@@@@@    @@@@@@@@@@@@@@@@@@@@@@@@@@
-   @@@@@@@@@@@      @@@@@@@@@@@@@@@@@@@@@@@@
-      @@@@@            @@@@@@@@@@@@@@@@@@
-
+ @@@@@@@@@@@@@@@  @@@@@@@@@@@@   @@@@@@@@@@@@@    
+ @@@@@@   @@@@@@  @@@@@@@@@@@   @@@@@@@@@@@@@@    
+ @@@@@@   @@@@@@  @@@@@@@@@@@  @@@@@@@@@@@@@@@ 
+ @@@@@@@@@@@@@@@  @@@@@@@@@@   @@@@@@@@@@@@@@@ 
+ @@@@@@@@@@@@@@@  @@@@@@@@@@@@@@@@@@@@@@@@@@@  
+  @@@@@@@@@@@@@    @@@@@@@@@@@@@@@@@@@@@@@@@@  
+   @@@@@@@@@@@      @@@@@@@@@@@@@@@@@@@@@@@@   
+      @@@@@            @@@@@@@@@@@@@@@@@@  
+      
 AppKit SDK version ${e} is outdated. Latest version is ${t}. Please update to the latest version for bug fixes and new features.
-
+            
 Changelog: https://github.com/reown-com/appkit/releases
 NPM Registry: https://www.npmjs.com/package/@reown/appkit`;
 		}
@@ -59523,7 +59523,7 @@ function Gz(e, t, n = e, r) {
 	return a?.constructor !== o && ((i = a?._$AO) == null || i.call(a, !1), o === void 0 ? a = void 0 : (a = new o(e), a._$AT(e, n, r)), r === void 0 ? n._$Cl = a : (n._$Co ??= [])[r] = a), a !== void 0 && (t = Gz(e, a._$AS(e, t.values), a, r)), t;
 }
 var Kz, qz, Jz, Yz, Xz, Zz, OUe, Qz, $z, eB, tB, kUe, nB, rB, iB, aB, oB, sB, cB, lB, uB, dB, Z, fB, pB, mB, hB, AUe, gB, jUe, _B, vB, MUe, NUe, PUe, FUe, IUe, LUe, yB = o((() => {
-	Kz = globalThis, qz = Kz.trustedTypes, Jz = qz ? qz.createPolicy("lit-html", { createHTML: (e) => e }) : void 0, Yz = "$lit$", Xz = `lit$${Math.random().toFixed(9).slice(2)}$`, Zz = "?" + Xz, OUe = `<${Zz}>`, Qz = document, $z = () => Qz.createComment(""), eB = (e) => e === null || typeof e != "object" && typeof e != "function", tB = Array.isArray, kUe = (e) => tB(e) || typeof e?.[Symbol.iterator] == "function", nB = "[ 	\n\f\r]", rB = /<(?:(!--|\/[^a-zA-Z])|(\/?[a-zA-Z][^>\s]*)|(\/?$))/g, iB = /-->/g, aB = />/g, oB = RegExp(`>|${nB}(?:([^\\s"'>=/]+)(${nB}*=${nB}*(?:[^
+	Kz = globalThis, qz = Kz.trustedTypes, Jz = qz ? qz.createPolicy("lit-html", { createHTML: (e) => e }) : void 0, Yz = "$lit$", Xz = `lit$${Math.random().toFixed(9).slice(2)}$`, Zz = "?" + Xz, OUe = `<${Zz}>`, Qz = document, $z = () => Qz.createComment(""), eB = (e) => e === null || typeof e != "object" && typeof e != "function", tB = Array.isArray, kUe = (e) => tB(e) || typeof e?.[Symbol.iterator] == "function", nB = "[ 	\n\f\r]", rB = /<(?:(!--|\/[^a-zA-Z])|(\/?[a-zA-Z][^>\s]*)|(\/?$))/g, iB = /-->/g, aB = />/g, oB = RegExp(`>|${nB}(?:([^\\s"'>=/]+)(${nB}*=${nB}*(?:[^ 	
 \f\r"'\`<>=]|("|')|))|$)`, "g"), sB = /'/g, cB = /"/g, lB = /^(?:script|style|textarea|title)$/i, uB = (e) => (t, ...n) => ({
 		_$litType$: e,
 		strings: t,

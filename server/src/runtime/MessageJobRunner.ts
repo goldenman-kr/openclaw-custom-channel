@@ -23,9 +23,6 @@ export interface MessageJobRunnerDeps {
   generatedMediaDirs?: string[];
 }
 
-const STREAMING_IDLE_CHECKPOINT_MS = Number(process.env.STREAMING_IDLE_CHECKPOINT_MS ?? 0);
-const MIN_STREAMING_CHECKPOINT_CHARS = Number(process.env.MIN_STREAMING_CHECKPOINT_CHARS ?? 12);
-
 export class MessageJobRunner {
   private readonly queueTails = new Map<string, Promise<void>>();
   private readonly abortControllers = new Map<string, AbortController>();
@@ -89,83 +86,6 @@ export class MessageJobRunner {
       });
     }
 
-    let streamSegmentText = "";
-    let persistedPartialText = "";
-    let lastPersistedStreamText = "";
-    let lastStreamPersistAt = 0;
-    let streamIdleTimer: NodeJS.Timeout | undefined;
-    let partialSegmentIndex = 0;
-    const clearStreamIdleTimer = () => {
-      if (streamIdleTimer) {
-        clearTimeout(streamIdleTimer);
-        streamIdleTimer = undefined;
-      }
-    };
-    const persistStreamCheckpoint = (force = false) => {
-      if (!force && STREAMING_IDLE_CHECKPOINT_MS <= 0) {
-        return;
-      }
-      if (!job.conversationId || !this.deps.shouldPersistMessage(payload.message) || !streamSegmentText.trim()) {
-        return;
-      }
-      const now = Date.now();
-      if (!force && (now - lastStreamPersistAt < 2_000 || streamSegmentText === lastPersistedStreamText)) {
-        return;
-      }
-      this.deps.conversationStore.updateMessage(job.id, {
-        role: "assistant",
-        text: streamSegmentText,
-      });
-      lastPersistedStreamText = streamSegmentText;
-      lastStreamPersistAt = now;
-    };
-    const persistIdlePartialMessage = (resetTimer = true) => {
-      if (resetTimer) {
-        streamIdleTimer = undefined;
-      }
-      if (!job.conversationId || !this.deps.shouldPersistMessage(payload.message) || this.isCancelled(job)) {
-        return;
-      }
-      const segmentText = streamSegmentText.trim();
-      if (segmentText.length < MIN_STREAMING_CHECKPOINT_CHARS) {
-        return;
-      }
-      partialSegmentIndex += 1;
-      const partialMessageId = `${job.id}:partial:${partialSegmentIndex}`;
-      const nowMs = Date.now();
-      const now = new Date(nowMs).toISOString();
-      const placeholderCreatedAt = new Date(nowMs + 1_000).toISOString();
-      this.deps.conversationStore.addMessage({
-        id: partialMessageId,
-        conversationId: job.conversationId,
-        role: "assistant",
-        text: streamSegmentText,
-        createdAt: now,
-        completedAt: now,
-      });
-      persistedPartialText = `${persistedPartialText}${streamSegmentText}`;
-      streamSegmentText = "";
-      lastPersistedStreamText = "";
-      this.deps.conversationStore.updateMessage(job.id, {
-        role: "assistant",
-        text: "응답을 처리 중입니다…",
-        createdAt: placeholderCreatedAt,
-        completedAt: null,
-      });
-    };
-    const persistBoundaryPartialMessage = () => {
-      clearStreamIdleTimer();
-      persistIdlePartialMessage(false);
-    };
-    const scheduleIdlePartialMessage = () => {
-      if (STREAMING_IDLE_CHECKPOINT_MS <= 0) {
-        return;
-      }
-      clearStreamIdleTimer();
-      streamIdleTimer = setTimeout(persistIdlePartialMessage, STREAMING_IDLE_CHECKPOINT_MS);
-      streamIdleTimer.unref?.();
-    };
-
     const result = await (async () => {
       try {
         return await handlePostMessage(
@@ -178,16 +98,10 @@ export class MessageJobRunner {
             runtimeWorkspace: job.runtimeWorkspace,
             runtimeCallbacks: {
               onToken: (token) => {
-                streamSegmentText += token;
-                persistStreamCheckpoint();
-                scheduleIdlePartialMessage();
                 this.deps.publishToken?.(job, token);
               },
               onAgentEvent: (event) => {
                 this.deps.publishAgentEvent?.(job, event);
-                if (event.stream === "tool" && event.data?.phase === "start") {
-                  persistBoundaryPartialMessage();
-                }
               },
             },
             abortSignal: abortController.signal,
@@ -196,8 +110,6 @@ export class MessageJobRunner {
           payload,
         );
       } finally {
-        clearStreamIdleTimer();
-        persistStreamCheckpoint(true);
         this.abortControllers.delete(job.id);
       }
     })();
@@ -208,25 +120,17 @@ export class MessageJobRunner {
     if (result.statusCode >= 200 && result.statusCode < 300 && "reply" in result.body) {
       if (this.deps.shouldPersistMessage(payload.message)) {
         const fullText = sanitizeAssistantReply(result.body.reply);
-        const remainingText = persistedPartialText && fullText.startsWith(persistedPartialText)
-          ? fullText.slice(persistedPartialText.length).trimStart()
-          : fullText;
-        const text = remainingText || fullText;
+        const text = fullText;
         const attachments = await attachmentsFromMediaRefs(text);
         const savedAt = new Date().toISOString();
-        const shouldRemoveTerminalPlaceholder = Boolean(persistedPartialText) && !remainingText && attachments.length === 0;
         if (job.conversationId) {
-          if (shouldRemoveTerminalPlaceholder) {
-            this.deps.conversationStore.deleteMessage(job.id);
-          } else {
-            this.deps.conversationStore.updateMessage(job.id, {
-              role: "assistant",
-              text,
-              createdAt: savedAt,
-              completedAt: savedAt,
-              attachments,
-            });
-          }
+          this.deps.conversationStore.updateMessage(job.id, {
+            role: "assistant",
+            text,
+            createdAt: savedAt,
+            completedAt: savedAt,
+            attachments,
+          });
         } else {
           await this.deps.historyStore.replaceById(job.sessionId, job.id, {
             role: "assistant",
