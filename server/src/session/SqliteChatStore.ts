@@ -142,7 +142,7 @@ export class SqliteChatStore implements ConversationStore, MessageStore, JobStor
     const now = input.now ?? new Date().toISOString();
     const id = `conv_${randomUUID()}`;
     const ownerId = input.ownerId ?? "admin";
-    const openclawSessionId = input.openclawSessionId ?? `web-${id}`;
+    const openclawSessionId = input.openclawSessionId ?? `pwa-webchat:${id}`;
     this.db
       .prepare(
         `INSERT INTO conversations (id, owner_id, title, openclaw_session_id, created_at, updated_at)

@@ -528,6 +528,15 @@ function conversationForOpenClawSessionId(openclawSessionId: string): Conversati
   return chatStore.getConversationByOpenClawSessionId(openclawSessionId);
 }
 
+function openClawSessionIdsForConversation(conversation: ConversationRecord): string[] {
+  return [
+    conversation.openclawSessionId,
+    `pwa-webchat:${conversation.id}`,
+    `webchat:${conversation.id}`,
+    `web-${conversation.id}`,
+  ].filter((value, index, values) => value.trim() && values.indexOf(value) === index);
+}
+
 function isConversationVisibleForRequest(conversationId: string, request: IncomingMessage): boolean {
   const auth = getAuthContext(request);
   if (!auth) {
@@ -744,13 +753,18 @@ const server = createServer(async (request, response) => {
     makeErrorResponse,
     readJsonBody,
     cleanupConversationSession(conversation) {
+      const sessionIds = openClawSessionIdsForConversation(conversation);
+      const [explicitSessionId, ...explicitSessionIds] = sessionIds;
       return deleteOpenClawSession({
-        explicitSessionId: conversation.openclawSessionId,
+        explicitSessionId: explicitSessionId ?? conversation.openclawSessionId,
+        explicitSessionIds,
         agentId: openClawAgentId,
       });
     },
     ensureConversationSession(conversation) {
-      ensureSessionEntry(conversation.openclawSessionId);
+      for (const sessionId of openClawSessionIdsForConversation(conversation)) {
+        ensureSessionEntry(sessionId);
+      }
     },
     deleteConversationJobs(conversationId) {
       for (const [jobId, job] of jobs.entries()) {

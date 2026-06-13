@@ -51,7 +51,7 @@ test("streams OpenAI-compatible Gateway chunks as runtime tokens", async () => {
 
   try {
     const tokens: string[] = [];
-    const client = new GatewayOpenAiOpenClawClient(server.baseUrl, "gateway-token", "openclaw-test", 5_000);
+    const client = new GatewayOpenAiOpenClawClient(server.baseUrl, "gateway-token", "openclaw-test", 5_000, undefined, undefined, undefined, "auto");
     const result = await client.sendMessage({
       sessionId: "session-stream-test",
       message: "hello",
