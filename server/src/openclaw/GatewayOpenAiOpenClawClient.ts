@@ -7,6 +7,13 @@ import { GatewayAgentEventSubscriber, type GatewayAgentEventPayload } from "./Ga
 import { activeGatewayModel, getSessionThinkingOverride } from "./modelOverride.js";
 import type { OpenClawClient, OpenClawClientInput, OpenClawClientResult, RuntimeWorkspaceScope } from "./OpenClawClient.js";
 
+type GatewayAuthMode = "auto" | "token" | "password";
+
+function normalizeGatewayAuthMode(value: string | undefined): GatewayAuthMode {
+  const normalized = value?.trim().toLowerCase();
+  return normalized === "token" || normalized === "password" ? normalized : "auto";
+}
+
 export class GatewayOpenAiOpenClawClient implements OpenClawClient {
   constructor(
     private readonly baseUrl = process.env.OPENCLAW_GATEWAY_URL ?? "http://127.0.0.1:18789",
@@ -19,6 +26,8 @@ export class GatewayOpenAiOpenClawClient implements OpenClawClient {
       // The request is still bounded by timeoutMs via AbortController above.
       bodyTimeout: Number(process.env.OPENCLAW_GATEWAY_BODY_TIMEOUT_MS ?? 0),
     }),
+    private readonly password = process.env.OPENCLAW_GATEWAY_PASSWORD,
+    private readonly authMode = process.env.OPENCLAW_GATEWAY_AUTH_MODE,
   ) {}
 
   async sendMessage(input: OpenClawClientInput): Promise<OpenClawClientResult> {
@@ -39,6 +48,8 @@ export class GatewayOpenAiOpenClawClient implements OpenClawClient {
       ? new GatewayAgentEventSubscriber({
           baseUrl: this.baseUrl,
           token: this.token,
+          password: this.password,
+          authMode: this.authMode,
           sessionKey: input.sessionId,
           onEvent: (event) => {
             const eventReply = mediaReplyFromEvent(event);
@@ -131,10 +142,27 @@ export class GatewayOpenAiOpenClawClient implements OpenClawClient {
         headers["x-openclaw-runtime-identity-file"] = input.runtimeWorkspace.identityFile;
       }
     }
-    if (this.token) {
-      headers.authorization = `Bearer ${this.token}`;
+    const auth = this.resolveAuth();
+    if (auth) {
+      headers.authorization = `Bearer ${auth.value}`;
     }
     return headers;
+  }
+
+  private resolveAuth(): { mode: "token" | "password"; value: string } | null {
+    const token = this.token?.trim() || "";
+    const password = this.password?.trim() || "";
+    const mode = normalizeGatewayAuthMode(this.authMode);
+    if (mode === "token") {
+      return token ? { mode, value: token } : null;
+    }
+    if (mode === "password") {
+      return password ? { mode, value: password } : null;
+    }
+    if (token) {
+      return { mode: "token", value: token };
+    }
+    return password ? { mode: "password", value: password } : null;
   }
 
   private requestBody(input: OpenClawClientInput, stream: boolean, attachments: SavedAttachment[]): Record<string, unknown> {

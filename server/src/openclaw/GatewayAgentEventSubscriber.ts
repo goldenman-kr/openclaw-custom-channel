@@ -11,6 +11,8 @@ export interface GatewayAgentEventPayload {
 export interface GatewayAgentEventSubscriberOptions {
   baseUrl?: string;
   token?: string;
+  password?: string;
+  authMode?: string;
   sessionKey: string;
   onEvent(event: GatewayAgentEventPayload): void;
   timeoutMs?: number;
@@ -38,6 +40,13 @@ interface PendingRequest {
 
 const DEFAULT_GATEWAY_URL = "http://127.0.0.1:18789";
 const DEFAULT_REQUEST_TIMEOUT_MS = 5_000;
+
+type GatewayAuthMode = "auto" | "token" | "password";
+
+function normalizeGatewayAuthMode(value: string | undefined): GatewayAuthMode {
+  const normalized = value?.trim().toLowerCase();
+  return normalized === "token" || normalized === "password" ? normalized : "auto";
+}
 
 export class GatewayAgentEventSubscriber {
   private socket: unknown;
@@ -173,7 +182,18 @@ export class GatewayAgentEventSubscriber {
   }
 
   private async connect(nonce: string): Promise<void> {
-    const auth = this.options.token ? { token: this.options.token } : undefined;
+    const token = this.options.token?.trim();
+    const password = this.options.password?.trim();
+    const mode = normalizeGatewayAuthMode(this.options.authMode);
+    const auth = mode === "token"
+      ? token ? { token } : undefined
+      : mode === "password"
+        ? password ? { password } : undefined
+        : token
+          ? { token }
+          : password
+            ? { password }
+            : undefined;
     await this.request("connect", {
       minProtocol: 3,
       maxProtocol: 3,
