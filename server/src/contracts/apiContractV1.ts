@@ -75,6 +75,10 @@ export interface MessageRequestMetadata {
   location?: MessageLocationMetadata;
   source?: "user" | "plugin";
   hiddenFromHistory?: boolean;
+  webchat?: {
+    conversationId?: string;
+    jobId?: string;
+  };
 }
 
 export interface MessageRequestDto {

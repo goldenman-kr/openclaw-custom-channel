@@ -1,4 +1,4 @@
-import { nextPartialSegmentId, streamingNodeText } from './streaming-ui.js';
+import { streamingNodeText } from './streaming-ui.js';
 
 export function createStreamingController({
   messagesRoot,
@@ -7,9 +7,7 @@ export function createStreamingController({
   messageText,
   isPlaceholderPendingText,
   isActiveConversation,
-  minCheckpointChars = 12,
   windowRef = window,
-  documentRef = document,
 }) {
   const idleTimers = new Map();
   const textByJob = new Map();
@@ -29,10 +27,6 @@ export function createStreamingController({
     windowRef.clearTimeout(idleTimers.get(jobId));
     idleTimers.delete(jobId);
     textByJob.delete(jobId);
-  }
-
-  function nextSegmentId(jobId) {
-    return nextPartialSegmentId(messagesRoot, jobId);
   }
 
   function scheduleIdleCheckpoint(jobId) {
@@ -55,7 +49,7 @@ export function createStreamingController({
     const nextText = `${currentText}${token}`;
     textByJob.set(jobId, nextText);
     node._streamingText = nextText;
-    renderMessageNode(node, 'assistant', nextText, { pending: true });
+    renderMessageNode(node, 'assistant', nextText || '응답을 처리 중입니다…', { pending: true });
     scheduleIdleCheckpoint(jobId, conversationId);
   }
 
@@ -74,27 +68,13 @@ export function createStreamingController({
       renderMessageNode(node, 'assistant', '응답을 처리 중입니다…', { pending: true, autoScroll: false, suppressScrollButton: true });
       return;
     }
-    if (text.trim().length < minCheckpointChars) {
-      textByJob.set(jobId, '');
-      node._streamingText = '';
-      renderMessageNode(node, 'assistant', '응답을 처리 중입니다…', { pending: true, autoScroll: false, suppressScrollButton: true });
-      return;
-    }
-
-    const checkpoint = documentRef.createElement('article');
-    checkpoint.dataset.messageId = nextSegmentId(jobId);
-    node.before(checkpoint);
-    renderMessageNode(checkpoint, 'assistant', text, { autoScroll: false, suppressScrollButton: true });
-    textByJob.set(jobId, '');
-    node._streamingText = '';
-    renderMessageNode(node, 'assistant', '응답을 처리 중입니다…', { pending: true, autoScroll: false, suppressScrollButton: true });
+    renderMessageNode(node, 'assistant', text, { pending: true, autoScroll: false, suppressScrollButton: true });
   }
 
   return {
     applyToken,
     nodeText,
     clear,
-    nextSegmentId,
     flushCheckpointNow,
     scheduleIdleCheckpoint,
   };

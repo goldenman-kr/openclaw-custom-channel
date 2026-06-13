@@ -11,12 +11,13 @@ import {
   type MessageRequestDto,
 } from "./contracts/apiContractV1.js";
 import { ConversationEventPublisher } from "./events/ConversationEventPublisher.js";
-import { SseJobEventPublisher, type JobEventRecord } from "./events/SseJobEventPublisher.js";
+import { SseJobEventPublisher, type JobEventRecord, type JobTokenEventRecord } from "./events/SseJobEventPublisher.js";
 import { AUTH_COOKIE_NAME, handleAuthRoute, parseCookies, type AuthContext } from "./http/authRoutes.js";
 import { conversationIdFromPath, handleConversationRoute } from "./http/conversationRoutes.js";
 import { handleHistoryRoute } from "./http/historyRoutes.js";
 import { handleJobRoute } from "./http/jobRoutes.js";
 import { handleMessageRoute } from "./http/messageRoutes.js";
+import { handleOpenClawWebchatDeliveryRoute } from "./http/openclawWebchatDeliveryRoute.js";
 import { handlePushRoute } from "./http/pushRoutes.js";
 import { applyNativeModelSelection, applyNativeThinkingSelection, getNativeModelMenu } from "./http/nativeCommands.js";
 import { handleOrbsBridgePluginRoute, resumeOrbsBridgeCheckpointPolling } from "./http/orbsBridgePluginRoutes.js";
@@ -103,6 +104,20 @@ const spotOrderRouteDeps = {
   readJsonBody,
   publishConversationEvent(event: { id: string; type: "message"; messageId: string; conversationId: string; createdAt: string }) {
     conversationEventPublisher.publish(event);
+  },
+};
+const openClawWebchatDeliveryRouteDeps = {
+  conversationStore: chatStore,
+  readJsonBody,
+  sendJson,
+  publishConversationEvent(event: { id: string; type: "message"; messageId: string; conversationId: string; createdAt: string }) {
+    conversationEventPublisher.publish(event);
+  },
+  publishJobEvent(event: { id: string; state: string }) {
+    jobEventPublisher.publishJob(event);
+  },
+  publishJobToken(event: JobTokenEventRecord) {
+    jobEventPublisher.publishToken(event);
   },
 };
 setImmediate(() => resumeSpotOrderPolling(spotOrderRouteDeps));
@@ -513,6 +528,15 @@ function conversationForOpenClawSessionId(openclawSessionId: string): Conversati
   return chatStore.getConversationByOpenClawSessionId(openclawSessionId);
 }
 
+function openClawSessionIdsForConversation(conversation: ConversationRecord): string[] {
+  return [
+    conversation.openclawSessionId,
+    `pwa-webchat:${conversation.id}`,
+    `webchat:${conversation.id}`,
+    `web-${conversation.id}`,
+  ].filter((value, index, values) => value.trim() && values.indexOf(value) === index);
+}
+
 function isConversationVisibleForRequest(conversationId: string, request: IncomingMessage): boolean {
   const auth = getAuthContext(request);
   if (!auth) {
@@ -568,6 +592,7 @@ const conversationEventPublisher = new ConversationEventPublisher({
 const autonomousAnnounceBridge = process.env.OPENCLAW_AUTONOMOUS_ANNOUNCE_BRIDGE === "0" ? null : new GatewayAutonomousAnnounceBridge({
   baseUrl: process.env.OPENCLAW_GATEWAY_URL,
   token: process.env.OPENCLAW_GATEWAY_TOKEN,
+  password: process.env.OPENCLAW_GATEWAY_PASSWORD,
   agentId: openClawAgentId,
   getConversationByOpenClawSessionId: conversationForOpenClawSessionId,
   messageStore: chatStore,
@@ -728,13 +753,18 @@ const server = createServer(async (request, response) => {
     makeErrorResponse,
     readJsonBody,
     cleanupConversationSession(conversation) {
+      const sessionIds = openClawSessionIdsForConversation(conversation);
+      const [explicitSessionId, ...explicitSessionIds] = sessionIds;
       return deleteOpenClawSession({
-        explicitSessionId: conversation.openclawSessionId,
+        explicitSessionId: explicitSessionId ?? conversation.openclawSessionId,
+        explicitSessionIds,
         agentId: openClawAgentId,
       });
     },
     ensureConversationSession(conversation) {
-      ensureSessionEntry(conversation.openclawSessionId);
+      for (const sessionId of openClawSessionIdsForConversation(conversation)) {
+        ensureSessionEntry(sessionId);
+      }
     },
     deleteConversationJobs(conversationId) {
       for (const [jobId, job] of jobs.entries()) {
@@ -766,6 +796,10 @@ const server = createServer(async (request, response) => {
     readJsonBody,
     sessionIdFromRequest: sessionIdFromHeaders,
   })) {
+    return;
+  }
+
+  if (await handleOpenClawWebchatDeliveryRoute(request, response, url, openClawWebchatDeliveryRouteDeps)) {
     return;
   }
 

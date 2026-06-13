@@ -32,9 +32,9 @@ import { hideLoginScreen as hideLoginScreenView, showLoginScreen as showLoginScr
 import { getCurrentLocationMetadata } from './modules/location.js';
 import { messageTextWithoutAttachmentPreview, renderedHistorySignature } from './modules/history-render-signature.js';
 import { sendMessage as sendMessageToApi } from './modules/message-api.js';
-import { isPendingHistoryMessage, isPlaceholderPendingText, isRunningJobHistoryMessage, shouldRerenderHistory as shouldRerenderHistorySnapshot } from './modules/history-state.js';
-import { cancelJobById, fetchJobById, isAlreadyFinishedJobError, isJobResolvedInHistory as isJobResolvedInHistoryFromApi, waitForJobPolling } from './modules/job-api.js?v=pwa-client-2026-06-02-chat-search-001';
-import { waitForJobEventStream } from './modules/job-events.js?v=pwa-client-2026-06-02-chat-search-001';
+import { isPendingHistoryMessage, isPlaceholderPendingText, isRunningJobHistoryMessage, pendingJobPlaceholdersAfterJobMessages, shouldRerenderHistory as shouldRerenderHistorySnapshot } from './modules/history-state.js';
+import { cancelJobById, fetchJobById, isAlreadyFinishedJobError, isJobResolvedInHistory as isJobResolvedInHistoryFromApi, waitForJobPolling } from './modules/job-api.js?v=pwa-client-2026-06-14-pending-order-001';
+import { waitForJobEventStream } from './modules/job-events.js?v=pwa-client-2026-06-14-pending-order-001';
 import { delay, isTerminalJobState, parseSseBlock } from './modules/job-utils.js';
 import { appendMarkdown as appendMarkdownView } from './modules/markdown-renderer.js';
 import { canonicalMediaRefKey, extractMediaRefs, mediaRefsFromHistoryAttachments } from './modules/media.js';
@@ -77,7 +77,7 @@ import './plugins/wallet-transaction-card.js';
 
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
 const PUSH_DEVICE_ID_KEY = 'openclaw-web-channel-push-device-id-v1';
-const CLIENT_ASSET_VERSION = 'pwa-client-2026-06-02-chat-search-001';
+const CLIENT_ASSET_VERSION = 'pwa-client-2026-06-14-pending-order-001';
 const CLIENT_API_VERSION = 1;
 const elements = {
   loginScreen: document.querySelector('#loginScreen'),
@@ -1567,7 +1567,7 @@ async function renderHistory(options = {}) {
     }
 
     renderHistoryLoadMoreControl();
-    for (const item of history) {
+    for (const item of pendingJobPlaceholdersAfterJobMessages(history)) {
       renderHistoryItem(item);
     }
     if (isChatSearchOpen()) {
@@ -1708,7 +1708,7 @@ function renderHistorySnapshot(history) {
   const previousBottomOffset = elements.messages.scrollHeight - elements.messages.scrollTop;
   clearRenderedMessages();
   renderHistoryLoadMoreControl();
-  for (const item of history) {
+  for (const item of pendingJobPlaceholdersAfterJobMessages(history)) {
     renderHistoryItem(item);
   }
   if (isChatSearchOpen()) {
@@ -2722,6 +2722,6 @@ renderModelPicker();
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-06-02-chat-search-001').catch(() => {});
+    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-06-14-pending-order-001').catch(() => {});
   });
 }

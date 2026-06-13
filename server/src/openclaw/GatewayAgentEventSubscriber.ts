@@ -175,28 +175,17 @@ export class GatewayAgentEventSubscriber {
 
     if (frame.event === "agent" || frame.event === "session.tool") {
       const payload = frame.payload as GatewayAgentEventPayload;
-      if (payload?.sessionKey === this.options.sessionKey) {
+      if (matchesSessionKey(payload?.sessionKey, this.options.sessionKey)) {
         this.options.onEvent(payload);
       }
     }
   }
 
   private async connect(nonce: string): Promise<void> {
-    const token = this.options.token?.trim();
-    const password = this.options.password?.trim();
-    const mode = normalizeGatewayAuthMode(this.options.authMode);
-    const auth = mode === "token"
-      ? token ? { token } : undefined
-      : mode === "password"
-        ? password ? { password } : undefined
-        : token
-          ? { token }
-          : password
-            ? { password }
-            : undefined;
+    const auth = this.gatewayAuth();
     await this.request("connect", {
-      minProtocol: 3,
-      maxProtocol: 3,
+      minProtocol: 4,
+      maxProtocol: 4,
       client: {
         id: "gateway-client",
         displayName: "OpenClaw Custom Channel PWA",
@@ -209,6 +198,22 @@ export class GatewayAgentEventSubscriber {
       role: "operator",
       scopes: ["operator.read"],
     });
+  }
+
+  private gatewayAuth(): { token?: string; password?: string } | undefined {
+    const token = this.options.token?.trim();
+    const password = this.options.password?.trim();
+    const mode = normalizeGatewayAuthMode(this.options.authMode);
+    if (mode === "token") {
+      return token ? { token } : undefined;
+    }
+    if (mode === "password") {
+      return password ? { password } : undefined;
+    }
+    if (token) {
+      return { token };
+    }
+    return password ? { password } : undefined;
   }
 
   private request(method: string, params: Record<string, unknown>): Promise<unknown> {
@@ -252,4 +257,11 @@ export class GatewayAgentEventSubscriber {
     }
     return event;
   }
+}
+
+function matchesSessionKey(actual: unknown, expected: string): boolean {
+  if (typeof actual !== "string") {
+    return false;
+  }
+  return actual === expected || actual.endsWith(`:${expected}`);
 }

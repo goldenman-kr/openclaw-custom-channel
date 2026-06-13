@@ -1,6 +1,7 @@
 import { AgentOpenClawClient } from "./AgentOpenClawClient.js";
 import { CliOpenClawClient } from "./CliOpenClawClient.js";
 import { GatewayOpenAiOpenClawClient } from "./GatewayOpenAiOpenClawClient.js";
+import { GatewayNativeWebChatOpenClawClient } from "./GatewayNativeWebChatOpenClawClient.js";
 import { MockOpenClawClient } from "./MockOpenClawClient.js";
 import type { OpenClawClient } from "./OpenClawClient.js";
 
@@ -16,6 +17,10 @@ export function createOpenClawClient(): OpenClawClient {
 
   if (transport === "gateway-openai") {
     return new GatewayOpenAiOpenClawClient();
+  }
+
+  if (transport === "native-webchat") {
+    return new GatewayNativeWebChatOpenClawClient();
   }
 
   return new AgentOpenClawClient();

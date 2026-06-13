@@ -455,3 +455,90 @@ test("publishes runtime tokens for queued message jobs", async () => {
   assert.deepEqual(states, ["running", "completed"]);
   assert.equal((await historyStore.list(job.sessionId))[0]?.text, "hello world");
 });
+
+test("does not persist streamed numbered sections as separate conversation messages", async () => {
+  const addedMessages: Array<{ id: string; role: string; text: string }> = [];
+  const updates: Array<{ id: string; patch: { text?: string; completedAt?: string | null } }> = [];
+  const conversationStore = {
+    ...unusedConversationStore(),
+    getConversation(id: string) {
+      return {
+        id,
+        ownerId: "user-stream-sections",
+        userId: "user-stream-sections",
+        title: "stream sections",
+        openclawSessionId: "session-runner-stream-sections-test",
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        archivedAt: undefined,
+        pinned: false,
+      };
+    },
+    addMessage(message: Parameters<MessageStore["addMessage"]>[0]) {
+      const record = {
+        id: message.id ?? `message-${addedMessages.length + 1}`,
+        conversationId: message.conversationId,
+        role: message.role,
+        text: message.text,
+        jobId: message.jobId,
+        createdAt: message.createdAt ?? new Date().toISOString(),
+        completedAt: message.completedAt ?? undefined,
+        attachments: message.attachments,
+      };
+      addedMessages.push(record);
+      return record;
+    },
+    updateMessage(id: string, patch: Parameters<MessageStore["updateMessage"]>[1]) {
+      updates.push({ id, patch });
+      return {
+        id,
+        conversationId: job.conversationId ?? "conv-runner-stream-sections-test",
+        role: patch.role ?? "assistant",
+        text: patch.text ?? "",
+        createdAt: patch.createdAt ?? new Date().toISOString(),
+        completedAt: patch.completedAt ?? undefined,
+        attachments: patch.attachments,
+      };
+    },
+  };
+  const reply = [
+    "1. 요청 이해\n\n첫 단계 설명입니다.",
+    "2. 접근 방식 선택\n\n두 번째 단계 설명입니다.",
+    "3. 최종 답변\n\n마지막 답변입니다.",
+  ].join("\n\n");
+  const runtime: ChatRuntime = {
+    async sendMessage(input) {
+      await input.callbacks?.onToken?.("1. 요청 이해\n\n첫 단계 설명입니다.");
+      await input.callbacks?.onToken?.("\n\n2. 접근 방식 선택\n\n두 번째 단계 설명입니다.");
+      await input.callbacks?.onToken?.("\n\n3. 최종 답변\n\n마지막 답변입니다.");
+      return { reply };
+    },
+  };
+  const job: MessageJob = {
+    id: "job_runner_stream_sections_test",
+    sessionId: "session-runner-stream-sections-test",
+    conversationId: "conv-runner-stream-sections-test",
+    state: "queued",
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+
+  const runner = new MessageJobRunner({
+    chatRuntime: runtime,
+    sessionStore: new InMemorySessionStore(),
+    validApiKeys: new Set(["test-key"]),
+    conversationStore,
+    historyStore: memoryHistoryStore(),
+    shouldPersistMessage: () => true,
+    updateJob(jobToUpdate, patch) {
+      Object.assign(jobToUpdate, patch);
+    },
+  });
+
+  runner.enqueue(job, { authorization: "Bearer test-key" }, { message: "stream sections", conversation_id: job.conversationId });
+
+  await waitUntil(() => job.state === "completed");
+  assert.deepEqual(addedMessages.map((message) => message.text), []);
+  assert.equal(updates.at(-1)?.id, job.id);
+  assert.equal(updates.at(-1)?.patch.text, reply);
+});

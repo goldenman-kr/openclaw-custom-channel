@@ -43,6 +43,7 @@ export class GatewayOpenAiOpenClawClient implements OpenClawClient {
     const timeout = setTimeout(() => abortController.abort(new Error("OpenClaw Gateway request timed out.")), this.timeoutMs);
     const streamed: string[] = [];
     const rawStreamEvents: string[] = [];
+    const emittedAgentTexts: string[] = [];
     let mediaReplyFromAgentEvent = "";
     const agentEventSubscriber = input.callbacks?.onAgentEvent
       ? new GatewayAgentEventSubscriber({
@@ -55,6 +56,12 @@ export class GatewayOpenAiOpenClawClient implements OpenClawClient {
             const eventReply = mediaReplyFromEvent(event);
             if (eventReply) {
               mediaReplyFromAgentEvent = eventReply;
+            }
+            const assistantText = assistantTextFromEvent(event);
+            if (assistantText && !emittedAgentTexts.includes(assistantText)) {
+              emittedAgentTexts.push(assistantText);
+              streamed.push(assistantText);
+              void Promise.resolve(input.callbacks?.onToken?.(assistantText)).catch(() => {});
             }
             input.callbacks?.onAgentEvent?.(event);
           },
@@ -90,6 +97,9 @@ export class GatewayOpenAiOpenClawClient implements OpenClawClient {
       }
 
       const finalText = await this.readOpenAiSse(response.body, async (token) => {
+        if (emittedAgentTexts.includes(token)) {
+          return;
+        }
         streamed.push(token);
         await input.callbacks?.onToken?.(token);
       }, rawStreamEvents);
@@ -245,6 +255,10 @@ export class GatewayOpenAiOpenClawClient implements OpenClawClient {
 
   private buildText(message: string, attachments: SavedAttachment[], metadata?: MessageRequestMetadata, runtimeWorkspace?: RuntimeWorkspaceScope): string {
     const sections = [message];
+    const webChatChannelText = this.webChatChannelText();
+    if (webChatChannelText) {
+      sections.push(webChatChannelText);
+    }
     if (runtimeWorkspace) {
       sections.push(this.runtimeWorkspaceText(runtimeWorkspace));
     }
@@ -276,6 +290,18 @@ export class GatewayOpenAiOpenClawClient implements OpenClawClient {
     }
 
     return sections.join("\n\n");
+  }
+
+  private webChatChannelText(): string | null {
+    if (!["1", "true", "on"].includes((process.env.OPENCLAW_WEBCHAT_STREAMING_HINT ?? "").toLowerCase())) {
+      return null;
+    }
+    return [
+      "비공개 webchat channel metadata: 이 요청은 Web/PWA 채팅 채널에서 처리됩니다.",
+      "이 채널은 OpenClaw assistant commentary/final 이벤트를 PWA로 전달할 수 있지만, tool 출력은 사용자에게 보이는 중간 메시지로 취급되지 않을 수 있습니다.",
+      "사용자가 단계별 진행, 중간 답변, 스트리밍 표시를 요청하면 bash sleep이나 도구 출력으로 시간을 끌지 말고, 각 단계의 진행 문장을 보이는 assistant 메시지로 직접 작성하세요.",
+      "최종 답변만 남기지 말고 요청 이해, 접근 방식, 초안, 검토 같은 중간 진행도 assistant 본문/commentary로 사용자에게 보이게 작성하세요.",
+    ].join("\n");
   }
 
   private isInlineVisionAttachment(attachment: MessageAttachment): boolean {
@@ -386,6 +412,13 @@ function mediaReplyFromEvent(event: GatewayAgentEventPayload): string | null {
     ...stringsFromUnknown(event.data?.finalAssistantVisibleText),
   ];
   return candidates.find((candidate) => containsMediaDirective(candidate)) ?? null;
+}
+
+function assistantTextFromEvent(event: GatewayAgentEventPayload): string | null {
+  if (event.stream !== "assistant") {
+    return null;
+  }
+  return extractVisibleText(event.data) ?? null;
 }
 
 function payloadTextFromEventData(data: Record<string, unknown> | undefined): string | null {

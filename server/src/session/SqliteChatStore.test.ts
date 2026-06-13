@@ -98,6 +98,19 @@ test("looks up conversations by OpenClaw session id", () => {
   }
 });
 
+test("uses native PWA webchat session id for new conversations by default", () => {
+  const dir = tempDir();
+  const store = new SqliteChatStore(join(dir, "chat.sqlite"));
+  try {
+    const conversation = store.createConversation();
+
+    assert.equal(conversation.openclawSessionId, `pwa-webchat:${conversation.id}`);
+  } finally {
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 
 test("searches conversation message text by owner and archive state", () => {
   const dir = tempDir();

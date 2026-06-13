@@ -16,7 +16,7 @@ import type { SessionStore } from "../session/SessionStore.js";
 
 export interface HttpResult {
   statusCode: number;
-  body: MessageResponseDto | ErrorResponseDto;
+  body: (MessageResponseDto & { _internal?: { raw?: unknown } }) | ErrorResponseDto;
 }
 
 export interface MessageHandlerDeps {
@@ -171,6 +171,7 @@ export async function handlePostMessage(
         request_id: requestId,
         session_id: sessionId,
         ...(conversation ? { conversation_id: conversation.id } : {}),
+        ...(deps.runtimeCallbacks ? { _internal: { raw: result.raw } } : {}),
       },
     };
   } catch (error) {
