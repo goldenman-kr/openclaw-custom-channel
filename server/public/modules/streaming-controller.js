@@ -14,6 +14,7 @@ export function createStreamingController({
   const idleTimers = new Map();
   const textByJob = new Map();
   const previewByJob = new Map();
+  const previewSequenceByJob = new Map();
 
   function nodeText(node) {
     return streamingNodeText(node, {
@@ -31,6 +32,7 @@ export function createStreamingController({
     idleTimers.delete(jobId);
     textByJob.delete(jobId);
     previewByJob.delete(jobId);
+    previewSequenceByJob.delete(jobId);
     const node = messagesRoot.querySelector(`[data-message-id="${jobId}"]`);
     if (node) {
       delete node._livePreviewText;
@@ -67,6 +69,7 @@ export function createStreamingController({
     textByJob.set(jobId, nextText);
     node._streamingText = nextText;
     previewByJob.delete(jobId);
+    previewSequenceByJob.delete(jobId);
     delete node._livePreviewText;
     delete node.dataset.livePreview;
     delete node.dataset.historyText;
@@ -76,7 +79,12 @@ export function createStreamingController({
 
   function applyPreview(jobId, preview, conversationId) {
     const text = typeof preview === 'string' ? preview : preview?.text;
+    const sequence = typeof preview === 'object' && Number.isFinite(preview?.sequence) ? preview.sequence : undefined;
     if (!jobId || !text || !isActiveConversation(conversationId)) {
+      return;
+    }
+    const previousSequence = previewSequenceByJob.get(jobId);
+    if (sequence !== undefined && previousSequence !== undefined && sequence < previousSequence) {
       return;
     }
     if (textByJob.get(jobId)) {
@@ -96,6 +104,9 @@ export function createStreamingController({
       node.dataset.historyText = isPlaceholderPendingText(visibleText) ? visibleText : '응답을 처리 중입니다…';
     }
     previewByJob.set(jobId, text);
+    if (sequence !== undefined) {
+      previewSequenceByJob.set(jobId, sequence);
+    }
     node._livePreviewText = text;
     node.dataset.livePreview = '1';
     renderMessageNode(node, 'assistant', text, { pending: true, autoScroll: false, suppressScrollButton: true });

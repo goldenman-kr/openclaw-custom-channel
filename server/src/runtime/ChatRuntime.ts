@@ -11,6 +11,7 @@ export interface ChatRuntimeAgentEvent {
 
 export interface ChatRuntimeCallbacks {
   onToken?(token: string): void | Promise<void>;
+  onDraftPartial?(event: { text: string; delta?: string; kind?: "assistant" | "reasoning"; sequence?: number }): void | Promise<void>;
   onAgentEvent?(event: ChatRuntimeAgentEvent): void | Promise<void>;
 }
 

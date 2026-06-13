@@ -100,6 +100,12 @@ export class MessageJobRunner {
               onToken: (token) => {
                 this.deps.publishToken?.(job, token);
               },
+              onDraftPartial: (event) => {
+                this.deps.publishAgentEvent?.(job, {
+                  stream: "draft_partial",
+                  data: event,
+                });
+              },
               onAgentEvent: (event) => {
                 this.deps.publishAgentEvent?.(job, event);
               },

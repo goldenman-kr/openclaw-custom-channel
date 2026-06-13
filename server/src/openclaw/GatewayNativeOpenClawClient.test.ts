@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { extractGatewayChatDelta } from "./GatewayNativeOpenClawClient.js";
+import { extractGatewayChatDelta, extractGatewayChatDraftPartial } from "./GatewayNativeOpenClawClient.js";
 
 test("extracts native Gateway chat deltaText as stream token", () => {
   const delta = extractGatewayChatDelta({
@@ -38,4 +38,35 @@ test("skips replacement deltas that cannot be appended without duplicating text"
   }, "old text");
 
   assert.equal(delta, null);
+});
+
+test("extracts native Gateway assistant draft partial", () => {
+  const draft = extractGatewayChatDraftPartial({
+    state: "partial",
+    text: "hello draft",
+    deltaText: " draft",
+    seq: 7,
+  }, "chat.partial");
+
+  assert.deepEqual(draft, {
+    text: "hello draft",
+    delta: " draft",
+    kind: "assistant",
+    sequence: 7,
+  });
+});
+
+test("extracts native Gateway reasoning draft partial from message content", () => {
+  const draft = extractGatewayChatDraftPartial({
+    state: "partial",
+    message: {
+      role: "assistant",
+      content: [{ type: "text", text: "thinking" }],
+    },
+  }, "chat.reasoning");
+
+  assert.deepEqual(draft, {
+    text: "thinking",
+    kind: "reasoning",
+  });
 });

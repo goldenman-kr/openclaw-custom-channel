@@ -458,6 +458,7 @@ test("publishes runtime tokens for queued message jobs", async () => {
 
 test("keeps conversation streaming tokens out of canonical messages", async () => {
   const tokens: string[] = [];
+  const agentEvents: Array<{ stream?: string; data?: Record<string, unknown> }> = [];
   const addedMessages: Array<{ id?: string; text: string }> = [];
   const updatedMessages: Array<{ id: string; text?: string; completedAt?: string | null }> = [];
   const deletedMessages: string[] = [];
@@ -479,6 +480,7 @@ test("keeps conversation streaming tokens out of canonical messages", async () =
   const runtime: ChatRuntime = {
     async sendMessage(input) {
       await input.callbacks?.onToken?.("hello");
+      await input.callbacks?.onDraftPartial?.({ text: "hello draft", delta: " draft", kind: "assistant", sequence: 1 });
       await input.callbacks?.onAgentEvent?.({ stream: "tool", data: { phase: "start", name: "exec" } });
       await input.callbacks?.onToken?.(" world");
       return { reply: "hello world" };
@@ -507,12 +509,17 @@ test("keeps conversation streaming tokens out of canonical messages", async () =
       assert.equal(jobToPublish.id, job.id);
       tokens.push(token);
     },
+    publishAgentEvent(jobToPublish, event) {
+      assert.equal(jobToPublish.id, job.id);
+      agentEvents.push(event);
+    },
   });
 
   runner.enqueue(job, { authorization: "Bearer test-key" }, { message: "hello" });
 
   await waitUntil(() => job.state === "completed");
   assert.deepEqual(tokens, ["hello", " world"]);
+  assert.equal(agentEvents.some((event) => event.stream === "draft_partial"), true);
   assert.deepEqual(addedMessages, []);
   assert.deepEqual(deletedMessages, []);
   assert.equal(updatedMessages.some((message) => message.id.includes(":partial:")), false);

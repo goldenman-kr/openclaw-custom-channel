@@ -34,7 +34,13 @@ export class GatewayNativeOpenClawClient implements OpenClawClient {
     input.abortSignal?.addEventListener("abort", onExternalAbort, { once: true });
 
     try {
-      const finalReply = gateway.waitForChatFinal(runId, input.sessionId, input.callbacks?.onAgentEvent, input.callbacks?.onToken);
+      const finalReply = gateway.waitForChatFinal(
+        runId,
+        input.sessionId,
+        input.callbacks?.onAgentEvent,
+        input.callbacks?.onToken,
+        input.callbacks?.onDraftPartial,
+      );
       await gateway.request("chat.send", {
         sessionKey: input.sessionId,
         message,
@@ -146,6 +152,7 @@ class GatewayRpcConnection {
     reject(error: Error): void;
     onAgentEvent?: (event: Record<string, unknown>) => void | Promise<void>;
     onToken?: (token: string) => void | Promise<void>;
+    onDraftPartial?: (event: { text: string; delta?: string; kind?: "assistant" | "reasoning"; sequence?: number }) => void | Promise<void>;
   }>();
 
   private constructor(private readonly ws: InstanceType<typeof WsSocket>) {}
@@ -171,9 +178,10 @@ class GatewayRpcConnection {
     sessionKey: string,
     onAgentEvent?: (event: Record<string, unknown>) => void | Promise<void>,
     onToken?: (token: string) => void | Promise<void>,
+    onDraftPartial?: (event: { text: string; delta?: string; kind?: "assistant" | "reasoning"; sequence?: number }) => void | Promise<void>,
   ): Promise<{ reply: string; streamedText: string }> {
     return new Promise((resolve, reject) => {
-      this.chatFinalWaiters.set(runId, { sessionKey, streamedText: "", resolve, reject, onAgentEvent, onToken });
+      this.chatFinalWaiters.set(runId, { sessionKey, streamedText: "", resolve, reject, onAgentEvent, onToken, onDraftPartial });
     });
   }
 
@@ -278,6 +286,12 @@ class GatewayRpcConnection {
       return;
     }
     void waiter.onAgentEvent?.({ stream: frame.event, data: payload, ...payload });
+    if (frame.event === "chat.partial" || frame.event === "chat.reasoning") {
+      const draft = extractGatewayChatDraftPartial(payload, frame.event);
+      if (draft) {
+        void waiter.onDraftPartial?.(draft);
+      }
+    }
     if (frame.event === "chat" && payload.state === "delta") {
       const delta = extractGatewayChatDelta(payload, waiter.streamedText);
       if (delta) {
@@ -297,6 +311,26 @@ class GatewayRpcConnection {
       waiter.reject(new Error(extractGatewayChatMessageText(payload.message) || "OpenClaw Gateway chat failed."));
     }
   }
+}
+
+export function extractGatewayChatDraftPartial(
+  payload: Record<string, unknown>,
+  eventName = "chat.partial",
+): { text: string; delta?: string; kind: "assistant" | "reasoning"; sequence?: number } | null {
+  const text = typeof payload.text === "string"
+    ? payload.text
+    : extractGatewayChatMessageText(payload.message, { trim: false });
+  if (!text) {
+    return null;
+  }
+  const delta = typeof payload.deltaText === "string" ? payload.deltaText : undefined;
+  const sequence = typeof payload.seq === "number" && Number.isFinite(payload.seq) ? payload.seq : undefined;
+  return {
+    text,
+    ...(delta ? { delta } : {}),
+    kind: eventName === "chat.reasoning" ? "reasoning" : "assistant",
+    ...(sequence !== undefined ? { sequence } : {}),
+  };
 }
 
 export function extractGatewayChatDelta(payload: Record<string, unknown>, previousText = ""): { token: string; text: string } | null {

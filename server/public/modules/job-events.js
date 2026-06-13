@@ -63,6 +63,15 @@ export async function waitForJobEventStream({
           onToolStart();
         }
         if (message.event === 'agent') {
+          if (message.data?.stream === 'draft_partial' && message.data?.data?.text) {
+            onAgentPreview({
+              text: String(message.data.data.text),
+              stream: 'draft_partial',
+              kind: message.data.data.kind || 'assistant',
+              sequence: Number.isFinite(message.data.data.sequence) ? message.data.data.sequence : undefined,
+            });
+            continue;
+          }
           const preview = formatAgentLivePreview(message.data);
           if (preview) {
             onAgentPreview(preview);
