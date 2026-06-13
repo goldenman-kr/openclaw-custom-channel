@@ -12,6 +12,7 @@ export interface GatewayAgentEventSubscriberOptions {
   baseUrl?: string;
   token?: string;
   password?: string;
+  authMode?: string;
   sessionKey: string;
   onEvent(event: GatewayAgentEventPayload): void;
   timeoutMs?: number;
@@ -39,6 +40,13 @@ interface PendingRequest {
 
 const DEFAULT_GATEWAY_URL = "http://127.0.0.1:18789";
 const DEFAULT_REQUEST_TIMEOUT_MS = 5_000;
+
+type GatewayAuthMode = "auto" | "token" | "password";
+
+function normalizeGatewayAuthMode(value: string | undefined): GatewayAuthMode {
+  const normalized = value?.trim().toLowerCase();
+  return normalized === "token" || normalized === "password" ? normalized : "auto";
+}
 
 export class GatewayAgentEventSubscriber {
   private socket: unknown;
@@ -193,12 +201,19 @@ export class GatewayAgentEventSubscriber {
   }
 
   private gatewayAuth(): { token?: string; password?: string } | undefined {
-    const password = this.options.password?.trim();
-    if (password) {
-      return { password };
-    }
     const token = this.options.token?.trim();
-    return token ? { token } : undefined;
+    const password = this.options.password?.trim();
+    const mode = normalizeGatewayAuthMode(this.options.authMode);
+    if (mode === "token") {
+      return token ? { token } : undefined;
+    }
+    if (mode === "password") {
+      return password ? { password } : undefined;
+    }
+    if (token) {
+      return { token };
+    }
+    return password ? { password } : undefined;
   }
 
   private request(method: string, params: Record<string, unknown>): Promise<unknown> {

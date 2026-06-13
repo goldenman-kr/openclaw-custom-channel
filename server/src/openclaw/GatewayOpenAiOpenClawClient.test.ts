@@ -74,10 +74,10 @@ test("streams OpenAI-compatible Gateway chunks as runtime tokens", async () => {
   }
 });
 
-test("prefers Gateway password over token for OpenAI-compatible requests", async () => {
-  const requests: Array<{ headers: IncomingMessage["headers"]; body: Record<string, unknown> }> = [];
+test("uses configured Gateway password when auth mode is password", async () => {
+  const requests: Array<{ headers: IncomingMessage["headers"] }> = [];
   const server = await withServer(async (req, res) => {
-    requests.push({ headers: req.headers, body: await readJson(req) });
+    requests.push({ headers: req.headers });
     res.writeHead(200, { "content-type": "text/event-stream; charset=utf-8" });
     res.end('data: {"choices":[{"delta":{"content":"ok"}}]}\n\ndata: [DONE]\n\n');
   });
@@ -91,15 +91,50 @@ test("prefers Gateway password over token for OpenAI-compatible requests", async
       undefined,
       undefined,
       "gateway-password",
+      "password",
     );
-    await client.sendMessage({ sessionId: "session-password-test", message: "hello" });
+    const result = await client.sendMessage({
+      sessionId: "session-password-auth-test",
+      message: "hello",
+    });
 
+    assert.equal(result.reply, "ok");
     assert.equal(requests[0]?.headers.authorization, "Bearer gateway-password");
   } finally {
     await server.close();
   }
 });
 
+test("uses configured Gateway token when auth mode is token", async () => {
+  const requests: Array<{ headers: IncomingMessage["headers"] }> = [];
+  const server = await withServer(async (req, res) => {
+    requests.push({ headers: req.headers });
+    res.writeHead(200, { "content-type": "text/event-stream; charset=utf-8" });
+    res.end('data: {"choices":[{"delta":{"content":"ok"}}]}\n\ndata: [DONE]\n\n');
+  });
+
+  try {
+    const client = new GatewayOpenAiOpenClawClient(
+      server.baseUrl,
+      "gateway-token",
+      "openclaw-test",
+      5_000,
+      undefined,
+      undefined,
+      "gateway-password",
+      "token",
+    );
+    const result = await client.sendMessage({
+      sessionId: "session-token-auth-test",
+      message: "hello",
+    });
+
+    assert.equal(result.reply, "ok");
+    assert.equal(requests[0]?.headers.authorization, "Bearer gateway-token");
+  } finally {
+    await server.close();
+  }
+});
 
 test("extracts OpenClaw payload text from Gateway SSE chunks", async () => {
   const server = await withServer(async (_req, res) => {
