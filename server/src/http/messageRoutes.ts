@@ -153,7 +153,7 @@ export async function handleMessageRoute(
       return true;
     }
 
-    const sessionId = conversation?.openclawSessionId ?? deps.sessionIdFromRequest(request);
+    const sessionId = conversation?.id ?? deps.sessionIdFromRequest(request);
     const runtimeWorkspace = auth && auth.user.role !== "admin" && deps.workspaceScopeForAuth ? await deps.workspaceScopeForAuth(auth) : undefined;
     if (conversation) {
       await deps.persistConversationUserMessage(conversation, payload);
@@ -161,11 +161,12 @@ export async function handleMessageRoute(
       await deps.persistUserHistory(sessionId, payload);
     }
 
+    const nativeCommandSessionKey = conversation?.openclawSessionId ?? sessionId;
     if (isNativeCommand(payload.message)) {
       const result = await executeNativeCommand(payload.message, {
         userLabel: auth?.user.displayName ?? auth?.user.username ?? auth?.user.id,
         userRole: auth?.user.role,
-        sessionKey: sessionId,
+        sessionKey: nativeCommandSessionKey,
       });
       if (result) {
         const savedAt = new Date().toISOString();

@@ -104,13 +104,13 @@ test("applyNativeThinkingSelection updates and resets session thinking override"
   await assert.rejects(() => applyNativeThinkingSelection("turbo", { userRole: "admin", sessionKey: "web-conv_test" }), /thinking 값은/);
 });
 
-test("ensureSessionEntry pre-creates a bare web conversation session before the first turn", () => {
+test("ensureSessionEntry does not create explicit-session aliases", () => {
   const sessionKey = "web-conv_precreated";
   ensureSessionEntry(sessionKey);
 
   let store = JSON.parse(readFileSync(process.env.OPENCLAW_SESSION_STORE_PATH!, "utf8")) as Record<string, { thinkingLevel?: string }>;
   assert.ok(store[sessionKey]);
-  assert.ok(store[`agent:main:explicit:${sessionKey}`]);
+  assert.equal(store[`agent:main:explicit:${sessionKey}`], undefined);
 
   setSessionThinkingOverride(sessionKey, "medium");
   store = JSON.parse(readFileSync(process.env.OPENCLAW_SESSION_STORE_PATH!, "utf8")) as Record<string, { thinkingLevel?: string }>;

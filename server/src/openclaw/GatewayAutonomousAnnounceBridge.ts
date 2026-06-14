@@ -319,10 +319,11 @@ export class GatewayAutonomousAnnounceBridge {
 
   private openclawSessionIdFromGatewayKey(sessionKey: string): string | null {
     const prefix = `agent:${this.options.agentId ?? "main"}:`;
-    if (sessionKey.startsWith(prefix)) {
-      return sessionKey.slice(prefix.length);
+    const openclawSessionId = sessionKey.startsWith(prefix) ? sessionKey.slice(prefix.length) : sessionKey;
+    if (openclawSessionId.startsWith("pwa-webchat:conv_")) {
+      return openclawSessionId;
     }
-    return sessionKey.startsWith("web-conv_") ? sessionKey : null;
+    return null;
   }
 
   private wsUrl(): string {

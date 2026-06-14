@@ -20,7 +20,7 @@ export interface ConversationRouteDeps {
   readJsonBody(request: IncomingMessage): Promise<unknown>;
   cleanupConversationSession(conversation: ConversationRecord): Promise<ConversationCleanupResult>;
   deleteConversationJobs(conversationId: string): void;
-  ensureConversationSession?(conversation: ConversationRecord): void;
+  ensureConversationSession?(conversation: ConversationRecord, auth: AuthContext): Promise<void> | void;
 }
 
 export function conversationToDto(conversation: ConversationRecord) {
@@ -176,7 +176,7 @@ export async function handleConversationRoute(
 
     const payload = await deps.readJsonBody(request);
     const conversation = deps.conversationStore.createConversation({ ownerId: auth.user.id, title: titleFromPayload(payload) });
-    deps.ensureConversationSession?.(conversation);
+    await deps.ensureConversationSession?.(conversation, auth);
     deps.sendJson(response, 201, { conversation: conversationToDto(conversation) });
     return true;
   }

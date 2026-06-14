@@ -44,7 +44,7 @@ function deps() {
   };
 }
 
-test("uses conversation openclawSessionId when conversation_id is provided", async () => {
+test("uses conversation id when conversation_id is provided", async () => {
   capturedSessionId = "";
   const result = await handlePostMessage(
     deps(),
@@ -59,10 +59,10 @@ test("uses conversation openclawSessionId when conversation_id is provided", asy
   );
 
   assert.equal(result.statusCode, 200);
-  assert.equal(capturedSessionId, "openclaw-session-test");
+  assert.equal(capturedSessionId, "conv_test");
   assert.equal("reply" in result.body, true);
   if ("reply" in result.body) {
-    assert.equal(result.body.session_id, "openclaw-session-test");
+    assert.equal(result.body.session_id, "conv_test");
     assert.equal(result.body.conversation_id, "conv_test");
   }
 });

@@ -9,11 +9,11 @@
       "./index.js"
     ],
     "channel": {
-      "id": "webchat",
-      "label": "WebChat",
+      "id": "pwa-webchat",
+      "label": "PWA WebChat",
       "selectionLabel": "Web/PWA Chat",
       "detailLabel": "Web/PWA Chat",
-      "docsLabel": "webchat",
+      "docsLabel": "pwa-webchat",
       "markdownCapable": true
     }
   }

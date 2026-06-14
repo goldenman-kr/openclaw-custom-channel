@@ -28,7 +28,6 @@ import { WebPushSender } from "./notifications/WebPushSender.js";
 import { GatewayAutonomousAnnounceBridge } from "./openclaw/GatewayAutonomousAnnounceBridge.js";
 import { createOpenClawClient } from "./openclaw/createOpenClawClient.js";
 import type { RuntimeWorkspaceScope } from "./openclaw/OpenClawClient.js";
-import { ensureSessionEntry } from "./openclaw/modelOverride.js";
 import { deleteOpenClawSession } from "./openclaw/SessionCleaner.js";
 import type { MessageJob } from "./runtime/MessageJob.js";
 import { attachmentsFromMediaRefs, MessageJobRunner } from "./runtime/MessageJobRunner.js";
@@ -118,6 +117,12 @@ const openClawWebchatDeliveryRouteDeps = {
   },
   publishJobToken(event: JobTokenEventRecord) {
     jobEventPublisher.publishToken(event);
+  },
+  async cleanupEmptyPwaWebChatMirrorSession() {
+    await deleteOpenClawSession({
+      explicitSessionId: "pwa-webchat:",
+      agentId: openClawAgentId,
+    });
   },
 };
 setImmediate(() => resumeSpotOrderPolling(spotOrderRouteDeps));
@@ -532,6 +537,7 @@ function openClawSessionIdsForConversation(conversation: ConversationRecord): st
   return [
     conversation.openclawSessionId,
     `pwa-webchat:${conversation.id}`,
+    `web-conv_${conversation.id.replace(/^conv_/, "")}`,
     `webchat:${conversation.id}`,
     `web-${conversation.id}`,
   ].filter((value, index, values) => value.trim() && values.indexOf(value) === index);
@@ -646,7 +652,7 @@ async function persistConversationUserMessage(conversation: ConversationRecord, 
     return;
   }
   const isFirstMessage = chatStore.listMessages(conversation.id, { limit: 1 }).length === 0;
-  const attachments = await saveHistoryAttachments(conversation.openclawSessionId, payload);
+  const attachments = await saveHistoryAttachments(conversation.id, payload);
   chatStore.addMessage({
     conversationId: conversation.id,
     role: "user",
@@ -761,10 +767,12 @@ const server = createServer(async (request, response) => {
         agentId: openClawAgentId,
       });
     },
-    ensureConversationSession(conversation) {
-      for (const sessionId of openClawSessionIdsForConversation(conversation)) {
-        ensureSessionEntry(sessionId);
-      }
+    async ensureConversationSession(conversation, auth) {
+      await openClawClient.ensureConversationSession?.({
+        conversationId: conversation.id,
+        userId: auth.user.id,
+        userLabel: auth.user.displayName ?? auth.user.username ?? auth.user.id,
+      });
     },
     deleteConversationJobs(conversationId) {
       for (const [jobId, job] of jobs.entries()) {

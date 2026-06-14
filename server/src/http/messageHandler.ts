@@ -150,7 +150,7 @@ export async function handlePostMessage(
       details: { conversation_id: conversation.id },
     });
   }
-  const sessionId = conversation?.openclawSessionId ?? deps.sessionStore.getSessionId({ deviceId, userId });
+  const sessionId = conversation?.id ?? deps.sessionStore.getSessionId({ deviceId, userId });
 
   try {
     const result = await deps.chatRuntime.sendMessage({

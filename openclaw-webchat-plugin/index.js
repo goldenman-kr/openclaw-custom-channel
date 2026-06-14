@@ -8,6 +8,10 @@ import {
 
 const CHANNEL_ID = "pwa-webchat";
 const LEGACY_CHANNEL_ID = "webchat";
+const SESSION_LABEL_CHANNEL_ID = "pwa_webchat";
+const CONVERSATION_ID_PATTERN = /^conv_[A-Za-z0-9][A-Za-z0-9_-]*$/;
+const JOB_ID_PATTERN = /^job_[A-Za-z0-9][A-Za-z0-9_-]*$/;
+const AGENT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
 let runtime;
 
 const PWA_DELIVERY_SYSTEM_PROMPT = [
@@ -29,6 +33,14 @@ function deliveryUrlFromConfig(cfg) {
 
 function deliverySecretFromConfig(cfg) {
   return getChannelConfig(cfg).deliverySecret || process.env.OPENCLAW_WEBCHAT_DELIVERY_SECRET || process.env.OPENCLAW_GATEWAY_TOKEN || "";
+}
+
+function shouldReturnVerboseDeliveryReceipt(cfg) {
+  const configured = getChannelConfig(cfg).verboseDeliveryReceipt;
+  if (typeof configured === "boolean") {
+    return configured;
+  }
+  return process.env.OPENCLAW_WEBCHAT_VERBOSE_DELIVERY_RECEIPT === "1";
 }
 
 async function postDelivery(cfg, payload) {
@@ -103,16 +115,69 @@ function textFromPayload(payload) {
 }
 
 function parseTarget(to) {
-  const raw = String(to || "");
+  const raw = String(to || "").trim();
   if (raw.startsWith("conversation:")) {
-    return { conversationId: raw.slice("conversation:".length), jobId: undefined };
+    return normalizeParsedTarget({ conversationId: raw.slice("conversation:".length).trim(), jobId: undefined });
   }
   if (raw.startsWith("conversation-job:")) {
     const value = raw.slice("conversation-job:".length);
     const [conversationId, jobId] = value.split(":job:");
-    return { conversationId, jobId };
+    return normalizeParsedTarget({ conversationId, jobId });
   }
-  return { conversationId: raw, jobId: undefined };
+  return normalizeParsedTarget({ conversationId: raw, jobId: undefined });
+}
+
+function normalizeParsedTarget(target) {
+  const conversationId = normalizeConversationId(target.conversationId);
+  const jobId = normalizeJobId(target.jobId);
+  return {
+    conversationId: conversationId || "",
+    jobId,
+  };
+}
+
+function normalizeConversationId(value) {
+  const id = String(value || "").trim();
+  return CONVERSATION_ID_PATTERN.test(id) ? id : "";
+}
+
+function normalizeJobId(value) {
+  const id = String(value || "").trim();
+  return !id || JOB_ID_PATTERN.test(id) ? id || undefined : "";
+}
+
+function normalizeAgentId(value) {
+  const id = String(value || "").trim() || "main";
+  if (!AGENT_ID_PATTERN.test(id)) {
+    throw new Error("agentId must be a stable id.");
+  }
+  return id;
+}
+
+function stableSessionKey(conversationId) {
+  const id = normalizeConversationId(conversationId);
+  return id ? `${CHANNEL_ID}:${id}` : "";
+}
+
+function scopedStableSessionKey(agentId, conversationId) {
+  const sessionKey = stableSessionKey(conversationId);
+  return sessionKey ? `agent:${normalizeAgentId(agentId)}:${sessionKey}` : "";
+}
+
+function stableSessionLabel(conversationId) {
+  const id = normalizeConversationId(conversationId);
+  return id ? `${SESSION_LABEL_CHANNEL_ID}:${id}` : SESSION_LABEL_CHANNEL_ID;
+}
+
+function normalizeWebchatTarget(value) {
+  const target = parseTarget(value);
+  if (!target.conversationId) {
+    return undefined;
+  }
+  if (String(value || "").trim().startsWith("conversation-job:") && !target.jobId) {
+    return undefined;
+  }
+  return target;
 }
 
 function isWebchatTarget(value) {
@@ -132,6 +197,9 @@ function isWebchatTarget(value) {
 
 async function sendWebchatText(ctx, phase = "final", messageId) {
   const target = parseTarget(ctx.to);
+  if (!target.conversationId) {
+    throw new Error("PWA webchat target must include a stable conv_<id> conversation id.");
+  }
   const resolvedMessageId = messageId || `oc_${randomUUID()}`;
   await postDelivery(ctx.cfg, {
     phase,
@@ -141,8 +209,13 @@ async function sendWebchatText(ctx, phase = "final", messageId) {
     text: ctx.text,
     createdAt: new Date().toISOString(),
   });
-  return {
-    receipt: createMessageReceiptFromOutboundResults({
+  const result = {
+    ok: true,
+    channel: CHANNEL_ID,
+    messageId: resolvedMessageId,
+  };
+  if (shouldReturnVerboseDeliveryReceipt(ctx.cfg)) {
+    result.receipt = createMessageReceiptFromOutboundResults({
       results: [{
       channel: CHANNEL_ID,
       messageId: resolvedMessageId,
@@ -151,9 +224,9 @@ async function sendWebchatText(ctx, phase = "final", messageId) {
       kind: phase === "partial" ? "preview" : "text",
       replyToId: ctx.replyToId ?? undefined,
       threadId: ctx.threadId == null ? undefined : String(ctx.threadId),
-    }),
-    messageId: resolvedMessageId,
-  };
+    });
+  }
+  return result;
 }
 
 const messageAdapter = defineChannelMessageAdapter({
@@ -222,12 +295,16 @@ const plugin = {
     sendText: async (ctx) => {
       const target = parseTarget(ctx.to);
       const result = await sendWebchatText(ctx, target.jobId ? "event" : "final");
-      return {
+      const response = {
+        ok: true,
         channel: CHANNEL_ID,
         messageId: result.messageId,
-        conversationId: target.conversationId,
-        receipt: result.receipt,
       };
+      if (shouldReturnVerboseDeliveryReceipt(ctx.cfg)) {
+        response.conversationId = target.conversationId;
+        response.receipt = result.receipt;
+      }
+      return response;
     },
   },
   messaging: {
@@ -254,21 +331,12 @@ const plugin = {
         };
       },
     },
-    resolveOutboundSessionRoute({ cfg, agentId, to, accountId }) {
-      const target = parseTarget(to);
-      const sessionKey = `${CHANNEL_ID}:${target.conversationId}`;
-      return {
-        channel: CHANNEL_ID,
-        accountId: accountId ?? "default",
-        agentId,
-        sessionKey,
-        parentSessionKey: `agent:${agentId}`,
-        peer: { kind: "direct", id: target.conversationId },
-        chatType: "direct",
-        from: CHANNEL_ID,
-        to,
-        cfg,
-      };
+    resolveOutboundSessionRoute({ target }) {
+      const parsed = normalizeWebchatTarget(target);
+      if (!parsed) {
+        return null;
+      }
+      return null;
     },
   },
   agentPrompt: {
@@ -316,78 +384,154 @@ function summarizeDispatchResult(result) {
   };
 }
 
+function buildWebchatInboundContext(params) {
+  const normalizedConversationId = normalizeConversationId(params.conversationId);
+  if (!normalizedConversationId) {
+    throw new Error("conversationId must match conv_<stable-id>.");
+  }
+  const agentId = normalizeAgentId(params.agentId);
+  const sessionKey = stableSessionKey(normalizedConversationId);
+  const routeSessionKey = scopedStableSessionKey(agentId, normalizedConversationId);
+  const target = params.jobId ? `conversation-job:${normalizedConversationId}:job:${params.jobId}` : `conversation:${normalizedConversationId}`;
+  const messageId = params.messageId || `web_${randomUUID()}`;
+  const userId = params.userId || "webchat-user";
+  return {
+    normalizedConversationId,
+    sessionKey,
+    scopedSessionKey: routeSessionKey,
+    routeSessionKey,
+    target,
+    messageId,
+    ctxPayload: buildChannelInboundEventContext({
+      channel: CHANNEL_ID,
+      accountId: "default",
+      provider: "WebChat",
+      surface: "PWA",
+      messageId,
+      timestamp: Date.now(),
+      from: userId,
+      sender: {
+        id: userId,
+        name: params.userLabel || userId,
+        isBot: false,
+      },
+      conversation: {
+        id: normalizedConversationId,
+        kind: "direct",
+        label: stableSessionLabel(normalizedConversationId),
+      },
+      route: {
+        routeSessionKey,
+        dispatchSessionKey: routeSessionKey,
+        agentId,
+        accountId: "default",
+        createIfMissing: true,
+      },
+      reply: {
+        to: target,
+        originatingTo: target,
+        deliveryTarget: target,
+      },
+      message: {
+        rawBody: params.message,
+        body: params.message,
+        bodyForAgent: params.message,
+        commandBody: params.message,
+        inboundEventKind: params.inboundEventKind || "user_request",
+      },
+      access: {
+        dm: { decision: "allow", allowFrom: [] },
+        commands: {
+          authorized: true,
+          useAccessGroups: false,
+          allowTextCommands: true,
+          authorizers: [],
+        },
+        event: {
+          kind: "message",
+          authMode: "inbound",
+          mayPair: false,
+          authorized: true,
+          hasOriginSubject: true,
+          originSubjectMatched: true,
+        },
+      },
+      extra: {
+        OriginatingChannel: CHANNEL_ID,
+        OriginatingTo: target,
+        ExplicitDeliverRoute: true,
+        AgentId: agentId,
+      },
+    }),
+  };
+}
+
+async function handleEnsureSession(api, params) {
+  const rt = assertRuntime();
+  const conversationId = readString(params?.conversationId, "conversationId");
+  const agentId = normalizeAgentId(params?.agentId);
+  const userId = typeof params?.userId === "string" && params.userId.trim() ? params.userId.trim() : "webchat-user";
+  const userLabel = typeof params?.userLabel === "string" && params.userLabel.trim() ? params.userLabel.trim() : userId;
+  const { normalizedConversationId, sessionKey, scopedSessionKey, routeSessionKey, target, ctxPayload } = buildWebchatInboundContext({
+    conversationId,
+    agentId,
+    userId,
+    userLabel,
+    message: "[PWA WebChat session ensure]",
+    inboundEventKind: "session_ensure",
+  });
+  const storePath = rt.channel.session.resolveStorePath(api.config.session?.store, { agentId });
+  await rt.channel.session.recordInboundSession({
+    storePath,
+    sessionKey: routeSessionKey,
+    ctx: ctxPayload,
+    createIfMissing: true,
+    updateLastRoute: {
+      sessionKey: routeSessionKey,
+      channel: CHANNEL_ID,
+      to: target,
+      accountId: "default",
+    },
+    onRecordError: (err) => {
+      api.logger.warn(`webchat session ensure failed: ${err instanceof Error ? err.message : String(err)}`);
+    },
+  });
+  return {
+    ok: true,
+    conversationId: normalizedConversationId,
+    sessionKey,
+    scopedSessionKey,
+  };
+}
+
 async function handleSend(api, params) {
   const rt = assertRuntime();
   const conversationId = readString(params?.conversationId, "conversationId");
-  const jobId = typeof params?.jobId === "string" && params.jobId.trim() ? params.jobId.trim() : undefined;
+  const rawJobId = typeof params?.jobId === "string" && params.jobId.trim() ? params.jobId.trim() : undefined;
+  const jobId = normalizeJobId(rawJobId);
+  if (rawJobId && !jobId) {
+    throw new Error("jobId must match job_<stable-id>.");
+  }
   const message = readString(params?.message, "message");
   const userId = typeof params?.userId === "string" && params.userId.trim() ? params.userId.trim() : "webchat-user";
-  const agentId = typeof params?.agentId === "string" && params.agentId.trim() ? params.agentId.trim() : "main";
+  const agentId = normalizeAgentId(params?.agentId);
   const messageId = typeof params?.messageId === "string" && params.messageId.trim() ? params.messageId.trim() : `web_${randomUUID()}`;
-  const routeSessionKey = `${CHANNEL_ID}:${conversationId}`;
-  const target = jobId ? `conversation-job:${conversationId}:job:${jobId}` : `conversation:${conversationId}`;
+  const normalizedConversationId = normalizeConversationId(conversationId);
+  if (!normalizedConversationId) {
+    throw new Error("conversationId must match conv_<stable-id>.");
+  }
+  const { routeSessionKey, target, ctxPayload } = buildWebchatInboundContext({
+    conversationId: normalizedConversationId,
+    jobId,
+    agentId,
+    userId,
+    userLabel: typeof params?.userLabel === "string" ? params.userLabel : userId,
+    message,
+    messageId,
+  });
   const sourceReplyDeliveryMode = "message_tool_only";
   const messageToolOwnsVisibleDelivery = sourceReplyDeliveryMode === "message_tool_only";
   const storePath = rt.channel.session.resolveStorePath(api.config.session?.store, { agentId });
-  const ctxPayload = buildChannelInboundEventContext({
-    channel: CHANNEL_ID,
-    accountId: "default",
-    provider: "WebChat",
-    surface: "PWA",
-    messageId,
-    timestamp: Date.now(),
-    from: userId,
-    sender: {
-      id: userId,
-      name: typeof params?.userLabel === "string" ? params.userLabel : userId,
-      isBot: false,
-    },
-    conversation: {
-      id: conversationId,
-      kind: "direct",
-      label: "PWA WebChat",
-    },
-    route: {
-      routeSessionKey,
-      agentId,
-      accountId: "default",
-      createIfMissing: true,
-    },
-    reply: {
-      to: target,
-      originatingTo: target,
-      deliveryTarget: target,
-    },
-    message: {
-      rawBody: message,
-      body: message,
-      bodyForAgent: message,
-      commandBody: message,
-      inboundEventKind: "user_request",
-    },
-    access: {
-      dm: { decision: "allow", allowFrom: [] },
-      commands: {
-        authorized: true,
-        useAccessGroups: false,
-        allowTextCommands: true,
-        authorizers: [],
-      },
-      event: {
-        kind: "message",
-        authMode: "inbound",
-        mayPair: false,
-        authorized: true,
-        hasOriginSubject: true,
-        originSubjectMatched: true,
-      },
-    },
-    extra: {
-      OriginatingChannel: CHANNEL_ID,
-      OriginatingTo: target,
-      ExplicitDeliverRoute: true,
-    },
-  });
 
   let currentPreviewId;
   let finalText = "";
@@ -593,6 +737,19 @@ export default defineChannelPluginEntry({
     runtime = nextRuntime;
   },
   registerFull(api) {
+    api.registerGatewayMethod("webchat.session.ensure", async ({ params, respond }) => {
+      try {
+        respond({ ok: true, result: await handleEnsureSession(api, params ?? {}) });
+      } catch (error) {
+        respond({
+          ok: false,
+          error: {
+            code: "WEBCHAT_SESSION_ENSURE_FAILED",
+            message: error instanceof Error ? error.message : String(error),
+          },
+        });
+      }
+    }, { scope: "operator.write" });
     api.registerGatewayMethod("webchat.send", async ({ params, respond }) => {
       try {
         respond({ ok: true, result: await handleSend(api, params ?? {}) });

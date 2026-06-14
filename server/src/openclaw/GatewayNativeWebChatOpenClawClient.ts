@@ -1,5 +1,11 @@
 import type { MessageAttachment } from "../contracts/apiContractV1.js";
-import type { OpenClawClient, OpenClawClientInput, OpenClawClientResult } from "./OpenClawClient.js";
+import type {
+  OpenClawClient,
+  OpenClawClientInput,
+  OpenClawClientResult,
+  OpenClawConversationSessionInput,
+  OpenClawConversationSessionResult,
+} from "./OpenClawClient.js";
 import { activeGatewayModel, getSessionThinkingOverride } from "./modelOverride.js";
 
 interface GatewayRpcResponse {
@@ -8,6 +14,18 @@ interface GatewayRpcResponse {
     reply?: string;
     deliveryHandled?: boolean;
     partialCount?: number;
+  };
+  error?: {
+    message?: string;
+  };
+}
+
+interface GatewaySessionEnsureResponse {
+  ok?: boolean;
+  result?: {
+    conversationId?: string;
+    sessionKey?: string;
+    scopedSessionKey?: string;
   };
   error?: {
     message?: string;
@@ -37,8 +55,30 @@ export class GatewayNativeWebChatOpenClawClient implements OpenClawClient {
     private readonly authMode = process.env.OPENCLAW_GATEWAY_AUTH_MODE,
   ) {}
 
+  async ensureConversationSession(input: OpenClawConversationSessionInput): Promise<OpenClawConversationSessionResult> {
+    const conversationId = this.normalizeConversationId(input.conversationId);
+    const response = await this.callGateway("webchat.session.ensure", {
+      conversationId,
+      userId: input.userId,
+      userLabel: input.userLabel,
+      agentId: this.agentId,
+    }, input.abortSignal) as GatewaySessionEnsureResponse;
+
+    if (!response.ok) {
+      throw new Error(response.error?.message || "OpenClaw webchat.session.ensure failed.");
+    }
+
+    return {
+      conversationId: response.result?.conversationId || conversationId,
+      sessionKey: response.result?.sessionKey,
+      scopedSessionKey: response.result?.scopedSessionKey,
+      raw: response.result,
+    };
+  }
+
   async sendMessage(input: OpenClawClientInput): Promise<OpenClawClientResult> {
-    const conversationId = String(input.metadata?.webchat?.conversationId ?? input.sessionId).trim();
+    const conversationId = this.gatewayConversationId(input);
+    const sessionKey = this.stableSessionKey(conversationId);
     const jobId = typeof input.metadata?.webchat?.jobId === "string" ? input.metadata.webchat.jobId : undefined;
     const response = await this.callGateway("webchat.send", {
       conversationId,
@@ -48,7 +88,7 @@ export class GatewayNativeWebChatOpenClawClient implements OpenClawClient {
       userLabel: input.runtimeWorkspace?.displayName ?? input.runtimeWorkspace?.username ?? input.userId,
       agentId: this.agentId,
       model: activeGatewayModel(process.env.OPENCLAW_GATEWAY_MODEL ?? "openclaw"),
-      thinking: getSessionThinkingOverride(input.sessionId) ?? process.env.OPENCLAW_THINKING,
+      thinking: getSessionThinkingOverride(sessionKey) ?? process.env.OPENCLAW_THINKING,
     }, input.abortSignal) as GatewayRpcResponse;
 
     if (!response.ok) {
@@ -63,6 +103,39 @@ export class GatewayNativeWebChatOpenClawClient implements OpenClawClient {
         partialCount: response.result?.partialCount ?? 0,
       },
     };
+  }
+
+  private normalizeConversationId(conversationId: string): string {
+    const normalized = conversationId.trim();
+    if (!/^conv_[A-Za-z0-9][A-Za-z0-9_-]*$/.test(normalized)) {
+      throw new Error("conversationId must match conv_<stable-id>.");
+    }
+    return normalized;
+  }
+
+  private stableSessionKey(conversationId: string): string {
+    return `pwa-webchat:${conversationId}`;
+  }
+
+  private gatewayConversationId(input: OpenClawClientInput): string {
+    const metadataConversationId = typeof input.metadata?.webchat?.conversationId === "string"
+      ? input.metadata.webchat.conversationId
+      : "";
+    if (metadataConversationId.trim()) {
+      return this.normalizeConversationId(metadataConversationId);
+    }
+
+    const sessionId = input.sessionId.trim();
+    if (sessionId.startsWith("pwa-webchat:")) {
+      return this.normalizeConversationId(sessionId.slice("pwa-webchat:".length));
+    }
+    if (sessionId.startsWith("webchat:")) {
+      return this.normalizeConversationId(sessionId.slice("webchat:".length));
+    }
+    if (sessionId.startsWith("web-conv_")) {
+      return this.normalizeConversationId(`conv_${sessionId.slice("web-conv_".length)}`);
+    }
+    return this.normalizeConversationId(sessionId);
   }
 
   private buildMessage(message: string, attachments: MessageAttachment[]): string {

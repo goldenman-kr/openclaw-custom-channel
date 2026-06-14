@@ -28,6 +28,21 @@ export interface OpenClawClientResult {
   raw?: unknown;
 }
 
+export interface OpenClawConversationSessionInput {
+  conversationId: string;
+  userId?: string;
+  userLabel?: string;
+  abortSignal?: AbortSignal;
+}
+
+export interface OpenClawConversationSessionResult {
+  conversationId: string;
+  sessionKey?: string;
+  scopedSessionKey?: string;
+  raw?: unknown;
+}
+
 export interface OpenClawClient {
+  ensureConversationSession?(input: OpenClawConversationSessionInput): Promise<OpenClawConversationSessionResult>;
   sendMessage(input: OpenClawClientInput): Promise<OpenClawClientResult>;
 }

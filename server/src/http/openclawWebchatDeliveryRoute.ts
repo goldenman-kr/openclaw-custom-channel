@@ -11,6 +11,7 @@ export interface WebchatDeliveryRouteDeps {
   publishConversationEvent(event: ConversationEventRecord): void;
   publishJobEvent(event: JobEventRecord): void;
   publishJobToken(event: JobTokenEventRecord): void;
+  cleanupEmptyPwaWebChatMirrorSession?(): void | Promise<void>;
 }
 
 interface WebchatDeliveryBody {
@@ -54,6 +55,14 @@ function readBody(value: unknown): WebchatDeliveryBody | null {
 
 function validPhase(phase: string | undefined): phase is "partial" | "boundary" | "final" | "error" | "event" {
   return phase === "partial" || phase === "boundary" || phase === "final" || phase === "error" || phase === "event";
+}
+
+async function cleanupEmptyPwaWebChatMirrorSession(deps: WebchatDeliveryRouteDeps): Promise<void> {
+  try {
+    await deps.cleanupEmptyPwaWebChatMirrorSession?.();
+  } catch (error) {
+    console.warn(`OpenClaw webchat empty mirror cleanup failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
 }
 
 export async function handleOpenClawWebchatDeliveryRoute(
@@ -101,6 +110,7 @@ export async function handleOpenClawWebchatDeliveryRoute(
         createdAt: now,
       });
     }
+    await cleanupEmptyPwaWebChatMirrorSession(deps);
     deps.sendJson(response, 200, { ok: true });
     return true;
   }
@@ -154,6 +164,7 @@ export async function handleOpenClawWebchatDeliveryRoute(
     conversationId: conversation.id,
     createdAt: now,
   });
+  await cleanupEmptyPwaWebChatMirrorSession(deps);
   deps.sendJson(response, 200, { ok: true, messageId });
   return true;
 }

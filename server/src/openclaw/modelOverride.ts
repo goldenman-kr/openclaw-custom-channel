@@ -54,7 +54,7 @@ export function ensureSessionEntry(sessionKey: string): void {
 
   const store = readSessionStore();
   const now = Date.now();
-  const keysToCreate = [trimmed, `agent:${process.env.OPENCLAW_AGENT ?? "main"}:explicit:${trimmed}`];
+  const keysToCreate = [trimmed];
   let changed = false;
 
   for (const key of keysToCreate) {
