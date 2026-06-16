@@ -42,7 +42,20 @@ export interface OpenClawConversationSessionResult {
   raw?: unknown;
 }
 
+export interface OpenClawAbortInput {
+  conversationId: string;
+  jobId?: string;
+  abortSignal?: AbortSignal;
+}
+
+export interface OpenClawAbortResult {
+  aborted?: boolean;
+  runIds?: string[];
+  raw?: unknown;
+}
+
 export interface OpenClawClient {
   ensureConversationSession?(input: OpenClawConversationSessionInput): Promise<OpenClawConversationSessionResult>;
+  abortActive?(input: OpenClawAbortInput): Promise<OpenClawAbortResult>;
   sendMessage(input: OpenClawClientInput): Promise<OpenClawClientResult>;
 }

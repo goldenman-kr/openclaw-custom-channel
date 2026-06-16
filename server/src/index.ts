@@ -552,27 +552,51 @@ function isConversationVisibleForRequest(conversationId: string, request: Incomi
   return Boolean(conversation && isConversationVisibleToAuth(conversation, auth));
 }
 
+function requestGatewayAbortForJob(job: { id: string; conversationId?: string }, source: string): void {
+  if (!job.conversationId) {
+    console.info(`PWA cancel gateway abort skipped job=${job.id} source=${source} reason=missing-conversation`);
+    return;
+  }
+  if (!openClawClient.abortActive) {
+    console.info(`PWA cancel gateway abort skipped job=${job.id} conversation=${job.conversationId} source=${source} reason=unsupported-client`);
+    return;
+  }
+  console.info(`PWA cancel gateway abort request job=${job.id} conversation=${job.conversationId} source=${source}`);
+  openClawClient.abortActive({ conversationId: job.conversationId, jobId: job.id }).then((result) => {
+    console.info(`PWA cancel gateway abort result job=${job.id} conversation=${job.conversationId} aborted=${String(result.aborted)} runIds=${JSON.stringify(result.runIds ?? [])}`);
+  }).catch((error) => {
+    console.warn(`Gateway webchat abort failed for job ${job.id} conversation=${job.conversationId}:`, error instanceof Error ? error.message : String(error));
+  });
+}
+
 function cancelJobForRequest(jobId: string, request: IncomingMessage, url: URL): JobEventRecord | null {
   const visibleJob = jobForRequest(jobId, request, url);
+  const requestedConversationId = url.searchParams.get("conversation_id")?.trim() || "";
   if (!visibleJob || ["completed", "failed", "cancelled"].includes(visibleJob.state)) {
+    console.info(`PWA cancel ignored job=${jobId} requestedConversation=${requestedConversationId || "none"} reason=${visibleJob ? `terminal-${visibleJob.state}` : "not-visible-or-missing"}`);
     return null;
   }
 
   const memoryJob = jobs.get(jobId);
   if (memoryJob) {
+    console.info(`PWA cancel accepted job=${jobId} conversation=${memoryJob.conversationId ?? "none"} state=${memoryJob.state} source=memory`);
     messageJobRunner.cancel(memoryJob);
+    requestGatewayAbortForJob(memoryJob, "memory");
     return publicJob(memoryJob);
   }
 
   const storedJob = chatStore.getJob(jobId);
   if (!storedJob) {
+    console.info(`PWA cancel ignored job=${jobId} requestedConversation=${requestedConversationId || "none"} reason=stored-job-missing`);
     return null;
   }
+  console.info(`PWA cancel accepted job=${jobId} conversation=${storedJob.conversationId ?? "none"} state=${storedJob.state} source=store`);
   const now = new Date().toISOString();
   const cancelled = chatStore.updateJob(jobId, { state: "cancelled", error: null, now });
   chatStore.updateMessage(jobId, { role: "system", text: "요청이 취소되었습니다." });
   if (cancelled) {
     jobEventPublisher.publishJob(cancelled);
+    requestGatewayAbortForJob(cancelled, "store");
   }
   return cancelled;
 }

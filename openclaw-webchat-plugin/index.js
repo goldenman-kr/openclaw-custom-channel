@@ -13,6 +13,8 @@ const CONVERSATION_ID_PATTERN = /^conv_[A-Za-z0-9][A-Za-z0-9_-]*$/;
 const JOB_ID_PATTERN = /^job_[A-Za-z0-9][A-Za-z0-9_-]*$/;
 const AGENT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
 let runtime;
+const activeAbortEntriesByJob = new Map();
+const activeAbortEntriesBySession = new Map();
 
 const PWA_DELIVERY_SYSTEM_PROMPT = [
   "PWA WebChat delivery rule:",
@@ -41,6 +43,30 @@ function shouldReturnVerboseDeliveryReceipt(cfg) {
     return configured;
   }
   return process.env.OPENCLAW_WEBCHAT_VERBOSE_DELIVERY_RECEIPT === "1";
+}
+
+function collectMediaUrls(ctx) {
+  const mediaUrls = [];
+  const seen = new Set();
+  const push = (value) => {
+    if (typeof value !== "string") {
+      return;
+    }
+    const trimmed = value.trim();
+    if (!trimmed || seen.has(trimmed)) {
+      return;
+    }
+    seen.add(trimmed);
+    mediaUrls.push(trimmed);
+  };
+  push(ctx.mediaUrl);
+  push(ctx.payload?.mediaUrl);
+  if (Array.isArray(ctx.payload?.mediaUrls)) {
+    for (const mediaUrl of ctx.payload.mediaUrls) {
+      push(mediaUrl);
+    }
+  }
+  return mediaUrls;
 }
 
 async function postDelivery(cfg, payload) {
@@ -164,6 +190,100 @@ function scopedStableSessionKey(agentId, conversationId) {
   return sessionKey ? `agent:${normalizeAgentId(agentId)}:${sessionKey}` : "";
 }
 
+function sessionAbortSet(sessionKey) {
+  let entries = activeAbortEntriesBySession.get(sessionKey);
+  if (!entries) {
+    entries = new Set();
+    activeAbortEntriesBySession.set(sessionKey, entries);
+  }
+  return entries;
+}
+
+function createActiveAbortEntry({ jobId, routeSessionKey }) {
+  return {
+    controller: new AbortController(),
+    jobId,
+    routeSessionKey,
+  };
+}
+
+function registerActiveAbortEntry(entry) {
+  sessionAbortSet(entry.routeSessionKey).add(entry);
+  if (entry.jobId) {
+    activeAbortEntriesByJob.set(entry.jobId, entry);
+  }
+}
+
+function unregisterActiveAbortEntry(entry) {
+  const entries = activeAbortEntriesBySession.get(entry.routeSessionKey);
+  if (entries) {
+    entries.delete(entry);
+    if (entries.size === 0) {
+      activeAbortEntriesBySession.delete(entry.routeSessionKey);
+    }
+  }
+  if (entry.jobId && activeAbortEntriesByJob.get(entry.jobId) === entry) {
+    activeAbortEntriesByJob.delete(entry.jobId);
+  }
+}
+
+function findActiveAbortEntries({ jobId, routeSessionKey }) {
+  if (jobId) {
+    const entry = activeAbortEntriesByJob.get(jobId);
+    return entry ? [entry] : [];
+  }
+  return [...(activeAbortEntriesBySession.get(routeSessionKey) ?? [])];
+}
+
+function abortActiveEntries(entries) {
+  const abortedEntries = [];
+  for (const entry of entries) {
+    if (!entry.controller.signal.aborted) {
+      entry.controller.abort(new Error("PWA webchat request cancelled."));
+      abortedEntries.push(entry);
+    }
+  }
+  return abortedEntries;
+}
+
+function isAbortSignalLike(value) {
+  return Boolean(value && typeof value === "object" && typeof value.aborted === "boolean" && typeof value.addEventListener === "function");
+}
+
+function mergedAbortSignal(signals) {
+  const activeSignals = signals.filter(isAbortSignalLike);
+  if (activeSignals.length === 0) {
+    return { signal: undefined, cleanup() {} };
+  }
+  if (activeSignals.length === 1) {
+    return { signal: activeSignals[0], cleanup() {} };
+  }
+  const controller = new AbortController();
+  const listeners = [];
+  const abortFrom = (signal) => {
+    if (!controller.signal.aborted) {
+      controller.abort(signal.reason ?? new Error("PWA webchat request aborted."));
+    }
+  };
+  for (const signal of activeSignals) {
+    if (signal.aborted) {
+      abortFrom(signal);
+      continue;
+    }
+    const listener = () => abortFrom(signal);
+    signal.addEventListener("abort", listener, { once: true });
+    listeners.push([signal, listener]);
+  }
+  return {
+    signal: controller.signal,
+    cleanup() {
+      for (const [signal, listener] of listeners) {
+        signal.removeEventListener("abort", listener);
+      }
+    },
+  };
+}
+
 function stableSessionLabel(conversationId) {
   const id = normalizeConversationId(conversationId);
   return id ? `${SESSION_LABEL_CHANNEL_ID}:${id}` : SESSION_LABEL_CHANNEL_ID;
@@ -201,12 +321,14 @@ async function sendWebchatText(ctx, phase = "final", messageId) {
     throw new Error("PWA webchat target must include a stable conv_<id> conversation id.");
   }
   const resolvedMessageId = messageId || `oc_${randomUUID()}`;
+  const mediaUrls = collectMediaUrls(ctx);
   await postDelivery(ctx.cfg, {
     phase,
     conversationId: target.conversationId,
     jobId: target.jobId,
     messageId: resolvedMessageId,
     text: ctx.text,
+    ...(mediaUrls.length > 0 ? { mediaUrls } : {}),
     createdAt: new Date().toISOString(),
   });
   const result = {
@@ -234,6 +356,7 @@ const messageAdapter = defineChannelMessageAdapter({
   durableFinal: {
     capabilities: {
       text: true,
+      media: true,
       replyTo: true,
       thread: true,
     },
@@ -255,6 +378,8 @@ const messageAdapter = defineChannelMessageAdapter({
   },
   send: {
     text: async (ctx) => sendWebchatText(ctx, parseTarget(ctx.to).jobId ? "event" : "final"),
+    media: async (ctx) => sendWebchatText(ctx, parseTarget(ctx.to).jobId ? "event" : "final"),
+    payload: async (ctx) => sendWebchatText(ctx, parseTarget(ctx.to).jobId ? "event" : "final"),
   },
 });
 
@@ -288,11 +413,26 @@ const plugin = {
     deliveryCapabilities: {
       durableFinal: {
         text: true,
+        media: true,
         replyTo: true,
         thread: true,
       },
     },
     sendText: async (ctx) => {
+      const target = parseTarget(ctx.to);
+      const result = await sendWebchatText(ctx, target.jobId ? "event" : "final");
+      const response = {
+        ok: true,
+        channel: CHANNEL_ID,
+        messageId: result.messageId,
+      };
+      if (shouldReturnVerboseDeliveryReceipt(ctx.cfg)) {
+        response.conversationId = target.conversationId;
+        response.receipt = result.receipt;
+      }
+      return response;
+    },
+    sendMedia: async (ctx) => {
       const target = parseTarget(ctx.to);
       const result = await sendWebchatText(ctx, target.jobId ? "event" : "final");
       const response = {
@@ -587,7 +727,15 @@ async function handleSend(api, params) {
     boundary: 0,
     error: 0,
   };
-  const dispatchResult = await rt.channel.inbound.dispatchReply({
+  const abortEntry = createActiveAbortEntry({
+    jobId,
+    routeSessionKey,
+  });
+  const replyAbort = mergedAbortSignal([params?.abortSignal, abortEntry.controller.signal]);
+  registerActiveAbortEntry(abortEntry);
+  let dispatchResult;
+  try {
+    dispatchResult = await rt.channel.inbound.dispatchReply({
     cfg: api.config,
     channel: CHANNEL_ID,
     accountId: "default",
@@ -621,7 +769,7 @@ async function handleSend(api, params) {
       beforeDeliver: flushBoundary,
     },
     replyOptions: {
-      abortSignal: params?.abortSignal,
+      abortSignal: replyAbort.signal,
       extraSystemPrompt: PWA_DELIVERY_SYSTEM_PROMPT,
       sourceReplyDeliveryMode,
       commentaryProgressEnabled: true,
@@ -715,6 +863,10 @@ async function handleSend(api, params) {
     },
     messageId,
   });
+  } finally {
+    unregisterActiveAbortEntry(abortEntry);
+    replyAbort.cleanup();
+  }
   await flushBoundary();
   const dispatch = summarizeDispatchResult(dispatchResult);
   api.logger.info(`webchat dispatch completed conversation=${conversationId} summary=${JSON.stringify(dispatch)} delivery=${JSON.stringify(deliverySignals)}`);
@@ -725,6 +877,29 @@ async function handleSend(api, params) {
     deliveryHandled: true,
     dispatch,
     deliverySignals,
+  };
+}
+
+async function handleAbort(api, params) {
+  const conversationId = readString(params?.conversationId, "conversationId");
+  const normalizedConversationId = normalizeConversationId(conversationId);
+  if (!normalizedConversationId) {
+    throw new Error("conversationId must match conv_<stable-id>.");
+  }
+  const rawJobId = typeof params?.jobId === "string" && params.jobId.trim() ? params.jobId.trim() : undefined;
+  const jobId = normalizeJobId(rawJobId);
+  if (rawJobId && !jobId) {
+    throw new Error("jobId must match job_<stable-id>.");
+  }
+  const agentId = normalizeAgentId(params?.agentId);
+  const routeSessionKey = scopedStableSessionKey(agentId, normalizedConversationId);
+  const entries = findActiveAbortEntries({ jobId, routeSessionKey });
+  const abortedEntries = abortActiveEntries(entries);
+  api.logger.info(`webchat abort conversation=${normalizedConversationId} job=${jobId ?? ""} session=${routeSessionKey} matched=${entries.length} aborted=${abortedEntries.length}`);
+  return {
+    ok: true,
+    aborted: abortedEntries.length > 0,
+    runIds: abortedEntries.map((entry) => entry.jobId).filter(Boolean),
   };
 }
 
@@ -758,6 +933,19 @@ export default defineChannelPluginEntry({
           ok: false,
           error: {
             code: "WEBCHAT_SEND_FAILED",
+            message: error instanceof Error ? error.message : String(error),
+          },
+        });
+      }
+    }, { scope: "operator.write" });
+    api.registerGatewayMethod("webchat.abort", async ({ params, respond }) => {
+      try {
+        respond({ ok: true, result: await handleAbort(api, params ?? {}) });
+      } catch (error) {
+        respond({
+          ok: false,
+          error: {
+            code: "WEBCHAT_ABORT_FAILED",
             message: error instanceof Error ? error.message : String(error),
           },
         });

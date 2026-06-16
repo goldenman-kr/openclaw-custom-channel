@@ -1,5 +1,7 @@
 import type { MessageAttachment } from "../contracts/apiContractV1.js";
 import type {
+  OpenClawAbortInput,
+  OpenClawAbortResult,
   OpenClawClient,
   OpenClawClientInput,
   OpenClawClientResult,
@@ -26,6 +28,19 @@ interface GatewaySessionEnsureResponse {
     conversationId?: string;
     sessionKey?: string;
     scopedSessionKey?: string;
+  };
+  error?: {
+    message?: string;
+  };
+}
+
+interface GatewayAbortResponse {
+  ok?: boolean;
+  aborted?: boolean;
+  runIds?: string[];
+  result?: {
+    aborted?: boolean;
+    runIds?: string[];
   };
   error?: {
     message?: string;
@@ -105,6 +120,57 @@ export class GatewayNativeWebChatOpenClawClient implements OpenClawClient {
     };
   }
 
+  async abortActive(input: OpenClawAbortInput): Promise<OpenClawAbortResult> {
+    const conversationId = this.normalizeConversationId(input.conversationId);
+    console.info(`Gateway native webchat abort request job=${input.jobId ?? "none"} conversation=${conversationId}`);
+    try {
+      const response = await this.callGateway("webchat.abort", {
+        conversationId,
+        jobId: input.jobId,
+        agentId: this.agentId,
+      }, input.abortSignal) as GatewayAbortResponse;
+
+      if (response.ok === false) {
+        console.warn(`Gateway native webchat abort rejected job=${input.jobId ?? "none"} conversation=${conversationId} message=${response.error?.message ?? "unknown"}`);
+        throw new Error(response.error?.message || "OpenClaw webchat.abort failed.");
+      }
+
+      const aborted = response.result?.aborted ?? response.aborted;
+      const runIds = response.result?.runIds ?? response.runIds;
+      console.info(`Gateway native webchat abort response job=${input.jobId ?? "none"} conversation=${conversationId} aborted=${String(aborted)} runIds=${JSON.stringify(runIds ?? [])}`);
+      if (aborted) {
+        return {
+          aborted,
+          runIds,
+          raw: response,
+        };
+      }
+    } catch (error) {
+      console.warn(`Gateway native webchat abort fallback to chat.abort job=${input.jobId ?? "none"} conversation=${conversationId}:`, error instanceof Error ? error.message : String(error));
+    }
+
+    const sessionKey = this.scopedStableSessionKey(conversationId);
+    console.info(`Gateway native chat.abort fallback request job=${input.jobId ?? "none"} conversation=${conversationId} sessionKey=${sessionKey}`);
+    const fallbackResponse = await this.callGateway("chat.abort", {
+      sessionKey,
+      agentId: this.agentId,
+    }, input.abortSignal) as GatewayAbortResponse;
+
+    if (fallbackResponse.ok === false) {
+      console.warn(`Gateway native chat.abort fallback rejected job=${input.jobId ?? "none"} conversation=${conversationId} message=${fallbackResponse.error?.message ?? "unknown"}`);
+      throw new Error(fallbackResponse.error?.message || "OpenClaw chat.abort failed.");
+    }
+
+    const aborted = fallbackResponse.result?.aborted ?? fallbackResponse.aborted;
+    const runIds = fallbackResponse.result?.runIds ?? fallbackResponse.runIds;
+    console.info(`Gateway native chat.abort fallback response job=${input.jobId ?? "none"} conversation=${conversationId} aborted=${String(aborted)} runIds=${JSON.stringify(runIds ?? [])}`);
+    return {
+      aborted,
+      runIds,
+      raw: fallbackResponse,
+    };
+  }
+
   private normalizeConversationId(conversationId: string): string {
     const normalized = conversationId.trim();
     if (!/^conv_[A-Za-z0-9][A-Za-z0-9_-]*$/.test(normalized)) {
@@ -115,6 +181,10 @@ export class GatewayNativeWebChatOpenClawClient implements OpenClawClient {
 
   private stableSessionKey(conversationId: string): string {
     return `pwa-webchat:${conversationId}`;
+  }
+
+  private scopedStableSessionKey(conversationId: string): string {
+    return `agent:${this.agentId}:${this.stableSessionKey(conversationId)}`;
   }
 
   private gatewayConversationId(input: OpenClawClientInput): string {

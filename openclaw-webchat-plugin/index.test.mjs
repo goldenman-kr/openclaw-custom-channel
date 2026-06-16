@@ -6,7 +6,7 @@ import packageJson from "./package.json" with { type: "json" };
 
 const resolveOutboundSessionRoute = pluginEntry.channelPlugin.messaging.resolveOutboundSessionRoute;
 
-function createGatewayHarness() {
+function createGatewayHarness(options = {}) {
   const handlers = new Map();
   const records = [];
   const dispatches = [];
@@ -36,7 +36,7 @@ function createGatewayHarness() {
         dispatchReplyWithBufferedBlockDispatcher: async () => ({}),
       },
       inbound: {
-        dispatchReply: async (dispatch) => {
+        dispatchReply: options.dispatchReply ?? (async (dispatch) => {
           dispatches.push(dispatch);
           await dispatch.recordInboundSession({
             storePath: dispatch.storePath,
@@ -54,7 +54,7 @@ function createGatewayHarness() {
               failedCounts: {},
             },
           };
-        },
+        }),
       },
     },
   };
@@ -136,6 +136,49 @@ test("returns compact delivery output by default", async () => {
   }
 });
 
+test("forwards media URLs to the PWA delivery route", async () => {
+  const originalFetch = globalThis.fetch;
+  let requestBody;
+  globalThis.fetch = async (_url, init) => {
+    requestBody = JSON.parse(init.body);
+    return { ok: true };
+  };
+  try {
+    await pluginEntry.channelPlugin.outbound.sendText({
+      cfg: { channels: { "pwa-webchat": { deliveryUrl: "http://127.0.0.1/internal/openclaw/webchat-delivery" } } },
+      to: "conversation:conv_test",
+      text: "첨부입니다",
+      mediaUrl: "/tmp/chart.png",
+    });
+
+    assert.deepEqual(requestBody.mediaUrls, ["/tmp/chart.png"]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("declares and handles channel message media sends", async () => {
+  const originalFetch = globalThis.fetch;
+  let requestBody;
+  globalThis.fetch = async (_url, init) => {
+    requestBody = JSON.parse(init.body);
+    return { ok: true };
+  };
+  try {
+    await pluginEntry.channelPlugin.message.send.media({
+      cfg: { channels: { "pwa-webchat": { deliveryUrl: "http://127.0.0.1/internal/openclaw/webchat-delivery" } } },
+      to: "conversation:conv_test",
+      text: "첨부입니다",
+      mediaUrl: "/tmp/chart.png",
+    });
+
+    assert.equal(pluginEntry.channelPlugin.message.durableFinal.capabilities.media, true);
+    assert.deepEqual(requestBody.mediaUrls, ["/tmp/chart.png"]);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("can return verbose delivery receipt when explicitly enabled", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async () => ({ ok: true });
@@ -203,4 +246,61 @@ test("dispatches PWA sends with the scoped OpenClaw session key", async () => {
   assert.equal(dispatches[0].record.updateLastRoute.sessionKey, "agent:main:pwa-webchat:conv_test");
   assert.equal(records.length, 1);
   assert.equal(records[0].sessionKey, "agent:main:pwa-webchat:conv_test");
+});
+
+test("aborts an active PWA send by job id", async () => {
+  let abortObserved;
+  const abortPromise = new Promise((resolve) => {
+    abortObserved = resolve;
+  });
+  const { handlers } = createGatewayHarness({
+    dispatchReply: async (dispatch) => {
+      dispatch.replyOptions.abortSignal.addEventListener("abort", () => abortObserved(true), { once: true });
+      await abortPromise;
+      return {
+        dispatched: true,
+        routeSessionKey: dispatch.routeSessionKey,
+        dispatchResult: {
+          queuedFinal: false,
+          counts: {},
+          failedCounts: {},
+        },
+      };
+    },
+  });
+
+  const sendPromise = callGatewayMethod(handlers.get("webchat.send"), {
+    conversationId: "conv_test",
+    jobId: "job_test",
+    agentId: "main",
+    userId: "user_test",
+    message: "hello",
+  });
+  await Promise.resolve();
+
+  const abortResponse = await callGatewayMethod(handlers.get("webchat.abort"), {
+    conversationId: "conv_test",
+    jobId: "job_test",
+    agentId: "main",
+  });
+  const sendResponse = await sendPromise;
+
+  assert.equal(abortResponse.ok, true);
+  assert.equal(abortResponse.result.aborted, true);
+  assert.deepEqual(abortResponse.result.runIds, ["job_test"]);
+  assert.equal(sendResponse.ok, true);
+});
+
+test("returns not aborted when no active PWA send matches", async () => {
+  const { handlers } = createGatewayHarness();
+
+  const response = await callGatewayMethod(handlers.get("webchat.abort"), {
+    conversationId: "conv_test",
+    jobId: "job_missing",
+    agentId: "main",
+  });
+
+  assert.equal(response.ok, true);
+  assert.equal(response.result.aborted, false);
+  assert.deepEqual(response.result.runIds, []);
 });

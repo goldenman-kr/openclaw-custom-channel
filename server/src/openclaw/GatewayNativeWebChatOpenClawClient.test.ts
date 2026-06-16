@@ -4,6 +4,7 @@ import { GatewayNativeWebChatOpenClawClient } from "./GatewayNativeWebChatOpenCl
 
 class FakeWebSocket {
   static sentFrames: Array<Record<string, unknown>> = [];
+  static webchatAbortPayload: Record<string, unknown> = { ok: true, result: { aborted: true, runIds: ["job_test"] } };
   private readonly listeners = new Map<string, Array<(event?: unknown) => void>>();
 
   constructor(_url: string) {
@@ -36,7 +37,11 @@ class FakeWebSocket {
       ? { ok: true, result: { reply: "ok", deliveryHandled: true, partialCount: 0 } }
       : frame.method === "webchat.session.ensure"
         ? { ok: true, result: { conversationId: "conv_test", sessionKey: "pwa-webchat:conv_test", scopedSessionKey: "agent:main:pwa-webchat:conv_test" } }
-        : {};
+        : frame.method === "webchat.abort"
+          ? FakeWebSocket.webchatAbortPayload
+        : frame.method === "chat.abort"
+          ? { ok: true, result: { aborted: true, runIds: ["run_test"] } }
+          : {};
 
     setTimeout(() => {
       this.dispatch("message", {
@@ -64,6 +69,7 @@ class FakeWebSocket {
 async function withFakeWebSocket(testBody: () => Promise<void>): Promise<void> {
   const originalWebSocket = (globalThis as { WebSocket?: unknown }).WebSocket;
   FakeWebSocket.sentFrames = [];
+  FakeWebSocket.webchatAbortPayload = { ok: true, result: { aborted: true, runIds: ["job_test"] } };
   (globalThis as { WebSocket?: unknown }).WebSocket = FakeWebSocket;
   try {
     await testBody();
@@ -174,5 +180,50 @@ test("ensures PWA conversation sessions through the Gateway protocol", async () 
     const ensureFrame = FakeWebSocket.sentFrames.find((frame) => frame.method === "webchat.session.ensure");
     assert.equal((ensureFrame?.params as { conversationId?: unknown })?.conversationId, "conv_test");
     assert.equal((ensureFrame?.params as { sessionKey?: unknown })?.sessionKey, undefined);
+  });
+});
+
+test("aborts the active native PWA Gateway webchat job", async () => {
+  await withFakeWebSocket(async () => {
+    const client = new GatewayNativeWebChatOpenClawClient(
+      "http://127.0.0.1:18789",
+      "gateway-token",
+      "gateway-password",
+      5_000,
+      "main",
+      "token",
+    );
+
+    const result = await client.abortActive({ conversationId: "conv_test", jobId: "job_test" });
+
+    assert.equal(result.aborted, true);
+    assert.deepEqual(result.runIds, ["job_test"]);
+    const abortFrame = FakeWebSocket.sentFrames.find((frame) => frame.method === "webchat.abort");
+    assert.equal((abortFrame?.params as { conversationId?: unknown })?.conversationId, "conv_test");
+    assert.equal((abortFrame?.params as { jobId?: unknown })?.jobId, "job_test");
+    assert.equal((abortFrame?.params as { sessionKey?: unknown })?.sessionKey, undefined);
+    assert.equal((abortFrame?.params as { agentId?: unknown })?.agentId, "main");
+  });
+});
+
+test("falls back to core chat abort when native PWA abort has no active entry", async () => {
+  await withFakeWebSocket(async () => {
+    FakeWebSocket.webchatAbortPayload = { ok: true, result: { aborted: false, runIds: [] } };
+    const client = new GatewayNativeWebChatOpenClawClient(
+      "http://127.0.0.1:18789",
+      "gateway-token",
+      "gateway-password",
+      5_000,
+      "main",
+      "token",
+    );
+
+    const result = await client.abortActive({ conversationId: "conv_test", jobId: "job_test" });
+
+    assert.equal(result.aborted, true);
+    assert.deepEqual(result.runIds, ["run_test"]);
+    const fallbackFrame = FakeWebSocket.sentFrames.find((frame) => frame.method === "chat.abort");
+    assert.equal((fallbackFrame?.params as { sessionKey?: unknown })?.sessionKey, "agent:main:pwa-webchat:conv_test");
+    assert.equal((fallbackFrame?.params as { agentId?: unknown })?.agentId, "main");
   });
 });
