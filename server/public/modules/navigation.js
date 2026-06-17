@@ -14,6 +14,10 @@ export function conversationPath(conversationId) {
   return `/chat/${encodeURIComponent(conversationId)}`;
 }
 
+export function conversationUrl(conversationId, origin = window.location.origin) {
+  return new URL(conversationPath(conversationId), origin).toString();
+}
+
 export function syncConversationUrl(conversationId, options = {}) {
   if (!window.history?.pushState || !window.history?.replaceState) {
     return;

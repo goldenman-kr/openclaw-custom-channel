@@ -10,10 +10,10 @@
     <meta name="apple-mobile-web-app-title" content="OpenClaw" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <title>OpenClaw Mobile</title>
-    <link rel="manifest" href="/manifest.webmanifest?v=pwa-client-2026-06-14-pending-order-001" />
+    <link rel="manifest" href="/manifest.webmanifest?v=pwa-client-2026-06-17-copy-chat-link-001" />
     <link rel="icon" type="image/png" sizes="192x192" href="/assets/openclaw-app-icon-192.png" />
     <link rel="apple-touch-icon" sizes="180x180" href="/assets/openclaw-app-icon-180.png" />
-    <link rel="stylesheet" href="/styles.css?v=pwa-client-2026-06-14-pending-order-001" />
+    <link rel="stylesheet" href="/styles.css?v=pwa-client-2026-06-17-copy-chat-link-001" />
   </head>
   <body>
     <section id="loginScreen" class="login-screen hidden" aria-label="로그인">
@@ -39,14 +39,14 @@
       <aside id="conversationSidebar" class="conversation-sidebar" aria-label="대화 목록">
         <div class="sidebar-header">
           <button id="sidebarMenuButton" class="ghost-button mobile-menu-button" type="button" aria-label="대화 목록 닫기" aria-expanded="false" aria-controls="conversationSidebar">
-            <img class="mobile-menu-icon" src="/icons/list.svg?v=pwa-client-2026-06-14-pending-order-001" alt="" aria-hidden="true" />
+            <img class="mobile-menu-icon" src="/icons/list.svg?v=pwa-client-2026-06-17-copy-chat-link-001" alt="" aria-hidden="true" />
           </button>
           <div class="sidebar-title-block" aria-live="polite">
             <strong id="sidebarOwnerTitle">대화</strong>
             <span id="sidebarConversationCount">대화 0개</span>
           </div>
           <button id="newConversationButton" class="ghost-button sidebar-new-button" type="button" aria-label="새 대화" title="새 대화">
-            <img class="sidebar-new-icon" src="/icons/newchat2.svg?v=pwa-client-2026-06-14-pending-order-001" alt="" aria-hidden="true" />
+            <img class="sidebar-new-icon" src="/icons/newchat2.svg?v=pwa-client-2026-06-17-copy-chat-link-001" alt="" aria-hidden="true" />
           </button>
         </div>
         <nav id="conversationList" class="conversation-list" aria-label="대화 목록"></nav>
@@ -72,9 +72,17 @@
       <section class="chat-panel" aria-label="채팅">
         <header class="chat-titlebar">
           <button id="mobileMenuButton" class="ghost-button mobile-menu-button" type="button" aria-label="대화 목록 열기" aria-expanded="false" aria-controls="conversationSidebar">
-            <img class="mobile-menu-icon" src="/icons/list.svg?v=pwa-client-2026-06-14-pending-order-001" alt="" aria-hidden="true" />
+            <img class="mobile-menu-icon" src="/icons/list.svg?v=pwa-client-2026-06-17-copy-chat-link-001" alt="" aria-hidden="true" />
           </button>
-          <h1 id="chatTitle" class="chat-title">OpenClaw</h1>
+          <div class="chat-title-group">
+            <h1 id="chatTitle" class="chat-title">OpenClaw</h1>
+            <button id="copyConversationLinkButton" class="ghost-button copy-conversation-link-button hidden" type="button" aria-label="대화 링크 복사" title="대화 링크 복사">
+              <svg class="copy-conversation-link-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <rect x="9" y="9" width="10" height="10" rx="2" fill="none" stroke="currentColor" stroke-width="2" />
+                <path d="M5 15V7a2 2 0 0 1 2-2h8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+              </svg>
+            </button>
+          </div>
           <div class="chat-titlebar-actions">
             <button id="modelPickerButton" class="ghost-button model-picker-button" type="button" aria-label="AI 모델 선택" aria-expanded="false" aria-controls="modelPickerPanel">
               <svg class="model-picker-icon" viewBox="0 0 1041 1075" aria-hidden="true" focusable="false">
@@ -253,6 +261,6 @@
       </form>
     </dialog>
 
-    <script type="module" src="/app.js?v=pwa-client-2026-06-14-pending-order-001"></script>
+    <script type="module" src="/app.js?v=pwa-client-2026-06-17-copy-chat-link-001"></script>
   </body>
 </html>

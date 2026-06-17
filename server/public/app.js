@@ -33,8 +33,8 @@ import { getCurrentLocationMetadata } from './modules/location.js';
 import { messageTextWithoutAttachmentPreview, renderedHistorySignature } from './modules/history-render-signature.js';
 import { sendMessage as sendMessageToApi } from './modules/message-api.js';
 import { isPendingHistoryMessage, isPlaceholderPendingText, isRunningJobHistoryMessage, pendingJobPlaceholdersAfterJobMessages, shouldRerenderHistory as shouldRerenderHistorySnapshot } from './modules/history-state.js';
-import { cancelJobById, fetchJobById, isAlreadyFinishedJobError, isJobResolvedInHistory as isJobResolvedInHistoryFromApi, waitForJobPolling } from './modules/job-api.js?v=pwa-client-2026-06-14-pending-order-001';
-import { waitForJobEventStream } from './modules/job-events.js?v=pwa-client-2026-06-14-pending-order-001';
+import { cancelJobById, fetchJobById, isAlreadyFinishedJobError, isJobResolvedInHistory as isJobResolvedInHistoryFromApi, waitForJobPolling } from './modules/job-api.js?v=pwa-client-2026-06-17-copy-chat-link-001';
+import { waitForJobEventStream } from './modules/job-events.js?v=pwa-client-2026-06-17-copy-chat-link-001';
 import { delay, isTerminalJobState, parseSseBlock } from './modules/job-utils.js';
 import { appendMarkdown as appendMarkdownView } from './modules/markdown-renderer.js';
 import { canonicalMediaRefKey, extractMediaRefs, mediaRefsFromHistoryAttachments } from './modules/media.js';
@@ -49,7 +49,7 @@ import { renderModelPicker as renderModelPickerView, updateModelPickerButtonStat
 import { closeDrawer, drawerSwipeGesture, isDesktopLayout as isDesktopViewport, isDrawerOpen, openDrawer, shouldIgnoreDrawerSwipe as shouldIgnoreDrawerSwipeTarget, toggleDesktopSidebar } from './modules/mobile-drawer.js';
 import { getPushNotificationSupportState, notificationsSupported, notifyReplyReady as notifyReplyReadyBrowser, requestNotificationPermission, subscribeToPushNotifications, unsubscribeFromPushNotifications, updateNotificationButton as updateNotificationButtonView } from './modules/notifications.js';
 import { clearConversationEventRefreshTimer, closeConversationEventSource, conversationEventsSupported, createConversationEventSource } from './modules/conversation-events.js';
-import { conversationIdFromPath, syncConversationUrl } from './modules/navigation.js';
+import { conversationIdFromPath, conversationUrl, syncConversationUrl } from './modules/navigation.js';
 import { startIntervalIfNeeded, stopIntervalIfNeeded, syncVisiblePagePolling } from './modules/page-lifecycle.js';
 import { createPendingJobController } from './modules/pending-job-controller.js';
 import { promptPasswordChange } from './modules/password-flow.js';
@@ -77,7 +77,7 @@ import './plugins/wallet-transaction-card.js';
 
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
 const PUSH_DEVICE_ID_KEY = 'openclaw-web-channel-push-device-id-v1';
-const CLIENT_ASSET_VERSION = 'pwa-client-2026-06-14-pending-order-001';
+const CLIENT_ASSET_VERSION = 'pwa-client-2026-06-17-copy-chat-link-001';
 const CLIENT_API_VERSION = 1;
 const elements = {
   loginScreen: document.querySelector('#loginScreen'),
@@ -115,6 +115,7 @@ const elements = {
   modelPickerStatus: document.querySelector('#modelPickerStatus'),
   modelPickerList: document.querySelector('#modelPickerList'),
   chatTitle: document.querySelector('#chatTitle'),
+  copyConversationLinkButton: document.querySelector('#copyConversationLinkButton'),
   mobileDrawerBackdrop: document.querySelector('#mobileDrawerBackdrop'),
   conversationSidebar: document.querySelector('#conversationSidebar'),
   sidebarResizeHandle: document.querySelector('#sidebarResizeHandle'),
@@ -899,7 +900,25 @@ function updateChatTitle() {
     return;
   }
   elements.chatTitle.textContent = activeConversation?.id ? conversationTitle(activeConversation) : 'OpenClaw';
+  if (elements.copyConversationLinkButton) {
+    const hasConversation = Boolean(activeConversation?.id);
+    elements.copyConversationLinkButton.classList.toggle('hidden', !hasConversation);
+    elements.copyConversationLinkButton.disabled = !hasConversation;
+  }
   updateModelPickerButtonState();
+}
+
+async function copyActiveConversationLink() {
+  if (!activeConversation?.id) {
+    showToast('복사할 대화방이 없습니다.');
+    return;
+  }
+  try {
+    await copyTextToClipboard(conversationUrl(activeConversation.id));
+    showToast('대화 링크를 복사했습니다.', { kind: 'success' });
+  } catch (error) {
+    showToast(error instanceof Error ? error.message : '대화 링크를 복사하지 못했습니다.');
+  }
 }
 
 function normalizedConversationSearchQuery() {
@@ -2464,6 +2483,7 @@ bindAppEventListeners({
     toggleSettingsPanel,
     closeMobileDrawer,
     toggleMobileDrawer,
+    copyConversationLink: copyActiveConversationLink,
     toggleModelPicker,
     handleDrawerSwipeStart,
     handleDrawerSwipeEnd,
@@ -2722,6 +2742,6 @@ renderModelPicker();
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-06-14-pending-order-001').catch(() => {});
+    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-06-17-copy-chat-link-001').catch(() => {});
   });
 }

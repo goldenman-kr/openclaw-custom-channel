@@ -6,6 +6,7 @@ export function bindAppEventListeners({ elements, actions, state, windowRef = wi
   });
   elements.mobileMenuButton?.addEventListener('click', actions.toggleMobileDrawer);
   elements.sidebarMenuButton?.addEventListener('click', actions.toggleMobileDrawer);
+  elements.copyConversationLinkButton?.addEventListener('click', actions.copyConversationLink);
   elements.modelPickerButton?.addEventListener('click', (event) => {
     event.stopPropagation();
     actions.toggleModelPicker();
