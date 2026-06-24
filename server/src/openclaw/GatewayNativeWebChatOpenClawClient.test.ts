@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import { GatewayNativeWebChatOpenClawClient } from "./GatewayNativeWebChatOpenClawClient.js";
 
@@ -142,6 +145,47 @@ test("uses conversation id as the native PWA Gateway conversation contract", asy
     assert.equal(params.jobId, "job_test");
     assert.equal(params.message, "hello");
     assert.equal(params.agentId, "main");
+  });
+});
+
+test("materializes native webchat attachments and includes local paths in the Gateway message", async (t) => {
+  const uploadDir = await mkdtemp(join(tmpdir(), "openclaw-native-webchat-attachments-"));
+  t.after(() => {
+    void rm(uploadDir, { recursive: true, force: true });
+  });
+
+  await withFakeWebSocket(async () => {
+    const client = new GatewayNativeWebChatOpenClawClient(
+      "http://127.0.0.1:18789",
+      "gateway-token",
+      "gateway-password",
+      5_000,
+      "main",
+      "token",
+      uploadDir,
+    );
+    await client.sendMessage({
+      sessionId: "conv_attachment_test",
+      message: "첨부를 처리해줘",
+      attachments: [
+        {
+          type: "image",
+          name: "image.png",
+          mime_type: "image/png",
+          content_base64: Buffer.from("fake image bytes").toString("base64"),
+        },
+      ],
+    });
+
+    const sendFrame = FakeWebSocket.sentFrames.find((frame) => frame.method === "webchat.send");
+    const message = (sendFrame?.params as { message?: string })?.message ?? "";
+    assert.match(message, /첨부 파일이 서버에 저장되어 있습니다/);
+    assert.match(message, /image\.png \(image\/png, image\)/);
+    assert.match(message, /저장 경로: /);
+
+    const filePath = message.match(/저장 경로: (.+)$/m)?.[1];
+    assert.ok(filePath);
+    assert.equal(await readFile(filePath, "utf8"), "fake image bytes");
   });
 });
 
