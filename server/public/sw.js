@@ -1,4 +1,4 @@
-const CACHE_NAME = 'openclaw-web-channel-v355';
+const CACHE_NAME = 'openclaw-web-channel-v357';
 const ASSETS = [
   '/',
   '/index.html',
@@ -57,6 +57,7 @@ const ASSETS = [
   '/assets/openclaw-app-icon-512.png',
   '/assets/chevron-up.svg',
   '/assets/chevron-down.svg',
+  '/icons/ai.svg',
 ];
 
 self.addEventListener('install', (event) => {

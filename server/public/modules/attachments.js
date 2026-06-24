@@ -1,5 +1,5 @@
 export const MAX_ATTACHMENTS = 3;
-export const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+export const MAX_ATTACHMENT_BYTES = 500 * 1024 * 1024;
 
 export const ALLOWED_ATTACHMENT_TYPES = new Set([
   'image/jpeg',

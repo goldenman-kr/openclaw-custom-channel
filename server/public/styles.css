@@ -248,6 +248,8 @@ html[data-theme="system"] .danger-button { color: #991b1b; }
   width: 22px;
   height: 22px;
   display: block;
+  object-fit: contain;
+  filter: invert(1);
 }
 
 .model-picker-panel {
@@ -2084,7 +2086,8 @@ html[data-theme="light"] .slash-command-palette { background: rgba(255, 255, 255
 html[data-theme="light"] .composer { background: linear-gradient(180deg, transparent, var(--bg) 20%); }
 
 html[data-theme="light"] .mobile-menu-icon,
-html[data-theme="light"] .sidebar-new-icon {
+html[data-theme="light"] .sidebar-new-icon,
+html[data-theme="light"] .model-picker-icon {
   filter: none;
 }
 
