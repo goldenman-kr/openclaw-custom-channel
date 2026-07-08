@@ -33,8 +33,8 @@ import { getCurrentLocationMetadata } from './modules/location.js';
 import { messageTextWithoutAttachmentPreview, renderedHistorySignature } from './modules/history-render-signature.js';
 import { sendMessage as sendMessageToApi } from './modules/message-api.js';
 import { isPendingHistoryMessage, isPlaceholderPendingText, isRunningJobHistoryMessage, pendingJobPlaceholdersAfterJobMessages, shouldRerenderHistory as shouldRerenderHistorySnapshot } from './modules/history-state.js';
-import { cancelJobById, fetchJobById, isAlreadyFinishedJobError, isJobResolvedInHistory as isJobResolvedInHistoryFromApi, waitForJobPolling } from './modules/job-api.js?v=pwa-client-2026-06-24-attachment-limit-500mb-001';
-import { waitForJobEventStream } from './modules/job-events.js?v=pwa-client-2026-06-24-attachment-limit-500mb-001';
+import { cancelJobById, fetchJobById, isAlreadyFinishedJobError, isJobResolvedInHistory as isJobResolvedInHistoryFromApi, waitForJobPolling } from './modules/job-api.js?v=pwa-client-2026-07-08-transient-notices-toast-001';
+import { waitForJobEventStream } from './modules/job-events.js?v=pwa-client-2026-07-08-transient-notices-toast-001';
 import { delay, isTerminalJobState, parseSseBlock } from './modules/job-utils.js';
 import { appendMarkdown as appendMarkdownView } from './modules/markdown-renderer.js';
 import { canonicalMediaRefKey, extractMediaRefs, mediaRefsFromHistoryAttachments } from './modules/media.js';
@@ -77,7 +77,7 @@ import './plugins/wallet-transaction-card.js';
 
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
 const PUSH_DEVICE_ID_KEY = 'openclaw-web-channel-push-device-id-v1';
-const CLIENT_ASSET_VERSION = 'pwa-client-2026-06-24-attachment-limit-500mb-001';
+const CLIENT_ASSET_VERSION = 'pwa-client-2026-07-08-transient-notices-toast-001';
 const CLIENT_API_VERSION = 1;
 const elements = {
   loginScreen: document.querySelector('#loginScreen'),
@@ -463,15 +463,15 @@ async function enableNotifications() {
       settings.notificationsEnabled = false;
       saveSettings(settings);
       updateNotificationButton();
-      appendMessage('system', '푸시 알림을 껐습니다.', { persist: false });
+      showToast('푸시 알림을 껐습니다.', { kind: 'success' });
     } catch (error) {
-      appendMessage('system', `푸시 알림 해제 실패: ${error instanceof Error ? error.message : String(error)}`, { persist: false });
+      showToast(`푸시 알림 해제 실패: ${error instanceof Error ? error.message : String(error)}`, { kind: 'error', durationMs: 3600 });
     }
     return;
   }
   if (!notificationsSupported()) {
     const support = getPushNotificationSupportState();
-    appendMessage('system', support.message || '이 환경은 브라우저 알림을 지원하지 않습니다.', { persist: false });
+    showToast(support.message || '이 환경은 브라우저 알림을 지원하지 않습니다.', { kind: 'info', durationMs: 3600 });
     return;
   }
   try {
@@ -484,26 +484,26 @@ async function enableNotifications() {
       settings.notificationsEnabled = true;
       saveSettings(settings);
       updateNotificationButton();
-      appendMessage('system', '응답 도착 푸시 알림을 켰습니다.', { persist: false });
+      showToast('응답 도착 푸시 알림을 켰습니다.', { kind: 'success' });
       return;
     }
     if (result.reason === 'ios-install-required' || result.reason === 'push-unsupported') {
       settings.notificationsEnabled = false;
       saveSettings(settings);
       updateNotificationButton();
-      appendMessage('system', result.message || '이 환경에서는 백그라운드 푸시 알림을 사용할 수 없습니다.', { persist: false });
+      showToast(result.message || '이 환경에서는 백그라운드 푸시 알림을 사용할 수 없습니다.', { kind: 'info', durationMs: 3600 });
       return;
     }
     const permission = result.reason === 'notification-unsupported' ? 'unsupported' : result.reason;
     settings.notificationsEnabled = permission === 'granted';
     saveSettings(settings);
     updateNotificationButton();
-    appendMessage('system', permission === 'granted' ? '이 환경에서는 앱이 열려 있을 때의 탭 알림만 사용할 수 있습니다.' : '알림 권한이 허용되지 않았습니다.', { persist: false });
+    showToast(permission === 'granted' ? '이 환경에서는 앱이 열려 있을 때의 탭 알림만 사용할 수 있습니다.' : '알림 권한이 허용되지 않았습니다.', { kind: 'info', durationMs: 3600 });
   } catch (error) {
     settings.notificationsEnabled = false;
     saveSettings(settings);
     updateNotificationButton();
-    appendMessage('system', `푸시 알림 설정 실패: ${error instanceof Error ? error.message : String(error)}`, { persist: false });
+    showToast(`푸시 알림 설정 실패: ${error instanceof Error ? error.message : String(error)}`, { kind: 'error', durationMs: 3600 });
   }
 }
 
@@ -1304,9 +1304,9 @@ async function toggleConversationPinned(conversationId) {
       updateChatTitle();
     }
     renderConversationList();
-    appendMessage('system', updated.pinned ? '대화를 상단에 고정했습니다.' : '대화 상단고정을 해제했습니다.', { persist: false });
+    showToast(updated.pinned ? '대화를 상단에 고정했습니다.' : '대화 상단고정을 해제했습니다.', { kind: 'success' });
   } catch (error) {
-    appendMessage('system', error instanceof Error ? error.message : String(error), { persist: false });
+    showToast(error instanceof Error ? error.message : String(error), { kind: 'error', durationMs: 3200 });
   }
 }
 
@@ -1325,9 +1325,9 @@ async function toggleConversationArchived(conversationId) {
       return;
     }
     renderConversationList();
-    appendMessage('system', shouldArchive ? '대화를 보관함으로 이동했습니다.' : '대화 아카이브를 해제했습니다.', { persist: false });
+    showToast(shouldArchive ? '대화를 보관함으로 이동했습니다.' : '대화 아카이브를 해제했습니다.', { kind: 'success' });
   } catch (error) {
-    appendMessage('system', error instanceof Error ? error.message : String(error), { persist: false });
+    showToast(error instanceof Error ? error.message : String(error), { kind: 'error', durationMs: 3200 });
   }
 }
 
@@ -1348,9 +1348,9 @@ async function renameConversation(conversationId) {
       updateChatTitle();
     }
     renderConversationList();
-    appendMessage('system', '대화 이름을 변경했습니다.', { persist: false });
+    showToast('대화 이름을 변경했습니다.', { kind: 'success' });
   } catch (error) {
-    appendMessage('system', error instanceof Error ? error.message : String(error), { persist: false });
+    showToast(error instanceof Error ? error.message : String(error), { kind: 'error', durationMs: 3200 });
   }
 }
 
@@ -1375,7 +1375,7 @@ async function deleteConversation(conversationId) {
     renderConversationList();
     showToast('대화를 삭제했습니다.', { kind: 'success' });
   } catch (error) {
-    appendMessage('system', error instanceof Error ? error.message : String(error), { persist: false });
+    showToast(error instanceof Error ? error.message : String(error), { kind: 'error', durationMs: 3200 });
   }
 }
 
@@ -2742,6 +2742,6 @@ renderModelPicker();
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-06-24-attachment-limit-500mb-001').catch(() => {});
+    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-07-08-transient-notices-toast-001').catch(() => {});
   });
 }
