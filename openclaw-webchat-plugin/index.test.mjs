@@ -139,6 +139,52 @@ test("returns compact delivery output by default", async () => {
   }
 });
 
+test("deduplicates identical message-tool sends within the same PWA job", async () => {
+  const originalFetch = globalThis.fetch;
+  const deliveries = [];
+  globalThis.fetch = async (_url, init) => {
+    deliveries.push(JSON.parse(init.body));
+    return { ok: true };
+  };
+  try {
+    const params = {
+      cfg: { channels: { "pwa-webchat": { deliveryUrl: "http://127.0.0.1/internal/openclaw/webchat-delivery" } } },
+      to: "conversation-job:conv_dedupe_test:job:job_dedupe_test",
+      text: "same visible text",
+    };
+    const first = await pluginEntry.channelPlugin.message.send.text(params);
+    const second = await pluginEntry.channelPlugin.message.send.text(params);
+
+    assert.equal(deliveries.length, 1);
+    assert.equal(first.messageId, second.messageId);
+    assert.equal(second.duplicate, true);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("does not deliver NO_REPLY sentinel message-tool sends", async () => {
+  const originalFetch = globalThis.fetch;
+  const deliveries = [];
+  globalThis.fetch = async (_url, init) => {
+    deliveries.push(JSON.parse(init.body));
+    return { ok: true };
+  };
+  try {
+    const result = await pluginEntry.channelPlugin.message.send.text({
+      cfg: { channels: { "pwa-webchat": { deliveryUrl: "http://127.0.0.1/internal/openclaw/webchat-delivery" } } },
+      to: "conversation-job:conv_no_reply_test:job:job_no_reply_test",
+      text: "NO_REPLY",
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.silent, true);
+    assert.equal(deliveries.length, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("forwards media URLs to the PWA delivery route", async () => {
   const originalFetch = globalThis.fetch;
   let requestBody;
@@ -283,6 +329,7 @@ test("delivers fallback final text when message-tool delivery is absent", async 
       jobId: "job_test",
       agentId: "main",
       userId: "user_test",
+      model: "llamacpp/Qwen3.6-27B-MTP",
       message: "hello",
     });
 
@@ -353,6 +400,7 @@ test("delivers fallback final text from the session transcript when callbacks mi
       jobId: "job_test",
       agentId: "main",
       userId: "user_test",
+      model: "llamacpp/Qwen3.6-27B-MTP",
       message: "hello",
     });
 
@@ -363,6 +411,153 @@ test("delivers fallback final text from the session transcript when callbacks mi
     assert.equal(deliveries.length, 1);
     assert.equal(deliveries[0].phase, "final");
     assert.equal(deliveries[0].text, "transcript only final");
+  } finally {
+    globalThis.fetch = originalFetch;
+    await rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("delivers transcript intermediate assistant text before transcript final fallback", async () => {
+  const originalFetch = globalThis.fetch;
+  const deliveries = [];
+  const tempDir = await mkdtemp(join(tmpdir(), "openclaw-webchat-plugin-test-"));
+  const storePath = join(tempDir, "sessions.json");
+  const sessionFile = join(tempDir, "session_test.jsonl");
+  const routeSessionKey = "agent:main:pwa-webchat:conv_transcript_middle_test";
+  globalThis.fetch = async (_url, init) => {
+    deliveries.push(JSON.parse(init.body));
+    return { ok: true };
+  };
+  try {
+    await writeFile(storePath, JSON.stringify({
+      [routeSessionKey]: {
+        sessionId: "session_test",
+        sessionFile,
+      },
+    }));
+
+    const { handlers } = createGatewayHarness({
+      storePath,
+      dispatchReply: async (dispatch) => {
+        await writeFile(sessionFile, [
+          JSON.stringify({ type: "session", id: "session_test", timestamp: new Date().toISOString() }),
+          JSON.stringify({
+            type: "message",
+            timestamp: new Date(Date.now() + 5).toISOString(),
+            message: {
+              role: "assistant",
+              content: [{ type: "text", text: "중간 상태를 확인했습니다." }],
+            },
+          }),
+          JSON.stringify({
+            type: "message",
+            timestamp: new Date(Date.now() + 10).toISOString(),
+            message: {
+              role: "assistant",
+              content: [{ type: "text", text: "최종 정리입니다." }],
+            },
+          }),
+          "",
+        ].join("\n"));
+        return {
+          dispatched: true,
+          routeSessionKey: dispatch.routeSessionKey,
+          dispatchResult: {
+            queuedFinal: false,
+            observedReplyDelivery: false,
+            sourceReplyDeliveryMode: "message_tool_only",
+            counts: {},
+            failedCounts: {},
+          },
+        };
+      },
+    });
+
+    const response = await callGatewayMethod(handlers.get("webchat.send"), {
+      conversationId: "conv_transcript_middle_test",
+      jobId: "job_transcript_middle_test",
+      agentId: "main",
+      userId: "user_test",
+      model: "llamacpp/Qwen3.6-27B-MTP",
+      message: "hello",
+    });
+
+    assert.equal(response.ok, true);
+    assert.equal(response.result.reply, "최종 정리입니다.");
+    assert.equal(response.result.deliverySignals.transcriptEvent, 1);
+    assert.equal(response.result.deliverySignals.final, 1);
+    assert.deepEqual(deliveries.map((delivery) => [delivery.phase, delivery.text]), [
+      ["event", "중간 상태를 확인했습니다."],
+      ["final", "최종 정리입니다."],
+    ]);
+  } finally {
+    globalThis.fetch = originalFetch;
+    await rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("ignores NO_REPLY transcript sentinel when fallback reads assistant text", async () => {
+  const originalFetch = globalThis.fetch;
+  const deliveries = [];
+  const tempDir = await mkdtemp(join(tmpdir(), "openclaw-webchat-plugin-test-"));
+  const storePath = join(tempDir, "sessions.json");
+  const sessionFile = join(tempDir, "session_test.jsonl");
+  const routeSessionKey = "agent:main:pwa-webchat:conv_no_reply_transcript_test";
+  globalThis.fetch = async (_url, init) => {
+    deliveries.push(JSON.parse(init.body));
+    return { ok: true };
+  };
+  try {
+    await writeFile(storePath, JSON.stringify({
+      [routeSessionKey]: {
+        sessionId: "session_test",
+        sessionFile,
+      },
+    }));
+
+    const { handlers } = createGatewayHarness({
+      storePath,
+      dispatchReply: async (dispatch) => {
+        await writeFile(sessionFile, [
+          JSON.stringify({ type: "session", id: "session_test", timestamp: new Date().toISOString() }),
+          JSON.stringify({
+            type: "message",
+            timestamp: new Date(Date.now() + 5).toISOString(),
+            message: {
+              role: "assistant",
+              content: [{ type: "text", text: "NO_REPLY" }],
+            },
+          }),
+          "",
+        ].join("\n"));
+        return {
+          dispatched: true,
+          routeSessionKey: dispatch.routeSessionKey,
+          dispatchResult: {
+            queuedFinal: false,
+            observedReplyDelivery: false,
+            sourceReplyDeliveryMode: "message_tool_only",
+            counts: {},
+            failedCounts: {},
+          },
+        };
+      },
+    });
+
+    const response = await callGatewayMethod(handlers.get("webchat.send"), {
+      conversationId: "conv_no_reply_transcript_test",
+      jobId: "job_no_reply_transcript_test",
+      agentId: "main",
+      userId: "user_test",
+      model: "llamacpp/Qwen3.6-27B-MTP",
+      message: "hello",
+    });
+
+    assert.equal(response.ok, true);
+    assert.equal(response.result.reply, "");
+    assert.equal(response.result.deliverySignals.final, 0);
+    assert.equal(response.result.deliverySignals.fallbackFinal, 0);
+    assert.equal(deliveries.length, 0);
   } finally {
     globalThis.fetch = originalFetch;
     await rm(tempDir, { recursive: true, force: true });
@@ -422,6 +617,7 @@ test("delivers transcript final text even when message-tool delivery was observe
       jobId: "job_test",
       agentId: "main",
       userId: "user_test",
+      model: "llamacpp/Qwen3.6-27B-MTP",
       message: "hello",
     });
 
@@ -432,6 +628,76 @@ test("delivers transcript final text even when message-tool delivery was observe
     assert.equal(deliveries.length, 1);
     assert.equal(deliveries[0].phase, "final");
     assert.equal(deliveries[0].text, "message tool was sent, but this final text should also show");
+  } finally {
+    globalThis.fetch = originalFetch;
+    await rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("does not deliver assistant text fallback for non-llamacpp models", async () => {
+  const originalFetch = globalThis.fetch;
+  const deliveries = [];
+  const tempDir = await mkdtemp(join(tmpdir(), "openclaw-webchat-plugin-test-"));
+  const storePath = join(tempDir, "sessions.json");
+  const sessionFile = join(tempDir, "session_test.jsonl");
+  const routeSessionKey = "agent:main:pwa-webchat:conv_non_llamacpp_test";
+  globalThis.fetch = async (_url, init) => {
+    deliveries.push(JSON.parse(init.body));
+    return { ok: true };
+  };
+  try {
+    await writeFile(storePath, JSON.stringify({
+      [routeSessionKey]: {
+        sessionId: "session_test",
+        sessionFile,
+      },
+    }));
+
+    const { handlers } = createGatewayHarness({
+      storePath,
+      dispatchReply: async (dispatch) => {
+        await dispatch.replyOptions.onBlockReplyQueued({ text: "callback final should not fallback" });
+        await writeFile(sessionFile, [
+          JSON.stringify({ type: "session", id: "session_test", timestamp: new Date().toISOString() }),
+          JSON.stringify({
+            type: "message",
+            timestamp: new Date(Date.now() + 5).toISOString(),
+            message: {
+              role: "assistant",
+              content: [{ type: "text", text: "transcript final should not fallback" }],
+            },
+          }),
+          "",
+        ].join("\n"));
+        return {
+          dispatched: true,
+          routeSessionKey: dispatch.routeSessionKey,
+          dispatchResult: {
+            queuedFinal: false,
+            observedReplyDelivery: false,
+            sourceReplyDeliveryMode: "message_tool_only",
+            counts: {},
+            failedCounts: {},
+          },
+        };
+      },
+    });
+
+    const response = await callGatewayMethod(handlers.get("webchat.send"), {
+      conversationId: "conv_non_llamacpp_test",
+      jobId: "job_non_llamacpp_test",
+      agentId: "main",
+      userId: "user_test",
+      model: "openai-codex/gpt-5.5",
+      message: "hello",
+    });
+
+    assert.equal(response.ok, true);
+    assert.equal(response.result.reply, "");
+    assert.equal(response.result.deliverySignals.final, 0);
+    assert.equal(response.result.deliverySignals.fallbackFinal, 0);
+    assert.equal(response.result.deliverySignals.transcriptEvent, 0);
+    assert.equal(deliveries.length, 0);
   } finally {
     globalThis.fetch = originalFetch;
     await rm(tempDir, { recursive: true, force: true });

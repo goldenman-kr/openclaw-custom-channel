@@ -14,9 +14,12 @@ const SESSION_LABEL_CHANNEL_ID = "pwa_webchat";
 const CONVERSATION_ID_PATTERN = /^conv_[A-Za-z0-9][A-Za-z0-9_-]*$/;
 const JOB_ID_PATTERN = /^job_[A-Za-z0-9][A-Za-z0-9_-]*$/;
 const AGENT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
+const RECENT_JOB_DELIVERY_TTL_MS = 10 * 60 * 1000;
 let runtime;
 const activeAbortEntriesByJob = new Map();
 const activeAbortEntriesBySession = new Map();
+const recentJobDeliveries = new Map();
+const recentJobDeliveryTexts = new Map();
 
 const PWA_DELIVERY_SYSTEM_PROMPT = [
   "PWA WebChat delivery rule:",
@@ -163,12 +166,78 @@ function textFromAssistantSessionMessage(message) {
   return parts.join("\n\n").trim();
 }
 
-async function readLatestAssistantTextFromSessionTranscript(storePath, routeSessionKey, afterMs) {
+function normalizeTextForComparison(text) {
+  return String(text || "").replace(/\s+/g, " ").trim();
+}
+
+function isNoReplySentinelText(text) {
+  return normalizeTextForComparison(text).toUpperCase() === "NO_REPLY";
+}
+
+function isLlamaCppModelRef(model) {
+  const normalized = String(model || "").trim().toLowerCase();
+  return normalized === "llamacpp" || normalized.startsWith("llamacpp/");
+}
+
+function pruneRecentJobDeliveries(now = Date.now()) {
+  for (const [key, value] of recentJobDeliveries) {
+    if (now - value.at > RECENT_JOB_DELIVERY_TTL_MS) {
+      recentJobDeliveries.delete(key);
+    }
+  }
+  for (const [key, value] of recentJobDeliveryTexts) {
+    if (now - value.at > RECENT_JOB_DELIVERY_TTL_MS) {
+      recentJobDeliveryTexts.delete(key);
+    }
+  }
+}
+
+function jobTextKey(target, text, mediaUrls = []) {
+  if (!target?.conversationId || !target?.jobId || mediaUrls.length > 0) {
+    return "";
+  }
+  const normalized = normalizeTextForComparison(text);
+  return normalized ? `${target.conversationId}:${target.jobId}:${normalized}` : "";
+}
+
+function jobDeliveryKey(target, phase, text, mediaUrls = []) {
+  const textKey = jobTextKey(target, text, mediaUrls);
+  return textKey ? `${phase}:${textKey}` : "";
+}
+
+function rememberJobDelivery(target, phase, text, messageId, mediaUrls = []) {
+  const now = Date.now();
+  pruneRecentJobDeliveries(now);
+  const textKey = jobTextKey(target, text, mediaUrls);
+  const phaseKey = jobDeliveryKey(target, phase, text, mediaUrls);
+  if (textKey) {
+    recentJobDeliveryTexts.set(textKey, { at: now, messageId });
+  }
+  if (phaseKey) {
+    recentJobDeliveries.set(phaseKey, { at: now, messageId });
+  }
+}
+
+function recentJobDelivery(target, phase, text, mediaUrls = []) {
+  const now = Date.now();
+  pruneRecentJobDeliveries(now);
+  const phaseKey = jobDeliveryKey(target, phase, text, mediaUrls);
+  return phaseKey ? recentJobDeliveries.get(phaseKey) : undefined;
+}
+
+function hasRecentJobDeliveryText(target, text) {
+  const now = Date.now();
+  pruneRecentJobDeliveries(now);
+  const textKey = jobTextKey(target, text);
+  return textKey ? recentJobDeliveryTexts.has(textKey) : false;
+}
+
+async function readAssistantTextsFromSessionTranscript(storePath, routeSessionKey, afterMs) {
   const storeRaw = await readFile(storePath, "utf8");
   const store = JSON.parse(storeRaw);
   const sessionRecord = store?.[routeSessionKey];
   if (!sessionRecord || typeof sessionRecord !== "object") {
-    return "";
+    return [];
   }
   const sessionFile = typeof sessionRecord.sessionFile === "string" && sessionRecord.sessionFile.trim()
     ? sessionRecord.sessionFile.trim()
@@ -176,11 +245,11 @@ async function readLatestAssistantTextFromSessionTranscript(storePath, routeSess
       ? join(dirname(storePath), `${sessionRecord.sessionId.trim()}.jsonl`)
       : "";
   if (!sessionFile) {
-    return "";
+    return [];
   }
 
   const transcriptRaw = await readFile(sessionFile, "utf8");
-  let latestText = "";
+  const texts = [];
   for (const line of transcriptRaw.split(/\r?\n/)) {
     if (!line.trim()) {
       continue;
@@ -199,11 +268,11 @@ async function readLatestAssistantTextFromSessionTranscript(storePath, routeSess
       continue;
     }
     const text = textFromAssistantSessionMessage(entry.message);
-    if (text) {
-      latestText = text;
+    if (text && !isNoReplySentinelText(text)) {
+      texts.push({ text, timestampMs: timestampMs || 0 });
     }
   }
-  return latestText;
+  return texts;
 }
 
 function parseTarget(to) {
@@ -386,8 +455,25 @@ async function sendWebchatText(ctx, phase = "final", messageId) {
   if (!target.conversationId) {
     throw new Error("PWA webchat target must include a stable conv_<id> conversation id.");
   }
-  const resolvedMessageId = messageId || `oc_${randomUUID()}`;
   const mediaUrls = collectMediaUrls(ctx);
+  if (mediaUrls.length === 0 && isNoReplySentinelText(ctx.text)) {
+    return {
+      ok: true,
+      channel: CHANNEL_ID,
+      messageId: messageId || "",
+      silent: true,
+    };
+  }
+  const duplicate = recentJobDelivery(target, phase, ctx.text, mediaUrls);
+  if (!messageId && duplicate) {
+    return {
+      ok: true,
+      channel: CHANNEL_ID,
+      messageId: duplicate.messageId,
+      duplicate: true,
+    };
+  }
+  const resolvedMessageId = messageId || `oc_${randomUUID()}`;
   await postDelivery(ctx.cfg, {
     phase,
     conversationId: target.conversationId,
@@ -397,6 +483,7 @@ async function sendWebchatText(ctx, phase = "final", messageId) {
     ...(mediaUrls.length > 0 ? { mediaUrls } : {}),
     createdAt: new Date().toISOString(),
   });
+  rememberJobDelivery(target, phase, ctx.text, resolvedMessageId, mediaUrls);
   const result = {
     ok: true,
     channel: CHANNEL_ID,
@@ -739,6 +826,7 @@ async function handleSend(api, params) {
   });
   const sourceReplyDeliveryMode = "message_tool_only";
   const messageToolOwnsVisibleDelivery = sourceReplyDeliveryMode === "message_tool_only";
+  const assistantTextFallbackEnabled = isLlamaCppModelRef(params?.model);
   const storePath = rt.channel.session.resolveStorePath(api.config.session?.store, { agentId });
 
   let currentPreviewId;
@@ -793,6 +881,7 @@ async function handleSend(api, params) {
   const deliverySignals = {
     final: 0,
     fallbackFinal: 0,
+    transcriptEvent: 0,
     partial: 0,
     boundary: 0,
     error: 0,
@@ -800,7 +889,7 @@ async function handleSend(api, params) {
 
   const rememberFallbackFinalText = (text) => {
     const body = typeof text === "string" ? text.trim() : "";
-    if (body) {
+    if (body && !isNoReplySentinelText(body)) {
       fallbackFinalText = body;
     }
   };
@@ -861,7 +950,9 @@ async function handleSend(api, params) {
       },
       onBlockReplyQueued: async (payload) => {
         if (messageToolOwnsVisibleDelivery) {
-          rememberFallbackFinalText(textFromPayload(payload));
+          if (assistantTextFallbackEnabled) {
+            rememberFallbackFinalText(textFromPayload(payload));
+          }
           return;
         }
         const text = textFromPayload(payload);
@@ -898,7 +989,9 @@ async function handleSend(api, params) {
       },
       onPartialReply: async (payload) => {
         if (messageToolOwnsVisibleDelivery) {
-          rememberFallbackFinalText(typeof payload?.text === "string" ? payload.text : "");
+          if (assistantTextFallbackEnabled) {
+            rememberFallbackFinalText(typeof payload?.text === "string" ? payload.text : "");
+          }
           return;
         }
         const text = typeof payload?.text === "string" ? payload.text : "";
@@ -949,15 +1042,51 @@ async function handleSend(api, params) {
   }
   await flushBoundary();
   const dispatch = summarizeDispatchResult(dispatchResult);
-  if (deliverySignals.final === 0 && !fallbackFinalText) {
+  let transcriptTexts = [];
+  if (assistantTextFallbackEnabled) {
     try {
-      fallbackFinalText = await readLatestAssistantTextFromSessionTranscript(storePath, routeSessionKey, dispatchStartedAtMs);
-      if (fallbackFinalText) {
-        api.logger.info(`webchat transcript final captured textChars=${fallbackFinalText.length} conversation=${conversationId}`);
+      transcriptTexts = await readAssistantTextsFromSessionTranscript(storePath, routeSessionKey, dispatchStartedAtMs);
+      if (transcriptTexts.length > 0) {
+        api.logger.info(`webchat transcript texts captured count=${transcriptTexts.length} conversation=${conversationId} model=${params?.model ?? ""}`);
       }
     } catch (err) {
-      api.logger.warn(`webchat transcript final read failed: ${err instanceof Error ? err.message : String(err)}`);
+      api.logger.warn(`webchat transcript text read failed: ${err instanceof Error ? err.message : String(err)}`);
     }
+  } else {
+    api.logger.info(`webchat assistant text fallback disabled conversation=${conversationId} model=${params?.model ?? ""}`);
+  }
+  const targetForDelivery = parseTarget(target);
+  const seenTranscriptTexts = new Set();
+  const undeliveredTranscriptTexts = [];
+  for (const entry of transcriptTexts) {
+    const normalized = normalizeTextForComparison(entry.text);
+    if (!normalized || seenTranscriptTexts.has(normalized) || hasRecentJobDeliveryText(targetForDelivery, entry.text)) {
+      continue;
+    }
+    seenTranscriptTexts.add(normalized);
+    undeliveredTranscriptTexts.push(entry);
+  }
+  if (undeliveredTranscriptTexts.length > 0) {
+    for (let index = 0; index < undeliveredTranscriptTexts.length; index += 1) {
+      const text = undeliveredTranscriptTexts[index].text;
+      const isLast = index === undeliveredTranscriptTexts.length - 1;
+      const phase = isLast && deliverySignals.final === 0 ? "final" : "event";
+      const result = await sendWebchatText({ cfg: api.config, to: target, text }, phase);
+      if (phase === "final") {
+        finalText = text;
+        fallbackFinalText = text;
+        deliverySignals.final += 1;
+        deliverySignals.fallbackFinal += 1;
+        api.logger.info(`webchat transcript final delivered messageId=${result.messageId} textChars=${text.length} conversation=${conversationId}`);
+      } else {
+        deliverySignals.transcriptEvent += 1;
+        api.logger.info(`webchat transcript event delivered messageId=${result.messageId} textChars=${text.length} conversation=${conversationId}`);
+      }
+    }
+  }
+  if (deliverySignals.final === 0 && fallbackFinalText && hasRecentJobDeliveryText(targetForDelivery, fallbackFinalText)) {
+    api.logger.info(`webchat fallback final skipped because same text was already delivered conversation=${conversationId}`);
+    fallbackFinalText = "";
   }
   if (deliverySignals.final === 0 && fallbackFinalText) {
     finalText = fallbackFinalText;

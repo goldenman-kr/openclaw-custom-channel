@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -145,6 +145,53 @@ test("uses conversation id as the native PWA Gateway conversation contract", asy
     assert.equal(params.jobId, "job_test");
     assert.equal(params.message, "hello");
     assert.equal(params.agentId, "main");
+  });
+});
+
+test("passes the active PWA session model override to webchat.send", async (t) => {
+  const sessionDir = await mkdtemp(join(tmpdir(), "openclaw-native-webchat-session-store-"));
+  const sessionStorePath = join(sessionDir, "sessions.json");
+  const originalStorePath = process.env.OPENCLAW_SESSION_STORE_PATH;
+  process.env.OPENCLAW_SESSION_STORE_PATH = sessionStorePath;
+  t.after(() => {
+    if (originalStorePath === undefined) {
+      delete process.env.OPENCLAW_SESSION_STORE_PATH;
+    } else {
+      process.env.OPENCLAW_SESSION_STORE_PATH = originalStorePath;
+    }
+    void rm(sessionDir, { recursive: true, force: true });
+  });
+
+  await writeFile(sessionStorePath, JSON.stringify({
+    "pwa-webchat:conv_model_override": {
+      providerOverride: "llamacpp",
+      modelOverride: "Qwen3.6-27B-MTP",
+    },
+  }));
+
+  await withFakeWebSocket(async () => {
+    const client = new GatewayNativeWebChatOpenClawClient(
+      "http://127.0.0.1:18789",
+      "gateway-token",
+      "gateway-password",
+      5_000,
+      "main",
+      "token",
+    );
+    await client.sendMessage({
+      sessionId: "conv_model_override",
+      message: "hello",
+      metadata: {
+        webchat: {
+          conversationId: "conv_model_override",
+          jobId: "job_test",
+        },
+      },
+    });
+
+    const sendFrame = FakeWebSocket.sentFrames.find((frame) => frame.method === "webchat.send");
+    const params = sendFrame?.params as Record<string, unknown>;
+    assert.equal(params.model, "llamacpp/Qwen3.6-27B-MTP");
   });
 });
 

@@ -11,7 +11,7 @@ import type {
   OpenClawConversationSessionInput,
   OpenClawConversationSessionResult,
 } from "./OpenClawClient.js";
-import { activeGatewayModel, getSessionThinkingOverride } from "./modelOverride.js";
+import { activeGatewayModel, getSessionModelOverride, getSessionThinkingOverride } from "./modelOverride.js";
 
 interface GatewayRpcResponse {
   ok?: boolean;
@@ -120,7 +120,7 @@ export class GatewayNativeWebChatOpenClawClient implements OpenClawClient {
       userId: input.userId,
       userLabel: input.runtimeWorkspace?.displayName ?? input.runtimeWorkspace?.username ?? input.userId,
       agentId: this.agentId,
-      model: activeGatewayModel(process.env.OPENCLAW_GATEWAY_MODEL ?? "openclaw"),
+      model: getSessionModelOverride(sessionKey) ?? activeGatewayModel(process.env.OPENCLAW_GATEWAY_MODEL ?? "openclaw"),
       thinking: getSessionThinkingOverride(sessionKey) ?? process.env.OPENCLAW_THINKING,
     };
     let response: GatewayRpcResponse;

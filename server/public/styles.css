@@ -700,10 +700,18 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); }
 .message h3,
 .message h4,
 .message h5 {
-  margin: 0 0 0.35rem;
+  margin: 0.525rem 0;
   font-weight: 700;
-  line-height: 1.35;
+  line-height: 1.5;
 }
+
+.message h3:first-child,
+.message h4:first-child,
+.message h5:first-child { margin-top: 0; }
+
+.message h3:last-child,
+.message h4:last-child,
+.message h5:last-child { margin-bottom: 0; }
 
 .message h3 { font-size: 1.12rem; }
 .message h4 { font-size: 1.06rem; }
