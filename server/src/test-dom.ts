@@ -74,6 +74,11 @@ export function setBrowserGlobals({ ethereum, reown, userAgent = 'Mozilla/5.0', 
   const windowListeners = new Map<string, Set<Listener>>();
   const documentMock = {
     createElement: (tagName: string) => new TestElement(tagName),
+    createTextNode: (text: string) => {
+      const textNode = new TestElement('#text');
+      textNode.textContent = text;
+      return textNode;
+    },
     querySelector: () => null,
     body: new TestElement('body'),
     readyState: 'complete',

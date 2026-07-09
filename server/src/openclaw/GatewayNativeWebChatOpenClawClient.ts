@@ -67,6 +67,15 @@ function normalizeGatewayAuthMode(value: string | undefined): GatewayAuthMode {
   return normalized === "token" || normalized === "password" ? normalized : "auto";
 }
 
+function isReplySessionInitializationConflict(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /reply session initialization conflicted for /i.test(message);
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export class GatewayNativeWebChatOpenClawClient implements OpenClawClient {
   constructor(
     private readonly baseUrl = process.env.OPENCLAW_GATEWAY_URL ?? "http://127.0.0.1:18789",
@@ -104,7 +113,7 @@ export class GatewayNativeWebChatOpenClawClient implements OpenClawClient {
     const sessionKey = this.stableSessionKey(conversationId);
     const jobId = typeof input.metadata?.webchat?.jobId === "string" ? input.metadata.webchat.jobId : undefined;
     const savedAttachments = await this.saveAttachments(sessionKey, input.attachments ?? []);
-    const response = await this.callGateway("webchat.send", {
+    const params = {
       conversationId,
       jobId,
       message: this.buildMessage(input.message, savedAttachments),
@@ -113,7 +122,18 @@ export class GatewayNativeWebChatOpenClawClient implements OpenClawClient {
       agentId: this.agentId,
       model: activeGatewayModel(process.env.OPENCLAW_GATEWAY_MODEL ?? "openclaw"),
       thinking: getSessionThinkingOverride(sessionKey) ?? process.env.OPENCLAW_THINKING,
-    }, input.abortSignal) as GatewayRpcResponse;
+    };
+    let response: GatewayRpcResponse;
+    try {
+      response = await this.callGateway("webchat.send", params, input.abortSignal) as GatewayRpcResponse;
+    } catch (error) {
+      if (!isReplySessionInitializationConflict(error) || input.abortSignal?.aborted) {
+        throw error;
+      }
+      console.warn(`Gateway native webchat send session conflict; retrying once conversation=${conversationId} job=${jobId ?? "none"}`);
+      await sleep(250);
+      response = await this.callGateway("webchat.send", params, input.abortSignal) as GatewayRpcResponse;
+    }
 
     if (!response.ok) {
       throw new Error(response.error?.message || "OpenClaw webchat.send failed.");

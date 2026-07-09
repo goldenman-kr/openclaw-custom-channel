@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { readFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { defineChannelPluginEntry } from "/home/orbsian/.npm-global/lib/node_modules/openclaw/dist/plugin-sdk/channel-core.js";
 import { buildChannelInboundEventContext } from "/home/orbsian/.npm-global/lib/node_modules/openclaw/dist/plugin-sdk/channel-inbound.js";
 import {
@@ -138,6 +140,70 @@ function textFromPayload(payload) {
     }
   }
   return "";
+}
+
+function textFromAssistantSessionMessage(message) {
+  const content = message?.content;
+  if (typeof content === "string") {
+    return content.trim();
+  }
+  if (!Array.isArray(content)) {
+    return "";
+  }
+  const parts = [];
+  for (const item of content) {
+    if (typeof item === "string" && item.trim()) {
+      parts.push(item.trim());
+      continue;
+    }
+    if (item?.type === "text" && typeof item.text === "string" && item.text.trim()) {
+      parts.push(item.text.trim());
+    }
+  }
+  return parts.join("\n\n").trim();
+}
+
+async function readLatestAssistantTextFromSessionTranscript(storePath, routeSessionKey, afterMs) {
+  const storeRaw = await readFile(storePath, "utf8");
+  const store = JSON.parse(storeRaw);
+  const sessionRecord = store?.[routeSessionKey];
+  if (!sessionRecord || typeof sessionRecord !== "object") {
+    return "";
+  }
+  const sessionFile = typeof sessionRecord.sessionFile === "string" && sessionRecord.sessionFile.trim()
+    ? sessionRecord.sessionFile.trim()
+    : typeof sessionRecord.sessionId === "string" && sessionRecord.sessionId.trim()
+      ? join(dirname(storePath), `${sessionRecord.sessionId.trim()}.jsonl`)
+      : "";
+  if (!sessionFile) {
+    return "";
+  }
+
+  const transcriptRaw = await readFile(sessionFile, "utf8");
+  let latestText = "";
+  for (const line of transcriptRaw.split(/\r?\n/)) {
+    if (!line.trim()) {
+      continue;
+    }
+    let entry;
+    try {
+      entry = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (entry?.type !== "message" || entry?.message?.role !== "assistant") {
+      continue;
+    }
+    const timestampMs = Number.isFinite(Date.parse(entry.timestamp)) ? Date.parse(entry.timestamp) : Number(entry?.message?.timestamp ?? 0);
+    if (afterMs && timestampMs && timestampMs < afterMs) {
+      continue;
+    }
+    const text = textFromAssistantSessionMessage(entry.message);
+    if (text) {
+      latestText = text;
+    }
+  }
+  return latestText;
 }
 
 function parseTarget(to) {
@@ -533,6 +599,7 @@ function buildWebchatInboundContext(params) {
   const sessionKey = stableSessionKey(normalizedConversationId);
   const routeSessionKey = scopedStableSessionKey(agentId, normalizedConversationId);
   const target = params.jobId ? `conversation-job:${normalizedConversationId}:job:${params.jobId}` : `conversation:${normalizedConversationId}`;
+  const stableRouteTarget = `conversation:${normalizedConversationId}`;
   const messageId = params.messageId || `web_${randomUUID()}`;
   const userId = params.userId || "webchat-user";
   return {
@@ -541,6 +608,7 @@ function buildWebchatInboundContext(params) {
     scopedSessionKey: routeSessionKey,
     routeSessionKey,
     target,
+    stableRouteTarget,
     messageId,
     ctxPayload: buildChannelInboundEventContext({
       channel: CHANNEL_ID,
@@ -612,7 +680,7 @@ async function handleEnsureSession(api, params) {
   const agentId = normalizeAgentId(params?.agentId);
   const userId = typeof params?.userId === "string" && params.userId.trim() ? params.userId.trim() : "webchat-user";
   const userLabel = typeof params?.userLabel === "string" && params.userLabel.trim() ? params.userLabel.trim() : userId;
-  const { normalizedConversationId, sessionKey, scopedSessionKey, routeSessionKey, target, ctxPayload } = buildWebchatInboundContext({
+  const { normalizedConversationId, sessionKey, scopedSessionKey, routeSessionKey, stableRouteTarget, ctxPayload } = buildWebchatInboundContext({
     conversationId,
     agentId,
     userId,
@@ -629,7 +697,7 @@ async function handleEnsureSession(api, params) {
     updateLastRoute: {
       sessionKey: routeSessionKey,
       channel: CHANNEL_ID,
-      to: target,
+      to: stableRouteTarget,
       accountId: "default",
     },
     onRecordError: (err) => {
@@ -660,7 +728,7 @@ async function handleSend(api, params) {
   if (!normalizedConversationId) {
     throw new Error("conversationId must match conv_<stable-id>.");
   }
-  const { routeSessionKey, target, ctxPayload } = buildWebchatInboundContext({
+  const { routeSessionKey, target, stableRouteTarget, ctxPayload } = buildWebchatInboundContext({
     conversationId: normalizedConversationId,
     jobId,
     agentId,
@@ -675,6 +743,7 @@ async function handleSend(api, params) {
 
   let currentPreviewId;
   let finalText = "";
+  let fallbackFinalText = "";
   let lastPartialText = "";
   let partialCount = 0;
   let toolStarted = false;
@@ -723,9 +792,17 @@ async function handleSend(api, params) {
 
   const deliverySignals = {
     final: 0,
+    fallbackFinal: 0,
     partial: 0,
     boundary: 0,
     error: 0,
+  };
+
+  const rememberFallbackFinalText = (text) => {
+    const body = typeof text === "string" ? text.trim() : "";
+    if (body) {
+      fallbackFinalText = body;
+    }
   };
   const abortEntry = createActiveAbortEntry({
     jobId,
@@ -734,6 +811,7 @@ async function handleSend(api, params) {
   const replyAbort = mergedAbortSignal([params?.abortSignal, abortEntry.controller.signal]);
   registerActiveAbortEntry(abortEntry);
   let dispatchResult;
+  const dispatchStartedAtMs = Date.now();
   try {
     dispatchResult = await rt.channel.inbound.dispatchReply({
     cfg: api.config,
@@ -783,6 +861,7 @@ async function handleSend(api, params) {
       },
       onBlockReplyQueued: async (payload) => {
         if (messageToolOwnsVisibleDelivery) {
+          rememberFallbackFinalText(textFromPayload(payload));
           return;
         }
         const text = textFromPayload(payload);
@@ -819,6 +898,7 @@ async function handleSend(api, params) {
       },
       onPartialReply: async (payload) => {
         if (messageToolOwnsVisibleDelivery) {
+          rememberFallbackFinalText(typeof payload?.text === "string" ? payload.text : "");
           return;
         }
         const text = typeof payload?.text === "string" ? payload.text : "";
@@ -851,7 +931,7 @@ async function handleSend(api, params) {
       updateLastRoute: {
         sessionKey: routeSessionKey,
         channel: CHANNEL_ID,
-        to: target,
+        to: stableRouteTarget,
         accountId: "default",
       },
       onRecordError: (err) => {
@@ -869,6 +949,23 @@ async function handleSend(api, params) {
   }
   await flushBoundary();
   const dispatch = summarizeDispatchResult(dispatchResult);
+  if (deliverySignals.final === 0 && !fallbackFinalText) {
+    try {
+      fallbackFinalText = await readLatestAssistantTextFromSessionTranscript(storePath, routeSessionKey, dispatchStartedAtMs);
+      if (fallbackFinalText) {
+        api.logger.info(`webchat transcript final captured textChars=${fallbackFinalText.length} conversation=${conversationId}`);
+      }
+    } catch (err) {
+      api.logger.warn(`webchat transcript final read failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+  if (deliverySignals.final === 0 && fallbackFinalText) {
+    finalText = fallbackFinalText;
+    const result = await sendWebchatText({ cfg: api.config, to: target, text: fallbackFinalText }, "final");
+    deliverySignals.final += 1;
+    deliverySignals.fallbackFinal += 1;
+    api.logger.info(`webchat transcript final delivered messageId=${result.messageId} textChars=${fallbackFinalText.length} conversation=${conversationId}`);
+  }
   api.logger.info(`webchat dispatch completed conversation=${conversationId} summary=${JSON.stringify(dispatch)} delivery=${JSON.stringify(deliverySignals)}`);
   return {
     ok: true,

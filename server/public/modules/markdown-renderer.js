@@ -15,6 +15,7 @@ export function appendMarkdown(parent, text, { appendCodeBlock }) {
   let codeLanguage = '';
   let codeFenceIndent = 0;
   let codeLines = [];
+  let previousBlockType = null;
 
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index];
@@ -22,6 +23,7 @@ export function appendMarkdown(parent, text, { appendCodeBlock }) {
     if (singleLineFence) {
       list = null;
       appendCodeBlock(parent, singleLineFence[2], '', { showHeader: false, showCopyButton: false });
+      previousBlockType = 'code';
       continue;
     }
     const fence = line.match(/^( {0,3})```\s*([^`]*)\s*$/);
@@ -33,6 +35,7 @@ export function appendMarkdown(parent, text, { appendCodeBlock }) {
         codeLanguage = '';
         codeFenceIndent = 0;
         codeLines = [];
+        previousBlockType = 'code';
       } else {
         inCodeBlock = true;
         codeLanguage = fence[2]?.trim() || '';
@@ -71,6 +74,7 @@ export function appendMarkdown(parent, text, { appendCodeBlock }) {
     if (horizontalRule) {
       list = null;
       parent.append(document.createElement('hr'));
+      previousBlockType = 'hr';
       continue;
     }
 
@@ -95,6 +99,7 @@ export function appendMarkdown(parent, text, { appendCodeBlock }) {
         index += 1;
       }
       appendBlockquote(parent, quoteLines);
+      previousBlockType = 'blockquote';
       continue;
     }
 
@@ -104,6 +109,7 @@ export function appendMarkdown(parent, text, { appendCodeBlock }) {
       const node = document.createElement(`h${level}`);
       appendInlineMarkdown(node, heading[2]);
       parent.append(node);
+      previousBlockType = 'heading';
       continue;
     }
 
@@ -123,6 +129,7 @@ export function appendMarkdown(parent, text, { appendCodeBlock }) {
       }
       appendInlineMarkdown(item, bullet?.[1] || numbered?.[2] || '');
       list.append(item);
+      previousBlockType = 'list';
 
       while (index + 1 < lines.length) {
         const nextLine = lines[index + 1];
@@ -164,12 +171,17 @@ export function appendMarkdown(parent, text, { appendCodeBlock }) {
 
     list = null;
     if (!line.trim()) {
+      if (previousBlockType === 'heading') {
+        continue;
+      }
       parent.append(document.createElement('br'));
+      previousBlockType = 'break';
       continue;
     }
     const paragraph = document.createElement('p');
     appendInlineMarkdown(paragraph, line);
     parent.append(paragraph);
+    previousBlockType = 'paragraph';
   }
 
   if (inCodeBlock) {

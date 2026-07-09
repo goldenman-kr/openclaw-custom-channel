@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import test from "node:test";
+import { tmpdir } from "node:os";
 
 import pluginEntry from "./index.js";
 import packageJson from "./package.json" with { type: "json" };
@@ -11,7 +14,7 @@ function createGatewayHarness(options = {}) {
   const records = [];
   const dispatches = [];
   const api = {
-    config: { session: { store: "/tmp/openclaw-webchat-plugin-test-sessions.json" } },
+    config: { session: { store: options.storePath ?? "/tmp/openclaw-webchat-plugin-test-sessions.json" } },
     logger: {
       info() {},
       warn() {},
@@ -226,6 +229,7 @@ test("records PWA session ensure under the scoped OpenClaw session key", async (
   assert.equal(records[0].sessionKey, "agent:main:pwa-webchat:conv_test");
   assert.equal(records[0].ctx.SessionKey, "agent:main:pwa-webchat:conv_test");
   assert.equal(records[0].updateLastRoute.sessionKey, "agent:main:pwa-webchat:conv_test");
+  assert.equal(records[0].updateLastRoute.to, "conversation:conv_test");
 });
 
 test("dispatches PWA sends with the scoped OpenClaw session key", async () => {
@@ -243,9 +247,195 @@ test("dispatches PWA sends with the scoped OpenClaw session key", async () => {
   assert.equal(dispatches.length, 1);
   assert.equal(dispatches[0].routeSessionKey, "agent:main:pwa-webchat:conv_test");
   assert.equal(dispatches[0].ctxPayload.SessionKey, "agent:main:pwa-webchat:conv_test");
+  assert.equal(dispatches[0].ctxPayload.OriginatingTo, "conversation-job:conv_test:job:job_test");
+  assert.equal(dispatches[0].ctxPayload.To, "conversation-job:conv_test:job:job_test");
   assert.equal(dispatches[0].record.updateLastRoute.sessionKey, "agent:main:pwa-webchat:conv_test");
+  assert.equal(dispatches[0].record.updateLastRoute.to, "conversation:conv_test");
   assert.equal(records.length, 1);
   assert.equal(records[0].sessionKey, "agent:main:pwa-webchat:conv_test");
+});
+
+test("delivers fallback final text when message-tool delivery is absent", async () => {
+  const originalFetch = globalThis.fetch;
+  const deliveries = [];
+  globalThis.fetch = async (_url, init) => {
+    deliveries.push(JSON.parse(init.body));
+    return { ok: true };
+  };
+  try {
+    const { handlers } = createGatewayHarness({
+      dispatchReply: async (dispatch) => {
+        await dispatch.replyOptions.onBlockReplyQueued({ text: "local model final" });
+        return {
+          dispatched: true,
+          routeSessionKey: dispatch.routeSessionKey,
+          dispatchResult: {
+            queuedFinal: true,
+            counts: {},
+            failedCounts: {},
+          },
+        };
+      },
+    });
+
+    const response = await callGatewayMethod(handlers.get("webchat.send"), {
+      conversationId: "conv_test",
+      jobId: "job_test",
+      agentId: "main",
+      userId: "user_test",
+      message: "hello",
+    });
+
+    assert.equal(response.ok, true);
+    assert.equal(response.result.reply, "local model final");
+    assert.equal(response.result.deliverySignals.final, 1);
+    assert.equal(response.result.deliverySignals.fallbackFinal, 1);
+    assert.equal(deliveries.length, 1);
+    assert.equal(deliveries[0].phase, "final");
+    assert.equal(deliveries[0].conversationId, "conv_test");
+    assert.equal(deliveries[0].jobId, "job_test");
+    assert.equal(deliveries[0].text, "local model final");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("delivers fallback final text from the session transcript when callbacks miss it", async () => {
+  const originalFetch = globalThis.fetch;
+  const deliveries = [];
+  const tempDir = await mkdtemp(join(tmpdir(), "openclaw-webchat-plugin-test-"));
+  const storePath = join(tempDir, "sessions.json");
+  const sessionFile = join(tempDir, "session_test.jsonl");
+  const routeSessionKey = "agent:main:pwa-webchat:conv_test";
+  globalThis.fetch = async (_url, init) => {
+    deliveries.push(JSON.parse(init.body));
+    return { ok: true };
+  };
+  try {
+    await writeFile(storePath, JSON.stringify({
+      [routeSessionKey]: {
+        sessionId: "session_test",
+        sessionFile,
+      },
+    }));
+
+    const { handlers } = createGatewayHarness({
+      storePath,
+      dispatchReply: async (dispatch) => {
+        await writeFile(sessionFile, [
+          JSON.stringify({ type: "session", id: "session_test", timestamp: new Date().toISOString() }),
+          JSON.stringify({
+            type: "message",
+            timestamp: new Date(Date.now() + 5).toISOString(),
+            message: {
+              role: "assistant",
+              content: [{ type: "text", text: "transcript only final" }],
+            },
+          }),
+          "",
+        ].join("\n"));
+        return {
+          dispatched: true,
+          routeSessionKey: dispatch.routeSessionKey,
+          dispatchResult: {
+            queuedFinal: false,
+            observedReplyDelivery: false,
+            sourceReplyDeliveryMode: "message_tool_only",
+            counts: {},
+            failedCounts: {},
+          },
+        };
+      },
+    });
+
+    const response = await callGatewayMethod(handlers.get("webchat.send"), {
+      conversationId: "conv_test",
+      jobId: "job_test",
+      agentId: "main",
+      userId: "user_test",
+      message: "hello",
+    });
+
+    assert.equal(response.ok, true);
+    assert.equal(response.result.reply, "transcript only final");
+    assert.equal(response.result.deliverySignals.final, 1);
+    assert.equal(response.result.deliverySignals.fallbackFinal, 1);
+    assert.equal(deliveries.length, 1);
+    assert.equal(deliveries[0].phase, "final");
+    assert.equal(deliveries[0].text, "transcript only final");
+  } finally {
+    globalThis.fetch = originalFetch;
+    await rm(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("delivers transcript final text even when message-tool delivery was observed", async () => {
+  const originalFetch = globalThis.fetch;
+  const deliveries = [];
+  const tempDir = await mkdtemp(join(tmpdir(), "openclaw-webchat-plugin-test-"));
+  const storePath = join(tempDir, "sessions.json");
+  const sessionFile = join(tempDir, "session_test.jsonl");
+  const routeSessionKey = "agent:main:pwa-webchat:conv_test";
+  globalThis.fetch = async (_url, init) => {
+    deliveries.push(JSON.parse(init.body));
+    return { ok: true };
+  };
+  try {
+    await writeFile(storePath, JSON.stringify({
+      [routeSessionKey]: {
+        sessionId: "session_test",
+        sessionFile,
+      },
+    }));
+
+    const { handlers } = createGatewayHarness({
+      storePath,
+      dispatchReply: async (dispatch) => {
+        await writeFile(sessionFile, [
+          JSON.stringify({ type: "session", id: "session_test", timestamp: new Date().toISOString() }),
+          JSON.stringify({
+            type: "message",
+            timestamp: new Date(Date.now() + 5).toISOString(),
+            message: {
+              role: "assistant",
+              content: [{ type: "text", text: "message tool was sent, but this final text should also show" }],
+            },
+          }),
+          "",
+        ].join("\n"));
+        return {
+          dispatched: true,
+          routeSessionKey: dispatch.routeSessionKey,
+          dispatchResult: {
+            queuedFinal: false,
+            observedReplyDelivery: true,
+            sourceReplyDeliveryMode: "message_tool_only",
+            counts: {},
+            failedCounts: {},
+          },
+        };
+      },
+    });
+
+    const response = await callGatewayMethod(handlers.get("webchat.send"), {
+      conversationId: "conv_test",
+      jobId: "job_test",
+      agentId: "main",
+      userId: "user_test",
+      message: "hello",
+    });
+
+    assert.equal(response.ok, true);
+    assert.equal(response.result.reply, "message tool was sent, but this final text should also show");
+    assert.equal(response.result.deliverySignals.final, 1);
+    assert.equal(response.result.deliverySignals.fallbackFinal, 1);
+    assert.equal(deliveries.length, 1);
+    assert.equal(deliveries[0].phase, "final");
+    assert.equal(deliveries[0].text, "message tool was sent, but this final text should also show");
+  } finally {
+    globalThis.fetch = originalFetch;
+    await rm(tempDir, { recursive: true, force: true });
+  }
 });
 
 test("aborts an active PWA send by job id", async () => {
