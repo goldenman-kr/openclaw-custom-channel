@@ -124,7 +124,7 @@ html[data-theme="system"] .danger-button { color: #991b1b; }
   height: var(--chat-titlebar-height);
   min-height: var(--chat-titlebar-height);
   display: grid;
-  grid-template-columns: 44px minmax(0, 1fr) 44px;
+  grid-template-columns: 44px minmax(0, 1fr) minmax(88px, auto);
   align-items: center;
   gap: 4px;
   margin: 0;
@@ -214,18 +214,23 @@ html[data-theme="system"] .danger-button { color: #991b1b; }
 
 .chat-titlebar-actions {
   position: relative;
-  width: 44px;
+  width: auto;
+  max-width: min(46vw, 190px);
   height: 44px;
   display: grid;
   place-items: center;
+  justify-self: end;
+  min-width: 0;
 }
 
 .model-picker-button {
-  width: 44px;
+  width: auto;
+  max-width: 100%;
   height: 44px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  gap: 6px;
   padding: 0;
   border: 0;
   border-radius: 0;
@@ -245,11 +250,23 @@ html[data-theme="system"] .danger-button { color: #991b1b; }
 }
 
 .model-picker-icon {
+  flex: 0 0 auto;
   width: 22px;
   height: 22px;
   display: block;
   object-fit: contain;
   filter: invert(1);
+}
+
+.model-picker-button-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0;
 }
 
 .model-picker-panel {
@@ -1880,7 +1897,7 @@ html[data-theme="light"] .toast--success {
   }
 
   body:not(.sidebar-collapsed) .chat-titlebar {
-    grid-template-columns: minmax(0, 1fr) 44px;
+    grid-template-columns: minmax(0, 1fr) minmax(88px, auto);
     padding-left: 54px;
   }
 

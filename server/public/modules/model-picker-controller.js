@@ -13,6 +13,61 @@ export function createModelPickerController({
   let state = null;
   let activeConversationId = null;
 
+  function shortModelLabel(modelRef = '') {
+    const value = String(modelRef || '').trim();
+    const slash = value.lastIndexOf('/');
+    return slash >= 0 ? value.slice(slash + 1) : value;
+  }
+
+  function selectedModelLabel() {
+    const selected = state?.models?.find((entry) => entry.selected);
+    return selected?.label || shortModelLabel(state?.currentModel);
+  }
+
+  function selectedThinkingLabel() {
+    const selected = state?.thinkingLevels?.find((entry) => entry.selected);
+    return selected?.label || state?.currentThinking || '';
+  }
+
+  function currentSummary() {
+    const model = selectedModelLabel();
+    const thinking = selectedThinkingLabel();
+    if (!model && !thinking) {
+      return '';
+    }
+    return thinking ? `${model || 'AI'} (${thinking})` : model;
+  }
+
+  function withSelectedModel(nextModel) {
+    if (!state) {
+      return null;
+    }
+    const model = String(nextModel || '');
+    return {
+      ...state,
+      currentModel: model,
+      models: (state.models || []).map((entry) => ({
+        ...entry,
+        selected: entry.ref === model,
+      })),
+    };
+  }
+
+  function withSelectedThinking(nextThinking) {
+    if (!state) {
+      return null;
+    }
+    const thinking = String(nextThinking || '');
+    return {
+      ...state,
+      currentThinking: thinking,
+      thinkingLevels: (state.thinkingLevels || []).map((entry) => ({
+        ...entry,
+        selected: entry.ref === thinking,
+      })),
+    };
+  }
+
   function render() {
     renderModelPicker(elements, {
       expanded,
@@ -36,6 +91,7 @@ export function createModelPickerController({
     updateModelPickerButtonState(elements.modelPickerButton, {
       hasConversation: hasConversation(),
       expanded,
+      summary: currentSummary(),
     });
   }
 
@@ -45,6 +101,7 @@ export function createModelPickerController({
     state = null;
     activeConversationId = null;
     render();
+    updateButtonState();
   }
 
   function setExpanded(nextExpanded) {
@@ -53,6 +110,7 @@ export function createModelPickerController({
       loading = false;
     }
     render();
+    updateButtonState();
   }
 
   async function open(conversationId) {
@@ -69,7 +127,23 @@ export function createModelPickerController({
     } finally {
       loading = false;
       render();
+      updateButtonState();
     }
+  }
+
+  async function refresh(conversationId) {
+    if (!conversationId || loading) {
+      updateButtonState();
+      return;
+    }
+    activeConversationId = conversationId;
+    const nextState = await fetchMenu(conversationId);
+    if (activeConversationId !== conversationId) {
+      return;
+    }
+    state = nextState;
+    render();
+    updateButtonState();
   }
 
   async function apply(conversationId, modelRef) {
@@ -88,11 +162,12 @@ export function createModelPickerController({
       if (result.warning) {
         showToast(result.warning, { kind: 'info', durationMs: 3200 });
       }
-      state = null;
+      state = withSelectedModel(result.current_model || modelRef);
       setExpanded(false);
     } finally {
       loading = false;
       render();
+      updateButtonState();
     }
   }
 
@@ -109,11 +184,12 @@ export function createModelPickerController({
     try {
       const result = await patchThinking(conversationId, thinkingRef);
       showToast(`Think level 변경 완료: ${result.current_thinking || thinkingRef}`, { kind: 'success' });
-      state = null;
+      state = withSelectedThinking(result.current_thinking || thinkingRef);
       setExpanded(false);
     } finally {
       loading = false;
       render();
+      updateButtonState();
     }
   }
 
@@ -139,6 +215,7 @@ export function createModelPickerController({
     updateButtonState,
     setExpanded,
     open,
+    refresh,
     apply,
     applyThinking,
     toggle,

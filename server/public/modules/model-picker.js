@@ -1,10 +1,16 @@
-export function updateModelPickerButtonState(button, { hasConversation, expanded }) {
+export function updateModelPickerButtonState(button, { hasConversation, expanded, summary }) {
   if (!button) {
     return;
   }
   button.disabled = !hasConversation;
   button.setAttribute('aria-expanded', expanded ? 'true' : 'false');
-  button.title = hasConversation ? 'AI 모델 선택' : '대화를 먼저 선택하세요';
+  const label = button.querySelector('.model-picker-button-label');
+  const summaryText = hasConversation && summary ? summary : 'AI';
+  if (label) {
+    label.textContent = summaryText;
+  }
+  button.title = hasConversation && summary ? `AI 모델 선택: ${summary}` : (hasConversation ? 'AI 모델 선택' : '대화를 먼저 선택하세요');
+  button.setAttribute('aria-label', hasConversation && summary ? `AI 모델 선택, 현재 ${summary}` : (hasConversation ? 'AI 모델 선택' : '대화를 먼저 선택하세요'));
 }
 
 export function renderModelPicker(elements, state, onSelectModel, onSelectThinking) {

@@ -33,8 +33,8 @@ import { getCurrentLocationMetadata } from './modules/location.js';
 import { messageTextWithoutAttachmentPreview, renderedHistorySignature } from './modules/history-render-signature.js';
 import { sendMessage as sendMessageToApi } from './modules/message-api.js';
 import { isPendingHistoryMessage, isPlaceholderPendingText, isRunningJobHistoryMessage, pendingJobPlaceholdersAfterJobMessages, shouldRerenderHistory as shouldRerenderHistorySnapshot } from './modules/history-state.js';
-import { cancelJobById, fetchJobById, isAlreadyFinishedJobError, isJobResolvedInHistory as isJobResolvedInHistoryFromApi, waitForJobPolling } from './modules/job-api.js?v=pwa-client-2026-07-09-markdown-heading-rhythm-001';
-import { waitForJobEventStream } from './modules/job-events.js?v=pwa-client-2026-07-09-markdown-heading-rhythm-001';
+import { cancelJobById, fetchJobById, isAlreadyFinishedJobError, isJobResolvedInHistory as isJobResolvedInHistoryFromApi, waitForJobPolling } from './modules/job-api.js?v=pwa-client-2026-07-10-model-picker-summary-001';
+import { waitForJobEventStream } from './modules/job-events.js?v=pwa-client-2026-07-10-model-picker-summary-001';
 import { delay, isTerminalJobState, parseSseBlock } from './modules/job-utils.js';
 import { appendMarkdown as appendMarkdownView } from './modules/markdown-renderer.js';
 import { canonicalMediaRefKey, extractMediaRefs, mediaRefsFromHistoryAttachments } from './modules/media.js';
@@ -77,7 +77,7 @@ import './plugins/wallet-transaction-card.js';
 
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
 const PUSH_DEVICE_ID_KEY = 'openclaw-web-channel-push-device-id-v1';
-const CLIENT_ASSET_VERSION = 'pwa-client-2026-07-09-markdown-heading-rhythm-001';
+const CLIENT_ASSET_VERSION = 'pwa-client-2026-07-10-model-picker-summary-001';
 const CLIENT_API_VERSION = 1;
 const elements = {
   loginScreen: document.querySelector('#loginScreen'),
@@ -1235,6 +1235,7 @@ async function selectConversation(conversationId, options = {}) {
     clearUnreadConversation(conversationId);
     syncConversationUrl(conversationId, { replace: options.replaceUrl === true });
     renderConversationList();
+    modelPicker.refresh(conversationId).catch(() => {});
     return true;
   }
   saveComposerDraft();
@@ -1257,6 +1258,7 @@ async function selectConversation(conversationId, options = {}) {
   restoreComposerDraft(conversation.id);
   updateComposerAvailability();
   closeMobileDrawer();
+  modelPicker.refresh(conversation.id).catch(() => {});
   await renderHistory({ scrollToLatest: true });
   startConversationEvents(conversation.id);
   syncHistoryPolling();
@@ -1394,6 +1396,7 @@ async function ensureActiveConversation() {
   saveSettings(settings);
   renderConversationList();
   restoreComposerDraft(activeConversation.id);
+  modelPicker.refresh(activeConversation.id).catch(() => {});
   return activeConversation;
 }
 
@@ -1416,6 +1419,7 @@ async function startNewConversation() {
   renderConversationList();
   restoreComposerDraft(activeConversation.id);
   updateComposerAvailability();
+  modelPicker.refresh(activeConversation.id).catch(() => {});
   await renderHistory({ scrollToLatest: true });
   closeMobileDrawer();
   return activeConversation;
@@ -2742,6 +2746,6 @@ renderModelPicker();
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-07-09-markdown-heading-rhythm-001').catch(() => {});
+    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-07-10-model-picker-summary-001').catch(() => {});
   });
 }
