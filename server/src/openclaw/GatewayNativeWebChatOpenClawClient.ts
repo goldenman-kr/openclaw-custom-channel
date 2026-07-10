@@ -72,6 +72,10 @@ function isReplySessionInitializationConflict(error: unknown): boolean {
   return /reply session initialization conflicted for /i.test(message);
 }
 
+function isReplySessionInitializationConflictResponse(response: GatewayRpcResponse): boolean {
+  return /reply session initialization conflicted for /i.test(response.error?.message ?? "");
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -123,21 +127,7 @@ export class GatewayNativeWebChatOpenClawClient implements OpenClawClient {
       model: getSessionModelOverride(sessionKey) ?? activeGatewayModel(process.env.OPENCLAW_GATEWAY_MODEL ?? "openclaw"),
       thinking: getSessionThinkingOverride(sessionKey) ?? process.env.OPENCLAW_THINKING,
     };
-    let response: GatewayRpcResponse;
-    try {
-      response = await this.callGateway("webchat.send", params, input.abortSignal) as GatewayRpcResponse;
-    } catch (error) {
-      if (!isReplySessionInitializationConflict(error) || input.abortSignal?.aborted) {
-        throw error;
-      }
-      console.warn(`Gateway native webchat send session conflict; retrying once conversation=${conversationId} job=${jobId ?? "none"}`);
-      await sleep(250);
-      response = await this.callGateway("webchat.send", params, input.abortSignal) as GatewayRpcResponse;
-    }
-
-    if (!response.ok) {
-      throw new Error(response.error?.message || "OpenClaw webchat.send failed.");
-    }
+    const response = await this.sendWithConflictRecovery(params, conversationId, jobId, input.abortSignal);
 
     return {
       reply: response.result?.reply || "",
@@ -147,6 +137,56 @@ export class GatewayNativeWebChatOpenClawClient implements OpenClawClient {
         partialCount: response.result?.partialCount ?? 0,
       },
     };
+  }
+
+  private async sendWithConflictRecovery(
+    params: Record<string, unknown>,
+    conversationId: string,
+    jobId: string | undefined,
+    abortSignal: AbortSignal | undefined,
+  ): Promise<GatewayRpcResponse> {
+    let lastConflict: unknown;
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      try {
+        const response = await this.callGateway("webchat.send", params, abortSignal) as GatewayRpcResponse;
+        if (response.ok) {
+          return response;
+        }
+        if (!isReplySessionInitializationConflictResponse(response) || abortSignal?.aborted || attempt === 3) {
+          throw new Error(response.error?.message || "OpenClaw webchat.send failed.");
+        }
+        lastConflict = new Error(response.error?.message || "OpenClaw webchat.send failed.");
+      } catch (error) {
+        if (!isReplySessionInitializationConflict(error) || abortSignal?.aborted || attempt === 3) {
+          throw error;
+        }
+        lastConflict = error;
+      }
+
+      await this.recoverReplySessionConflict(conversationId, jobId, attempt, lastConflict, abortSignal);
+    }
+
+    throw lastConflict instanceof Error ? lastConflict : new Error("OpenClaw webchat.send failed.");
+  }
+
+  private async recoverReplySessionConflict(
+    conversationId: string,
+    jobId: string | undefined,
+    attempt: number,
+    conflict: unknown,
+    abortSignal: AbortSignal | undefined,
+  ): Promise<void> {
+    const message = conflict instanceof Error ? conflict.message : String(conflict);
+    console.warn(`Gateway native webchat send session conflict; recovering conversation=${conversationId} job=${jobId ?? "none"} attempt=${attempt} error="${message}"`);
+    try {
+      await this.abortActive({ conversationId, abortSignal });
+    } catch (error) {
+      console.warn(`Gateway native webchat conflict recovery abort failed conversation=${conversationId} job=${jobId ?? "none"}:`, error instanceof Error ? error.message : String(error));
+    }
+    if (abortSignal?.aborted) {
+      throw new Error("OpenClaw Gateway request cancelled.");
+    }
+    await sleep(250 * attempt);
   }
 
   async abortActive(input: OpenClawAbortInput): Promise<OpenClawAbortResult> {
