@@ -53,7 +53,7 @@ test("model menu hides provider in labels and marks current selection", async ()
   assert.equal(menu.canChange, true);
   assert.deepEqual(menu.models.map((entry) => entry.label), ["gpt-5.4", "gpt-5.5"]);
   assert.equal(menu.models.find((entry) => entry.ref === "openai-codex/gpt-5.5")?.selected, true);
-  assert.deepEqual(menu.thinkingLevels.map((entry) => entry.ref), ["off", "low", "medium", "high"]);
+  assert.deepEqual(menu.thinkingLevels.map((entry) => entry.ref), ["off", "low", "medium", "high", "xhigh", "max", "ultra"]);
   assert.equal(menu.thinkingLevels.find((entry) => entry.ref === "medium")?.selected, true);
 });
 
@@ -102,6 +102,15 @@ test("applyNativeThinkingSelection updates and resets session thinking override"
   assert.equal(reset.reset, true);
 
   await assert.rejects(() => applyNativeThinkingSelection("turbo", { userRole: "admin", sessionKey: "web-conv_test" }), /thinking 값은/);
+});
+
+test("applyNativeThinkingSelection accepts GPT-5.6 extended thinking levels", async () => {
+  for (const level of ["xhigh", "max", "ultra"]) {
+    const result = await applyNativeThinkingSelection(level, { userRole: "admin", sessionKey: "web-conv_test" });
+    assert.equal(result.currentThinking, level);
+    assert.equal(result.reset, false);
+  }
+  setSessionThinkingOverride("web-conv_test", null);
 });
 
 test("ensureSessionEntry does not create explicit-session aliases", () => {

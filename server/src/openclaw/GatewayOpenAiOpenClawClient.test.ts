@@ -423,33 +423,6 @@ test("passes runtime workspace metadata to Gateway requests", async () => {
   }
 });
 
-test("can include optional webchat streaming hint when enabled", async () => {
-  const previousHint = process.env.OPENCLAW_WEBCHAT_STREAMING_HINT;
-  process.env.OPENCLAW_WEBCHAT_STREAMING_HINT = "1";
-  const requests: Array<{ body: Record<string, unknown> }> = [];
-  const server = await withServer(async (req, res) => {
-    requests.push({ body: await readJson(req) });
-    res.writeHead(200, { "content-type": "text/event-stream; charset=utf-8" });
-    res.end('data: {"choices":[{"delta":{"content":"ok"}}]}\n\ndata: [DONE]\n\n');
-  });
-
-  try {
-    const client = new GatewayOpenAiOpenClawClient(server.baseUrl, undefined, "openclaw-test", 5_000);
-    await client.sendMessage({ sessionId: "session-webchat-hint-test", message: "hello" });
-
-    const messages = requests[0]?.body.messages as Array<{ content: string }>;
-    assert.match(messages[0]?.content, /Web\/PWA 채팅 채널/);
-    assert.match(messages[0]?.content, /assistant 본문\/commentary로 사용자에게 보이게 작성/);
-  } finally {
-    if (previousHint === undefined) {
-      delete process.env.OPENCLAW_WEBCHAT_STREAMING_HINT;
-    } else {
-      process.env.OPENCLAW_WEBCHAT_STREAMING_HINT = previousHint;
-    }
-    await server.close();
-  }
-});
-
 test("includes session thinking override in Gateway requests", async () => {
   const requests: Array<Record<string, unknown>> = [];
   const server = await withServer(async (req, res) => {

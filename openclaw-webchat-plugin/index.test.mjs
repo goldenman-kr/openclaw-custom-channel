@@ -116,8 +116,12 @@ test("accepts only stable PWA target ids in target resolution", () => {
 test("returns compact delivery output by default", async () => {
   const originalFetch = globalThis.fetch;
   const originalVerbose = process.env.OPENCLAW_WEBCHAT_VERBOSE_DELIVERY_RECEIPT;
+  let delivery;
   delete process.env.OPENCLAW_WEBCHAT_VERBOSE_DELIVERY_RECEIPT;
-  globalThis.fetch = async () => ({ ok: true });
+  globalThis.fetch = async (_url, init) => {
+    delivery = JSON.parse(init.body);
+    return { ok: true };
+  };
   try {
     const result = await pluginEntry.channelPlugin.outbound.sendText({
       cfg: { channels: { "pwa-webchat": { deliveryUrl: "http://127.0.0.1/internal/openclaw/webchat-delivery" } } },
@@ -129,6 +133,7 @@ test("returns compact delivery output by default", async () => {
     assert.equal(result.ok, true);
     assert.equal(result.channel, "pwa-webchat");
     assert.match(result.messageId, /^oc_/);
+    assert.equal(delivery.phase, "final");
   } finally {
     globalThis.fetch = originalFetch;
     if (originalVerbose === undefined) {
@@ -297,8 +302,68 @@ test("dispatches PWA sends with the scoped OpenClaw session key", async () => {
   assert.equal(dispatches[0].ctxPayload.To, "conversation-job:conv_test:job:job_test");
   assert.equal(dispatches[0].record.updateLastRoute.sessionKey, "agent:main:pwa-webchat:conv_test");
   assert.equal(dispatches[0].record.updateLastRoute.to, "conversation:conv_test");
+  assert.match(dispatches[0].replyOptions.extraSystemPrompt, /Intermediate assistant commentary is surfaced automatically/);
+  assert.match(dispatches[0].replyOptions.extraSystemPrompt, /Send the final user-visible answer once/);
   assert.equal(records.length, 1);
   assert.equal(records[0].sessionKey, "agent:main:pwa-webchat:conv_test");
+});
+
+test("message tool hints separate temporary commentary from final delivery", () => {
+  const hints = pluginEntry.channelPlugin.agentPrompt.messageToolHints().join("\n");
+
+  assert.match(hints, /Intermediate assistant commentary is shown automatically/);
+  assert.match(hints, /final PWA WebChat answer once through `message\(action=send\)`/);
+  assert.match(hints, /do not send progress with the message tool/);
+});
+
+test("delivers assistant commentary as a temporary PWA event for message-tool-owned turns", async () => {
+  const originalFetch = globalThis.fetch;
+  const deliveries = [];
+  globalThis.fetch = async (_url, init) => {
+    deliveries.push(JSON.parse(init.body));
+    return { ok: true };
+  };
+  try {
+    const { handlers } = createGatewayHarness({
+      dispatchReply: async (dispatch) => {
+        await dispatch.replyOptions.onItemEvent({
+          itemId: "commentary_1",
+          kind: "preamble",
+          phase: "update",
+          progressText: "현재 파일 구조를 확인하고 있습니다.",
+        });
+        return {
+          dispatched: true,
+          routeSessionKey: dispatch.routeSessionKey,
+          dispatchResult: {
+            queuedFinal: false,
+            observedReplyDelivery: false,
+            sourceReplyDeliveryMode: "message_tool_only",
+            counts: {},
+            failedCounts: {},
+          },
+        };
+      },
+    });
+
+    const response = await callGatewayMethod(handlers.get("webchat.send"), {
+      conversationId: "conv_commentary_test",
+      jobId: "job_commentary_test",
+      agentId: "main",
+      userId: "user_test",
+      model: "openai-codex/gpt-5.5",
+      message: "hello",
+    });
+
+    assert.equal(response.ok, true);
+    assert.equal(response.result.deliverySignals.commentaryEvent, 1);
+    assert.equal(deliveries.length, 1);
+    assert.equal(deliveries[0].phase, "event");
+    assert.equal(deliveries[0].jobId, "job_commentary_test");
+    assert.equal(deliveries[0].text, "현재 파일 구조를 확인하고 있습니다.");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test("delivers fallback final text when message-tool delivery is absent", async () => {

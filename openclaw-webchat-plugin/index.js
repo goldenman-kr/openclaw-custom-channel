@@ -24,10 +24,9 @@ const recentJobDeliveryTexts = new Map();
 const PWA_DELIVERY_SYSTEM_PROMPT = [
   "PWA WebChat delivery rule:",
   "- User-visible output for this channel is delivered through `message(action=send)`.",
-  "- When the user asks for step-by-step progress, intermediate answers, streaming checkpoints, or tool-before/tool-after separation, send each requested visible step as its own separate `message(action=send)` call in the requested order.",
-  "- Do not combine multiple requested visible numbered steps into one `message(action=send)` call.",
-  "- Tool invocations and tool outputs are not user-visible chat messages by themselves. If the user asks for a visible tool-call step, send that step as a normal `message(action=send)` message at the appropriate point around the actual tool call.",
-  "- Keep normal final assistant text private unless the visible answer has already been sent through `message(action=send)`.",
+  "- Intermediate assistant commentary is surfaced automatically as temporary PWA chat bubbles. Do not use `message(action=send)` for intermediate progress.",
+  "- Send the final user-visible answer once through `message(action=send)`. That final delivery replaces the temporary intermediate bubbles for this turn.",
+  "- Keep normal final assistant text private and do not duplicate the visible answer there.",
 ].join("\n");
 
 function getChannelConfig(cfg) {
@@ -530,9 +529,9 @@ const messageAdapter = defineChannelMessageAdapter({
     },
   },
   send: {
-    text: async (ctx) => sendWebchatText(ctx, parseTarget(ctx.to).jobId ? "event" : "final"),
-    media: async (ctx) => sendWebchatText(ctx, parseTarget(ctx.to).jobId ? "event" : "final"),
-    payload: async (ctx) => sendWebchatText(ctx, parseTarget(ctx.to).jobId ? "event" : "final"),
+    text: async (ctx) => sendWebchatText(ctx, "final"),
+    media: async (ctx) => sendWebchatText(ctx, "final"),
+    payload: async (ctx) => sendWebchatText(ctx, "final"),
   },
 });
 
@@ -573,7 +572,7 @@ const plugin = {
     },
     sendText: async (ctx) => {
       const target = parseTarget(ctx.to);
-      const result = await sendWebchatText(ctx, target.jobId ? "event" : "final");
+      const result = await sendWebchatText(ctx, "final");
       const response = {
         ok: true,
         channel: CHANNEL_ID,
@@ -587,7 +586,7 @@ const plugin = {
     },
     sendMedia: async (ctx) => {
       const target = parseTarget(ctx.to);
-      const result = await sendWebchatText(ctx, target.jobId ? "event" : "final");
+      const result = await sendWebchatText(ctx, "final");
       const response = {
         ok: true,
         channel: CHANNEL_ID,
@@ -634,8 +633,8 @@ const plugin = {
   },
   agentPrompt: {
     messageToolHints: () => [
-      "- PWA WebChat visible output is delivered through `message(action=send)`. When the user asks for step-by-step progress, intermediate answers, streaming checkpoints, or tool-before/tool-after separation, send each requested visible step as its own separate `message(action=send)` call.",
-      "- For tool workflows, send the visible pre-tool step before invoking the tool. After the tool result, send each requested follow-up step as separate `message(action=send)` calls instead of combining multiple numbered steps in one message.",
+      "- Intermediate assistant commentary is shown automatically as temporary PWA bubbles; do not send progress with the message tool.",
+      "- Send the final PWA WebChat answer once through `message(action=send)`; it replaces those temporary bubbles.",
     ],
   },
 };
@@ -882,6 +881,7 @@ async function handleSend(api, params) {
     final: 0,
     fallbackFinal: 0,
     transcriptEvent: 0,
+    commentaryEvent: 0,
     partial: 0,
     boundary: 0,
     error: 0,
@@ -961,13 +961,12 @@ async function handleSend(api, params) {
         }
       },
       onItemEvent: async (payload) => {
-        if (messageToolOwnsVisibleDelivery) {
-          return;
-        }
         const kind = typeof payload?.kind === "string" ? payload.kind : "";
         const text = textFromPayload(payload);
-        if (!toolStarted && partialCount === 0 && kind === "preamble" && text) {
-          await postVisibleEvent("preamble", text);
+        if (kind === "preamble" && text) {
+          const itemId = typeof payload?.itemId === "string" && payload.itemId.trim() ? payload.itemId.trim() : "current";
+          await postVisibleEvent(`commentary:${itemId}`, text);
+          deliverySignals.commentaryEvent += 1;
         }
       },
       onToolStart: async (payload) => {

@@ -482,6 +482,9 @@ export interface NativeModelMenuState {
   thinkingLevels: NativeThinkingMenuEntry[];
 }
 
+const THINKING_LEVELS = ["off", "low", "medium", "high", "xhigh", "max", "ultra"] as const;
+const ACCEPTED_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "adaptive", "max", "ultra"] as const;
+
 function modelLabel(modelRef: string): string {
   const slash = modelRef.indexOf("/");
   return slash >= 0 ? modelRef.slice(slash + 1) : modelRef;
@@ -492,7 +495,6 @@ export async function getNativeModelMenu(context: NativeCommandContext): Promise
   const currentThinking = resolveSessionThinkingLevel(context.sessionKey);
   const configuredModels = await loadConfiguredModels().catch(() => [] as string[]);
   const refs = [...new Set([...(configuredModels.length > 0 ? configuredModels : []), currentModel].filter(Boolean))];
-  const thinkingLevels = ["off", "low", "medium", "high"];
   return {
     currentModel,
     gatewayModel: activeGatewayModel(),
@@ -503,7 +505,7 @@ export async function getNativeModelMenu(context: NativeCommandContext): Promise
       label: modelLabel(ref),
       selected: ref === currentModel,
     })),
-    thinkingLevels: thinkingLevels.map((ref) => ({
+    thinkingLevels: THINKING_LEVELS.map((ref) => ({
       ref,
       label: ref,
       selected: ref === currentThinking,
@@ -535,7 +537,7 @@ function normalizeThinkingLevel(value: string): string | null {
   if (["default", "reset", "clear", "auto"].includes(normalized)) {
     return "";
   }
-  if (["off", "minimal", "low", "medium", "high", "xhigh", "adaptive", "max"].includes(normalized)) {
+  if ((ACCEPTED_THINKING_LEVELS as readonly string[]).includes(normalized)) {
     return normalized;
   }
   return null;
@@ -617,7 +619,7 @@ export async function applyNativeThinkingSelection(requestedLevel: string, conte
 
   const normalized = normalizeThinkingLevel(requested);
   if (normalized === null) {
-    throw new Error("❌ thinking 값은 `off|minimal|low|medium|high|xhigh|adaptive|max` 중 하나여야 합니다. 기본값 복귀는 `/think auto` 또는 `/think default`를 사용하세요.");
+    throw new Error("❌ thinking 값은 `off|minimal|low|medium|high|xhigh|adaptive|max|ultra` 중 하나여야 합니다. 기본값 복귀는 `/think auto` 또는 `/think default`를 사용하세요.");
   }
 
   if (normalized) {
@@ -641,7 +643,7 @@ async function nativeThink(arg: string, context: NativeCommandContext): Promise<
   if (!requested) {
     return [
       `현재 채팅 thinking: ${currentThinking}`,
-      "변경하려면 `/think low|medium|high|xhigh|adaptive|max|off` 형식으로 입력하세요.",
+      "변경하려면 `/think low|medium|high|xhigh|adaptive|max|ultra|off` 형식으로 입력하세요.",
       "기본값으로 되돌리려면 `/think auto`를 입력하세요.",
     ].join("\n");
   }

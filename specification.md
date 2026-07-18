@@ -789,7 +789,7 @@ Request rules:
 
 ### Attachment Limits (MVP Fixed)
 
-- Maximum attachments per request: `3`
+- Maximum attachments per request: `10`
 - Maximum per attachment (decoded binary size): `5 MB`
 - Maximum total attachment size per request (decoded): `10 MB`
 - Allowed image MIME types:

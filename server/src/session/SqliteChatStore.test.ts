@@ -197,6 +197,25 @@ test("orders user messages before assistant placeholders with identical timestam
   }
 });
 
+test("deletes temporary assistant messages for a job while preserving its final message", () => {
+  const dir = tempDir();
+  const store = new SqliteChatStore(join(dir, "chat.sqlite"));
+  try {
+    const conversation = store.createConversation();
+    store.addMessage({ id: "job_cleanup", conversationId: conversation.id, role: "assistant", text: "응답을 처리 중입니다…", jobId: "job_cleanup" });
+    store.addMessage({ id: "oc_middle_1", conversationId: conversation.id, role: "assistant", text: "중간 답변 1", jobId: "job_cleanup" });
+    store.addMessage({ id: "oc_middle_2", conversationId: conversation.id, role: "assistant", text: "중간 답변 2", jobId: "job_cleanup" });
+    store.addMessage({ id: "oc_final", conversationId: conversation.id, role: "assistant", text: "최종 답변", jobId: "job_cleanup" });
+    store.addMessage({ id: "msg_other", conversationId: conversation.id, role: "assistant", text: "다른 작업", jobId: "job_other" });
+
+    assert.equal(store.deleteAssistantMessagesForJob("job_cleanup", "oc_final"), 3);
+    assert.deepEqual(new Set(store.listMessages(conversation.id).map((message) => message.id)), new Set(["oc_final", "msg_other"]));
+  } finally {
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 
 test("returns 300 recent messages by default for multi-day conversations", () => {
   const dir = tempDir();

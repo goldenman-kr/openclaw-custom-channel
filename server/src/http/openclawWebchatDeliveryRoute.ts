@@ -281,6 +281,7 @@ export async function handleOpenClawWebchatDeliveryRoute(
   }
 
   if (body.phase === "final" && body.jobId) {
+    deps.conversationStore.deleteAssistantMessagesForJob?.(body.jobId, messageId);
     deps.conversationStore.updateJob(body.jobId, { state: "completed", error: null, now });
     deps.publishJobEvent({ id: body.jobId, state: "completed" });
   }

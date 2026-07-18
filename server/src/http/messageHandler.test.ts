@@ -130,6 +130,48 @@ test("accepts markdown attachments", async () => {
   assert.equal("reply" in result.body, true);
 });
 
+test("accepts up to ten attachments", async () => {
+  const result = await handlePostMessage(
+    deps(),
+    { authorization: "Bearer test-key" },
+    {
+      message: "첨부 파일 10개 테스트",
+      attachments: Array.from({ length: 10 }, (_, index) => ({
+        type: "file" as const,
+        name: `notes-${index + 1}.txt`,
+        mime_type: "text/plain",
+        content_base64: "aGVsbG8=",
+      })),
+    },
+  );
+
+  assert.equal(result.statusCode, 200);
+  assert.equal("reply" in result.body, true);
+});
+
+test("rejects more than ten attachments", async () => {
+  const result = await handlePostMessage(
+    deps(),
+    { authorization: "Bearer test-key" },
+    {
+      message: "첨부 파일 11개 테스트",
+      attachments: Array.from({ length: 11 }, (_, index) => ({
+        type: "file" as const,
+        name: `notes-${index + 1}.txt`,
+        mime_type: "text/plain",
+        content_base64: "aGVsbG8=",
+      })),
+    },
+  );
+
+  assert.equal(result.statusCode, 400);
+  assert.equal("error" in result.body, true);
+  if ("error" in result.body) {
+    assert.equal(result.body.error.code, "VALIDATION_ATTACHMENT_COUNT_EXCEEDED");
+    assert.deepEqual(result.body.error.details, { max: 10, actual: 11 });
+  }
+});
+
 test("maps OpenClaw timeout errors to user-facing timeout response", async () => {
   const runtime: ChatRuntime = {
     async sendMessage() {

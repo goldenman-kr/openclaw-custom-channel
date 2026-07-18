@@ -61,6 +61,7 @@ export interface MessageStore {
   }): ChatMessageRecord;
   updateMessage(id: string, patch: { role?: ConversationRole; text?: string; jobId?: string | null; createdAt?: string; completedAt?: string | null; attachments?: HistoryAttachment[] }): ChatMessageRecord | null;
   deleteMessage(id: string): boolean;
+  deleteAssistantMessagesForJob?(jobId: string, exceptMessageId?: string): number;
   listMessages(conversationId: string, input?: { limit?: number }): ChatMessageRecord[];
   clearMessages(conversationId: string, input?: { now?: string }): number;
 }
@@ -328,6 +329,31 @@ export class SqliteChatStore implements ConversationStore, MessageStore, JobStor
       const result = this.db.prepare("DELETE FROM messages WHERE id = ?").run(id);
       this.db.prepare("UPDATE conversations SET updated_at = ? WHERE id = ?").run(now, current.conversation_id);
       return result.changes > 0;
+    });
+    return remove();
+  }
+
+  deleteAssistantMessagesForJob(jobId: string, exceptMessageId?: string): number {
+    const rows = this.db
+      .prepare(
+        `SELECT id, conversation_id
+         FROM messages
+         WHERE job_id = ? AND role = 'assistant' AND id != ?`,
+      )
+      .all(jobId, exceptMessageId ?? "") as Array<{ id: string; conversation_id: string }>;
+    if (rows.length === 0) {
+      return 0;
+    }
+    const now = new Date().toISOString();
+    const remove = this.db.transaction(() => {
+      const ids = rows.map((row) => row.id);
+      const placeholders = ids.map(() => "?").join(",");
+      this.db.prepare(`DELETE FROM attachments WHERE message_id IN (${placeholders})`).run(...ids);
+      const deleted = this.db.prepare(`DELETE FROM messages WHERE id IN (${placeholders})`).run(...ids).changes;
+      for (const conversationId of new Set(rows.map((row) => row.conversation_id))) {
+        this.db.prepare("UPDATE conversations SET updated_at = ? WHERE id = ?").run(now, conversationId);
+      }
+      return deleted;
     });
     return remove();
   }
