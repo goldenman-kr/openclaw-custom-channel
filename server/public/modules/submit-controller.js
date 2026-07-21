@@ -134,7 +134,7 @@ export async function handleSubmitFlow(event, deps) {
       schedulePostSubmitRefresh({ refreshHistoryIfChanged, refreshConversations });
     } catch (error) {
       if (activeJobId && await isJobResolvedInHistory(activeJobId, conversation.id)) {
-        clearPendingJob();
+        clearPendingJob(activeJobId, conversation.id);
         setStatus('');
         notifyReplyReady();
         return;

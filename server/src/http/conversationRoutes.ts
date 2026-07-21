@@ -29,6 +29,7 @@ export function conversationToDto(conversation: ConversationRecord) {
     title: conversation.title,
     created_at: conversation.createdAt,
     updated_at: conversation.updatedAt,
+    ...(conversation.finalResponseAt ? { final_response_at: conversation.finalResponseAt } : {}),
     ...(conversation.archivedAt ? { archived_at: conversation.archivedAt } : {}),
     pinned: conversation.pinned,
   };
@@ -41,6 +42,7 @@ export function chatMessageToHistoryDto(message: ChatMessageRecord) {
     text: message.text,
     savedAt: message.createdAt,
     ...(message.jobId ? { jobId: message.jobId } : {}),
+    ...(message.jobState ? { jobState: message.jobState } : {}),
     ...(message.completedAt ? { completedAt: message.completedAt } : {}),
     ...(message.attachments && message.attachments.length > 0 ? { attachments: message.attachments } : {}),
   };

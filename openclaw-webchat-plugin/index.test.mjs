@@ -134,6 +134,7 @@ test("returns compact delivery output by default", async () => {
     assert.equal(result.channel, "pwa-webchat");
     assert.match(result.messageId, /^oc_/);
     assert.equal(delivery.phase, "final");
+    assert.equal(delivery.retainOnFinalCleanup, true);
   } finally {
     globalThis.fetch = originalFetch;
     if (originalVerbose === undefined) {

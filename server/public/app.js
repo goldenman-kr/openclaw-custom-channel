@@ -10,7 +10,7 @@ import { createConversation as createConversationFromApi, destroyConversation as
 import { createConversationListItem } from './modules/conversation-list-item.js';
 import { conversationListEmptyMessage as getConversationListEmptyMessage, createConversationListEmptyState, updateArchiveToggleButton as updateArchiveToggleButtonView, updateSidebarSummary as updateSidebarSummaryView } from './modules/conversation-list-view.js';
 import { baseVisibleConversations as filterBaseVisibleConversations, conversationMatchesTitle as matchesConversationTitle, isConversationArchived, normalizeConversationSearchQuery, sortConversations, visibleConversations as filterVisibleConversations } from './modules/conversation-list.js';
-import { fetchConversationModelMenu as fetchConversationModelMenuFromApi, patchConversationModel as patchConversationModelFromApi, patchConversationThinking as patchConversationThinkingFromApi } from './modules/conversation-model-api.js';
+import { fetchConversationModelMenu as fetchConversationModelMenuFromApi, patchConversationModel as patchConversationModelFromApi, patchConversationSpeed as patchConversationSpeedFromApi, patchConversationThinking as patchConversationThinkingFromApi } from './modules/conversation-model-api.js';
 import { searchConversationContent } from './modules/conversation-search.js';
 import { applyComposerAvailability, composerAvailabilityState } from './modules/composer-availability.js';
 import { clearComposerDraft as clearStoredComposerDraft, loadComposerDraft, saveComposerDraft as saveStoredComposerDraft } from './modules/composer-draft.js';
@@ -33,22 +33,23 @@ import { getCurrentLocationMetadata } from './modules/location.js';
 import { messageTextWithoutAttachmentPreview, renderedHistorySignature } from './modules/history-render-signature.js';
 import { sendMessage as sendMessageToApi } from './modules/message-api.js';
 import { isPendingHistoryMessage, isPlaceholderPendingText, isRunningJobHistoryMessage, pendingJobPlaceholdersAfterJobMessages, shouldRerenderHistory as shouldRerenderHistorySnapshot } from './modules/history-state.js';
-import { cancelJobById, fetchJobById, isAlreadyFinishedJobError, isJobResolvedInHistory as isJobResolvedInHistoryFromApi, waitForJobPolling } from './modules/job-api.js?v=pwa-client-2026-07-14-attachment-limit-10-001';
-import { waitForJobEventStream } from './modules/job-events.js?v=pwa-client-2026-07-14-attachment-limit-10-001';
+import { cancelJobById, deleteQueuedJobById, fetchJobById, isAlreadyFinishedJobError, isJobResolvedInHistory as isJobResolvedInHistoryFromApi, waitForJobPolling } from './modules/job-api.js?v=pwa-client-2026-07-21-speed-mode-008';
+import { waitForJobEventStream } from './modules/job-events.js?v=pwa-client-2026-07-21-speed-mode-008';
 import { delay, isTerminalJobState, parseSseBlock } from './modules/job-utils.js';
 import { appendMarkdown as appendMarkdownView } from './modules/markdown-renderer.js';
 import { canonicalMediaRefKey, extractMediaRefs, mediaRefsFromHistoryAttachments } from './modules/media.js';
 import { createMediaViewerController } from './modules/media-viewer-controller.js';
 import { appendMediaRef as appendMediaRefView } from './modules/media-ref-renderer.js';
 import { collectBlobUrlsInUse, pruneMediaUrlCache as pruneMediaUrlCacheEntries, revokeCachedMediaUrl as revokeCachedMediaUrlEntry } from './modules/media-url-cache.js';
-import { appendCancelJobAction as appendCancelJobActionView, appendCopyAction as appendCopyActionView, appendRetryAction as appendRetryActionView } from './modules/message-action-renderer.js';
+import { appendCancelJobAction as appendCancelJobActionView, appendCopyAction as appendCopyActionView, appendDeleteQueuedMessageAction as appendDeleteQueuedMessageActionView, appendRetryAction as appendRetryActionView } from './modules/message-action-renderer.js?v=pwa-client-2026-07-21-speed-mode-008';
 import { appendAttachmentPreview as appendAttachmentPreviewView, createMessageNode } from './modules/message-dom.js';
 import { mergeMediaRefs } from './modules/message-actions.js';
-import { createModelPickerController } from './modules/model-picker-controller.js';
-import { renderModelPicker as renderModelPickerView, updateModelPickerButtonState as updateModelPickerButtonStateView } from './modules/model-picker.js';
+import { createModelPickerController } from './modules/model-picker-controller.js?v=pwa-client-2026-07-21-speed-mode-008';
+import { renderModelPicker as renderModelPickerView, updateModelPickerButtonState as updateModelPickerButtonStateView } from './modules/model-picker.js?v=pwa-client-2026-07-21-speed-mode-008';
 import { closeDrawer, drawerSwipeGesture, isDesktopLayout as isDesktopViewport, isDrawerOpen, openDrawer, shouldIgnoreDrawerSwipe as shouldIgnoreDrawerSwipeTarget, toggleDesktopSidebar } from './modules/mobile-drawer.js';
 import { getPushNotificationSupportState, notificationsSupported, notifyReplyReady as notifyReplyReadyBrowser, requestNotificationPermission, subscribeToPushNotifications, unsubscribeFromPushNotifications, updateNotificationButton as updateNotificationButtonView } from './modules/notifications.js';
 import { clearConversationEventRefreshTimer, closeConversationEventSource, conversationEventsSupported, createConversationEventSource } from './modules/conversation-events.js';
+import { conversationFinalNotificationVersion } from './modules/conversation-notifications.js?v=pwa-client-2026-07-21-speed-mode-008';
 import { conversationIdFromPath, conversationUrl, syncConversationUrl } from './modules/navigation.js';
 import { startIntervalIfNeeded, stopIntervalIfNeeded, syncVisiblePagePolling } from './modules/page-lifecycle.js';
 import { createPendingJobController } from './modules/pending-job-controller.js';
@@ -77,7 +78,7 @@ import './plugins/wallet-transaction-card.js';
 
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
 const PUSH_DEVICE_ID_KEY = 'openclaw-web-channel-push-device-id-v1';
-const CLIENT_ASSET_VERSION = 'pwa-client-2026-07-14-attachment-limit-10-001';
+const CLIENT_ASSET_VERSION = 'pwa-client-2026-07-21-speed-mode-008';
 const CLIENT_API_VERSION = 1;
 const elements = {
   loginScreen: document.querySelector('#loginScreen'),
@@ -386,6 +387,7 @@ const modelPicker = createModelPickerController({
   fetchMenu: fetchConversationModelMenu,
   patchModel: patchConversationModel,
   patchThinking: patchConversationThinking,
+  patchSpeed: patchConversationSpeed,
   renderModelPicker: renderModelPickerView,
   updateModelPickerButtonState: updateModelPickerButtonStateView,
   showToast,
@@ -1057,7 +1059,7 @@ function resetConversationNotificationState() {
 }
 
 function conversationUpdateVersion(conversation) {
-  return String(conversation?.updated_at || conversation?.created_at || '');
+  return conversationFinalNotificationVersion(conversation);
 }
 
 function updateConversationNotifications(nextConversations) {
@@ -1458,6 +1460,10 @@ async function patchConversationThinking(conversationId, thinking) {
   return patchConversationThinkingFromApi({ apiFetch, apiHeaders, conversationId, thinking });
 }
 
+async function patchConversationSpeed(conversationId, speed) {
+  return patchConversationSpeedFromApi({ apiFetch, apiHeaders, conversationId, speed });
+}
+
 async function openModelPicker() {
   return modelPicker.open(activeConversation?.id);
 }
@@ -1468,6 +1474,10 @@ async function applyConversationModel(modelRef) {
 
 async function applyConversationThinking(thinkingRef) {
   return modelPicker.applyThinking(activeConversation?.id, thinkingRef);
+}
+
+async function applyConversationSpeed(speedRef) {
+  return modelPicker.applySpeed(activeConversation?.id, speedRef);
 }
 
 async function toggleModelPicker() {
@@ -1715,6 +1725,8 @@ function renderHistoryItem(item) {
     suppressScrollButton: true,
     mediaRefs: mediaRefsFromHistoryAttachments(item.attachments),
     pending: isPendingHistoryMessage(item),
+    jobId: item.jobId,
+    jobState: item.jobState,
   });
 }
 
@@ -2004,6 +2016,19 @@ function appendCancelJobAction(node, role, text, options = {}) {
   });
 }
 
+function appendDeleteQueuedMessageAction(node, role, options = {}) {
+  appendDeleteQueuedMessageActionView(node, role, options, {
+    activeConversationId,
+    deleteQueuedJob,
+    loadPendingJob,
+    clearPendingJob,
+    refreshHistoryIfChanged,
+    refreshConversations,
+    showToast,
+    messagesRoot: elements.messages,
+  });
+}
+
 function renderMessageNode(node, role, text, options = {}) {
   const wasNearBottom = isNearBottom();
   const media = extractMediaRefs(text);
@@ -2015,6 +2040,7 @@ function renderMessageNode(node, role, text, options = {}) {
     appendMediaRef(node, ref);
   }
   appendCopyAction(node, role, text, options);
+  appendDeleteQueuedMessageAction(node, role, options);
   appendRetryAction(node, role, text);
   appendCancelJobAction(node, role, text, options);
   if (options.autoScroll === false) {
@@ -2111,6 +2137,12 @@ function clearPendingJob(conversationId = activeConversationId()) {
   pendingJobs.clear(conversationId);
 }
 
+function clearPendingJobIfMatching(jobId, conversationId = activeConversationId()) {
+  if (pendingJobs.matches(jobId, conversationId)) {
+    clearPendingJob(conversationId);
+  }
+}
+
 async function pruneStoredPendingJobs(conversationList = conversations) {
   await pendingJobs.prune(conversationList);
 }
@@ -2125,6 +2157,10 @@ async function fetchJob(jobId, conversationId = activeConversationId()) {
 
 async function cancelJob(jobId, conversationId = activeConversationId()) {
   return cancelJobById({ apiFetch, historyHeaders, jobId, conversationId });
+}
+
+async function deleteQueuedJob(jobId, conversationId = activeConversationId()) {
+  return deleteQueuedJobById({ apiFetch, historyHeaders, jobId, conversationId });
 }
 
 async function cancelActiveJob() {
@@ -2160,12 +2196,12 @@ async function waitForJobViaSse(jobId, onTick = () => {}, conversationId = activ
     onToken,
     onExpired: () => {
       clearStreamingState(jobId);
-      clearPendingJob(conversationId);
+      clearPendingJobIfMatching(jobId, conversationId);
     },
     onToolStart: () => flushStreamingCheckpointNow(jobId, conversationId),
     onTerminal: () => {
       clearStreamingState(jobId);
-      clearPendingJob(conversationId);
+      clearPendingJobIfMatching(jobId, conversationId);
     },
   });
 }
@@ -2203,7 +2239,7 @@ async function waitForJob(jobId, onTick = () => {}, conversationId = activeConve
     isJobResolvedInHistory,
     ensurePendingJobBubble,
     clearStreamingState,
-    clearPendingJob,
+    clearPendingJob: (targetConversationId) => clearPendingJobIfMatching(jobId, targetConversationId),
     onTick,
   });
 }
@@ -2273,7 +2309,7 @@ async function handleSubmit(event) {
     notifyReplyReady,
     schedulePostSubmitRefresh,
     isJobResolvedInHistory,
-    clearPendingJob,
+    clearPendingJob: clearPendingJobIfMatching,
     restoreComposerAfterSubmitFailure,
     saveComposerDraft,
     isMobileLikeInput,
@@ -2746,6 +2782,6 @@ renderModelPicker();
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-07-14-attachment-limit-10-001').catch(() => {});
+    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-07-21-speed-mode-008').catch(() => {});
   });
 }

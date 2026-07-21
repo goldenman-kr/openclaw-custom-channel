@@ -226,14 +226,13 @@ html[data-theme="system"] .danger-button { color: #991b1b; }
 .model-picker-button {
   width: auto;
   max-width: 100%;
-  height: 44px;
+  min-height: 38px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  padding: 0;
-  border: 0;
-  border-radius: 0;
+  padding: 5px 10px;
+  border: 1px solid rgba(148, 163, 184, 0.34);
+  border-radius: 10px;
   background: transparent;
   box-shadow: none;
   color: rgba(226, 232, 240, 0.92);
@@ -241,7 +240,8 @@ html[data-theme="system"] .danger-button { color: #991b1b; }
 
 .model-picker-button:hover,
 .model-picker-button:focus-visible {
-  background: transparent;
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(226, 232, 240, 0.48);
   color: #f8fafc;
 }
 
@@ -249,24 +249,26 @@ html[data-theme="system"] .danger-button { color: #991b1b; }
   color: rgba(148, 163, 184, 0.48);
 }
 
-.model-picker-icon {
-  flex: 0 0 auto;
-  width: 22px;
-  height: 22px;
-  display: block;
-  object-fit: contain;
-  filter: invert(1);
+.model-picker-button-label {
+  display: grid;
+  grid-template-rows: auto auto;
+  justify-items: center;
+  min-width: 0;
+  max-width: 100%;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: 0;
+  text-align: center;
 }
 
-.model-picker-button-label {
-  min-width: 0;
+.model-picker-model-label,
+.model-picker-thinking-label {
+  display: block;
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 12px;
-  font-weight: 700;
-  line-height: 1;
-  letter-spacing: 0;
 }
 
 .model-picker-panel {
@@ -298,6 +300,10 @@ html[data-theme="system"] .danger-button { color: #991b1b; }
 .model-picker-list {
   display: grid;
   gap: 6px;
+  max-height: min(72vh, 620px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
 }
 
 .model-picker-section-title {
@@ -1130,6 +1136,12 @@ html[data-theme="light"] .message-cancel-button {
   color: #991b1b;
 }
 
+html[data-theme="light"] .message-queued-delete-button {
+  border-color: rgba(220, 38, 38, 0.24);
+  background: rgba(254, 242, 242, 0.96);
+  color: #991b1b;
+}
+
 @media (max-width: 520px) {
   .message.assistant.pending,
   .message.assistant:has(.message-cancel-button) {
@@ -1168,7 +1180,8 @@ html[data-theme="light"] .message-cancel-button {
   font-size: 12px;
 }
 
-.message-copy-button {
+.message-copy-button,
+.message-queued-delete-button {
   position: absolute;
   top: 0;
   width: 18px;
@@ -1191,6 +1204,16 @@ html[data-theme="light"] .message-cancel-button {
   left: -24px;
 }
 
+.message.user .message-queued-delete-button {
+  left: -24px;
+  top: 22px;
+}
+
+.message-queued-delete-button {
+  border-color: rgba(248, 113, 113, 0.46);
+  color: #fecaca;
+}
+
 .message.assistant .message-copy-button,
 .message.system .message-copy-button {
   right: -24px;
@@ -1199,9 +1222,34 @@ html[data-theme="light"] .message-cancel-button {
 .message-copy-button:hover,
 .message-copy-button:focus-visible,
 .message-copy-button.copied,
-.message-copy-button.copy-failed {
+.message-copy-button.copy-failed,
+.message-queued-delete-button:hover,
+.message-queued-delete-button:focus-visible {
   background: var(--panel-soft);
   opacity: 0.88;
+}
+
+.message-queued-delete-button::before,
+.message-queued-delete-button::after {
+  content: '';
+  position: absolute;
+  width: 10px;
+  height: 1.5px;
+  border-radius: 999px;
+  background: currentColor;
+}
+
+.message-queued-delete-button::before {
+  transform: rotate(45deg);
+}
+
+.message-queued-delete-button::after {
+  transform: rotate(-45deg);
+}
+
+.message-queued-delete-button:disabled {
+  cursor: progress;
+  opacity: 0.4;
 }
 
 .message-copy-icon {
@@ -2115,8 +2163,7 @@ html[data-theme="light"] .slash-command-palette { background: rgba(255, 255, 255
 html[data-theme="light"] .composer { background: linear-gradient(180deg, transparent, var(--bg) 20%); }
 
 html[data-theme="light"] .mobile-menu-icon,
-html[data-theme="light"] .sidebar-new-icon,
-html[data-theme="light"] .model-picker-icon {
+html[data-theme="light"] .sidebar-new-icon {
   filter: none;
 }
 
@@ -2190,8 +2237,15 @@ html[data-theme="light"] .mobile-menu-button {
 
 html[data-theme="light"] .model-picker-button {
   background: transparent;
+  border-color: rgba(71, 85, 105, 0.30);
   box-shadow: none;
   color: #475569;
+}
+
+html[data-theme="light"] .model-picker-button:hover,
+html[data-theme="light"] .model-picker-button:focus-visible {
+  background: rgba(255, 255, 255, 0.55);
+  border-color: rgba(71, 85, 105, 0.48);
 }
 
 html[data-theme="light"] .copy-conversation-link-button {
@@ -2334,8 +2388,15 @@ html[data-theme="light"] .message th {
 
   html[data-theme="system"] .model-picker-button {
     background: transparent;
+    border-color: rgba(71, 85, 105, 0.30);
     box-shadow: none;
     color: #475569;
+  }
+
+  html[data-theme="system"] .model-picker-button:hover,
+  html[data-theme="system"] .model-picker-button:focus-visible {
+    background: rgba(255, 255, 255, 0.55);
+    border-color: rgba(71, 85, 105, 0.48);
   }
 
   html[data-theme="system"] .copy-conversation-link-button {

@@ -4,6 +4,7 @@ export function createModelPickerController({
   fetchMenu,
   patchModel,
   patchThinking,
+  patchSpeed,
   renderModelPicker,
   updateModelPickerButtonState,
   showToast,
@@ -29,13 +30,24 @@ export function createModelPickerController({
     return selected?.label || state?.currentThinking || '';
   }
 
+  function selectedSpeed() {
+    const selected = state?.speedModes?.find((entry) => entry.selected);
+    return selected?.ref || state?.currentSpeed || 'standard';
+  }
+
+  function isOpenAiSpeedModel(modelRef = '') {
+    const provider = String(modelRef || '').trim().split('/', 1)[0]?.toLowerCase();
+    return provider === 'openai' || provider === 'openai-codex';
+  }
+
   function currentSummary() {
     const model = selectedModelLabel();
     const thinking = selectedThinkingLabel();
+    const fast = Boolean(state?.speedSupported && selectedSpeed() === 'fast');
     if (!model && !thinking) {
       return '';
     }
-    return thinking ? `${model || 'AI'} (${thinking})` : model;
+    return thinking ? `${model || 'AI'}\n${thinking}${fast ? ' ⚡' : ''}` : `${model}${fast ? '\n⚡' : ''}`;
   }
 
   function withSelectedModel(nextModel) {
@@ -43,12 +55,20 @@ export function createModelPickerController({
       return null;
     }
     const model = String(nextModel || '');
+    const speedSupported = isOpenAiSpeedModel(model);
+    const currentSpeed = speedSupported ? selectedSpeed() : 'standard';
     return {
       ...state,
       currentModel: model,
+      currentSpeed,
+      speedSupported,
       models: (state.models || []).map((entry) => ({
         ...entry,
         selected: entry.ref === model,
+      })),
+      speedModes: (state.speedModes || []).map((entry) => ({
+        ...entry,
+        selected: entry.ref === currentSpeed,
       })),
     };
   }
@@ -68,6 +88,21 @@ export function createModelPickerController({
     };
   }
 
+  function withSelectedSpeed(nextSpeed) {
+    if (!state) {
+      return null;
+    }
+    const speed = String(nextSpeed || '').toLowerCase() === 'fast' ? 'fast' : 'standard';
+    return {
+      ...state,
+      currentSpeed: speed,
+      speedModes: (state.speedModes || []).map((entry) => ({
+        ...entry,
+        selected: entry.ref === speed,
+      })),
+    };
+  }
+
   function render() {
     renderModelPicker(elements, {
       expanded,
@@ -75,6 +110,8 @@ export function createModelPickerController({
       canChange: state?.canChange,
       models: state?.models,
       thinkingLevels: state?.thinkingLevels,
+      speedModes: state?.speedModes,
+      speedSupported: state?.speedSupported,
       hasConversation: hasConversation(),
     }, (modelRef) => {
       apply(activeConversationId, modelRef).catch((error) => {
@@ -82,6 +119,10 @@ export function createModelPickerController({
       });
     }, (thinkingRef) => {
       applyThinking(activeConversationId, thinkingRef).catch((error) => {
+        showToast(error instanceof Error ? error.message : String(error), { kind: 'error', durationMs: 3200 });
+      });
+    }, (speedRef) => {
+      applySpeed(activeConversationId, speedRef).catch((error) => {
         showToast(error instanceof Error ? error.message : String(error), { kind: 'error', durationMs: 3200 });
       });
     });
@@ -193,6 +234,29 @@ export function createModelPickerController({
     }
   }
 
+  async function applySpeed(conversationId, speedRef) {
+    if (!conversationId || loading || !state?.speedSupported) {
+      return;
+    }
+    if (state?.speedModes?.find((entry) => entry.ref === speedRef)?.selected) {
+      setExpanded(false);
+      return;
+    }
+    loading = true;
+    render();
+    try {
+      const result = await patchSpeed(conversationId, speedRef);
+      const currentSpeed = result.current_speed || speedRef;
+      showToast(`Speed 변경 완료: ${currentSpeed === 'fast' ? 'Fast' : 'Standard'}`, { kind: 'success' });
+      state = withSelectedSpeed(currentSpeed);
+      setExpanded(false);
+    } finally {
+      loading = false;
+      render();
+      updateButtonState();
+    }
+  }
+
   async function toggle(conversationId) {
     if (expanded) {
       setExpanded(false);
@@ -218,6 +282,7 @@ export function createModelPickerController({
     refresh,
     apply,
     applyThinking,
+    applySpeed,
     toggle,
   };
 }

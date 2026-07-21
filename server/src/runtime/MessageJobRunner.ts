@@ -20,6 +20,8 @@ export interface MessageJobRunnerDeps {
   publishToken?(job: MessageJob, token: string): void;
   publishAgentEvent?(job: MessageJob, event: ChatRuntimeAgentEvent): void;
   notifyReplyReady?(job: MessageJob): void | Promise<void>;
+  hasEarlierRunningJob?(job: MessageJob): boolean;
+  queueTurnPollMs?: number;
   generatedMediaDirs?: string[];
 }
 
@@ -74,6 +76,11 @@ export class MessageJobRunner {
   }
 
   private async run(job: MessageJob, headers: IncomingMessage["headers"], payload: MessageRequestDto): Promise<void> {
+    if (this.isCancelled(job)) {
+      return;
+    }
+
+    await this.waitForQueueTurn(job);
     if (this.isCancelled(job)) {
       return;
     }
@@ -216,6 +223,12 @@ export class MessageJobRunner {
     const errorMessage = "error" in result.body ? result.body.error.message : "OpenClaw request failed.";
     await this.persistFailure(job, payload, failureTextForError(errorMessage, errorCode));
     this.deps.updateJob(job, { state: "failed", error: errorMessage });
+  }
+
+  private async waitForQueueTurn(job: MessageJob): Promise<void> {
+    while (!this.isCancelled(job) && this.deps.hasEarlierRunningJob?.(job)) {
+      await new Promise<void>((resolve) => setTimeout(resolve, this.deps.queueTurnPollMs ?? 250));
+    }
   }
 
   private isCancelled(job: MessageJob): boolean {

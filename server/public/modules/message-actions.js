@@ -47,6 +47,26 @@ export function createCancelJobButton(onCancel) {
   return button;
 }
 
+export function createDeleteQueuedMessageButton(onDelete) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'message-queued-delete-button';
+  button.title = '대기 중인 요청 삭제';
+  button.setAttribute('aria-label', '대기 중인 요청 삭제');
+  button.addEventListener('click', onDelete);
+  return button;
+}
+
+export function isQueuedUserJobMessage({ role, jobId, jobState }) {
+  const normalizedRole = String(role || '').split(/\s+/)[0];
+  return normalizedRole === 'user' && String(jobId || '').startsWith('job_') && jobState === 'queued';
+}
+
+export function setDeleteQueuedMessageButtonBusy(button, busy) {
+  button.disabled = busy;
+  button.setAttribute('aria-label', busy ? '대기 중인 요청 삭제 중' : '대기 중인 요청 삭제');
+}
+
 export function setCancelJobButtonBusy(button, busy) {
   button.disabled = busy;
   button.setAttribute('aria-label', busy ? '응답 작업 중지 중' : '이 응답 작업 중지');

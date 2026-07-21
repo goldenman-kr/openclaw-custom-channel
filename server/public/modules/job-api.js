@@ -27,6 +27,21 @@ export async function cancelJobById({ apiFetch, historyHeaders, jobId, conversat
   return body;
 }
 
+export async function deleteQueuedJobById({ apiFetch, historyHeaders, jobId, conversationId }) {
+  const response = await apiFetch(`/v1/jobs/${encodeURIComponent(jobId)}`, {
+    params: { conversation_id: conversationId },
+    method: 'DELETE',
+    headers: await historyHeaders(),
+  });
+  const body = await response.json().catch(() => null);
+  if (!response.ok) {
+    const error = new Error(body?.error?.message || `Delete queued job HTTP ${response.status}`);
+    error.status = response.status;
+    throw error;
+  }
+  return body;
+}
+
 export function isAlreadyFinishedJobError(error) {
   const detail = error instanceof Error ? error.message : String(error);
   return error?.status === 404 || detail.includes('Job not found or already finished.');
@@ -52,7 +67,7 @@ export async function waitForJobPolling({
   clearStreamingState,
   clearPendingJob,
   onTick = () => {},
-  maxAttempts = 610,
+  maxAttempts = 4_010,
 }) {
   let transientFailures = 0;
   let lastError = null;

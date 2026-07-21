@@ -166,6 +166,7 @@ test("ignores late delivery for cancelled jobs", async () => {
 
 test("final delivery removes earlier assistant bubbles from the same job", async () => {
   const deleted: Array<{ jobId: string; exceptMessageId?: string }> = [];
+  let addedMessage: { retainOnFinalCleanup?: boolean } | undefined;
   let completedJob = false;
 
   const handled = await handleOpenClawWebchatDeliveryRoute(
@@ -177,7 +178,10 @@ test("final delivery removes earlier assistant bubbles from the same job", async
         getConversation: (id: string) => ({ id, ownerUserId: "usr_test" }),
         getJob: () => ({ id: "job_test", conversationId: "conv_test", state: "running", error: null, createdAt: "", updatedAt: "" }),
         updateMessage: () => null,
-        addMessage: (message: { id?: string }) => ({ ...message, id: message.id ?? "oc_final" }),
+        addMessage: (message: { id?: string; retainOnFinalCleanup?: boolean }) => {
+          addedMessage = message;
+          return { ...message, id: message.id ?? "oc_final" };
+        },
         deleteAssistantMessagesForJob: (jobId: string, exceptMessageId?: string) => {
           deleted.push({ jobId, exceptMessageId });
           return 2;
@@ -193,6 +197,7 @@ test("final delivery removes earlier assistant bubbles from the same job", async
         jobId: "job_test",
         messageId: "oc_final",
         text: "최종 답변",
+        retainOnFinalCleanup: true,
       }),
       sendJson: () => {},
       publishConversationEvent: () => {},
@@ -203,5 +208,6 @@ test("final delivery removes earlier assistant bubbles from the same job", async
 
   assert.equal(handled, true);
   assert.deepEqual(deleted, [{ jobId: "job_test", exceptMessageId: "oc_final" }]);
+  assert.equal(addedMessage?.retainOnFinalCleanup, true);
   assert.equal(completedJob, true);
 });

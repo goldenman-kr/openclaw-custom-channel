@@ -83,6 +83,34 @@ test("filters conversations by owner", () => {
   }
 });
 
+test("advances the notification version only when a job reaches its final completed state", () => {
+  const dir = tempDir();
+  const store = new SqliteChatStore(join(dir, "chat.sqlite"));
+  try {
+    const conversation = store.createConversation({ now: "2026-07-20T00:00:00.000Z" });
+    const job = store.createJob({ conversationId: conversation.id, now: "2026-07-20T00:01:00.000Z" });
+
+    store.addMessage({
+      conversationId: conversation.id,
+      role: "assistant",
+      text: "중간 답변",
+      jobId: job.id,
+      createdAt: "2026-07-20T00:02:00.000Z",
+      completedAt: "2026-07-20T00:02:00.000Z",
+    });
+    store.updateJob(job.id, { state: "running", now: "2026-07-20T00:02:00.000Z" });
+
+    assert.equal(store.getConversation(conversation.id)?.finalResponseAt, undefined);
+
+    store.updateJob(job.id, { state: "completed", now: "2026-07-20T00:03:00.000Z" });
+
+    assert.equal(store.getConversation(conversation.id)?.finalResponseAt, "2026-07-20T00:03:00.000Z");
+  } finally {
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 
 test("looks up conversations by OpenClaw session id", () => {
   const dir = tempDir();
@@ -197,6 +225,92 @@ test("orders user messages before assistant placeholders with identical timestam
   }
 });
 
+test("keeps queued requests below the previous response and fixes their order when processing starts", () => {
+  const dir = tempDir();
+  const store = new SqliteChatStore(join(dir, "chat.sqlite"));
+  try {
+    const conversation = store.createConversation({ now: "2026-07-20T00:00:00.000Z" });
+    store.createJob({ id: "job_previous", conversationId: conversation.id, state: "running", now: "2026-07-20T00:01:00.000Z" });
+    store.addMessage({ id: "msg_previous_user", conversationId: conversation.id, role: "user", text: "이전 질문", jobId: "job_previous", createdAt: "2026-07-20T00:01:00.000Z" });
+    store.createJob({ id: "job_queued_next", conversationId: conversation.id, state: "queued", now: "2026-07-20T00:02:00.000Z" });
+    store.addMessage({ id: "msg_queued_user", conversationId: conversation.id, role: "user", text: "대기 질문", jobId: "job_queued_next", createdAt: "2026-07-20T00:02:00.000Z" });
+    store.addMessage({ id: "job_queued_next", conversationId: conversation.id, role: "assistant", text: "응답 대기 중입니다…", jobId: "job_queued_next", createdAt: "2026-07-20T00:02:00.000Z" });
+    store.createJob({ id: "job_queued_third", conversationId: conversation.id, state: "queued", now: "2026-07-20T00:02:30.000Z" });
+    store.addMessage({ id: "msg_queued_third_user", conversationId: conversation.id, role: "user", text: "두 번째 대기 질문", jobId: "job_queued_third", createdAt: "2026-07-20T00:02:30.000Z" });
+    store.addMessage({ id: "job_queued_third", conversationId: conversation.id, role: "assistant", text: "응답 대기 중입니다…", jobId: "job_queued_third", createdAt: "2026-07-20T00:02:30.000Z" });
+    store.addMessage({ id: "msg_previous_middle", conversationId: conversation.id, role: "assistant", text: "이전 중간 답변", jobId: "job_previous", createdAt: "2026-07-20T00:03:00.000Z" });
+
+    assert.equal(store.hasEarlierRunningJob("job_queued_next"), true);
+    assert.equal(store.hasEarlierRunningJob("job_queued_third"), true);
+
+    assert.deepEqual(store.listMessages(conversation.id).map((message) => message.id), [
+      "msg_previous_user",
+      "msg_previous_middle",
+      "msg_queued_user",
+      "job_queued_next",
+      "msg_queued_third_user",
+      "job_queued_third",
+    ]);
+
+    store.addMessage({ id: "msg_previous_final", conversationId: conversation.id, role: "assistant", text: "이전 최종 답변", jobId: "job_previous", createdAt: "2026-07-20T00:04:00.000Z" });
+    store.updateJob("job_previous", { state: "completed", now: "2026-07-20T00:04:00.000Z" });
+    assert.equal(store.hasEarlierRunningJob("job_queued_next"), false);
+    assert.deepEqual(store.listMessages(conversation.id).map((message) => message.id).slice(-5), [
+      "msg_previous_final",
+      "msg_queued_user",
+      "job_queued_next",
+      "msg_queued_third_user",
+      "job_queued_third",
+    ]);
+
+    store.updateJob("job_queued_next", { state: "running", now: "2026-07-20T00:05:00.000Z" });
+    assert.equal(store.hasEarlierRunningJob("job_queued_third"), true);
+    const startedMessages = store.listMessages(conversation.id);
+    assert.deepEqual(startedMessages.map((message) => message.id).slice(-5), [
+      "msg_previous_final",
+      "msg_queued_user",
+      "job_queued_next",
+      "msg_queued_third_user",
+      "job_queued_third",
+    ]);
+    assert.deepEqual(startedMessages.filter((message) => message.jobId === "job_queued_next").map((message) => message.createdAt), [
+      "2026-07-20T00:05:00.000Z",
+      "2026-07-20T00:05:00.000Z",
+    ]);
+  } finally {
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("repairs a request that started too early across a server restart when it completes", () => {
+  const dir = tempDir();
+  const store = new SqliteChatStore(join(dir, "chat.sqlite"));
+  try {
+    const conversation = store.createConversation({ now: "2026-07-20T00:00:00.000Z" });
+    store.createJob({ id: "job_restart_previous", conversationId: conversation.id, state: "running", now: "2026-07-20T00:01:00.000Z" });
+    store.addMessage({ id: "msg_restart_previous_user", conversationId: conversation.id, role: "user", text: "이전 질문", jobId: "job_restart_previous", createdAt: "2026-07-20T00:01:00.000Z" });
+    store.createJob({ id: "job_restart_overlap", conversationId: conversation.id, state: "running", now: "2026-07-20T00:02:00.000Z" });
+    store.addMessage({ id: "msg_restart_overlap_user", conversationId: conversation.id, role: "user", text: "너무 일찍 시작한 질문", jobId: "job_restart_overlap", createdAt: "2026-07-20T00:02:00.000Z" });
+    store.addMessage({ id: "msg_restart_previous_final", conversationId: conversation.id, role: "assistant", text: "이전 최종 답변", jobId: "job_restart_previous", createdAt: "2026-07-20T00:04:00.000Z" });
+    store.updateJob("job_restart_previous", { state: "completed", now: "2026-07-20T00:04:00.000Z" });
+    store.addMessage({ id: "msg_restart_overlap_final", conversationId: conversation.id, role: "assistant", text: "겹친 작업 최종 답변", jobId: "job_restart_overlap", createdAt: "2026-07-20T00:06:00.000Z" });
+
+    store.updateJob("job_restart_overlap", { state: "completed", now: "2026-07-20T00:06:00.000Z" });
+
+    const messages = store.listMessages(conversation.id);
+    assert.deepEqual(messages.map((message) => message.id).slice(-3), [
+      "msg_restart_previous_final",
+      "msg_restart_overlap_user",
+      "msg_restart_overlap_final",
+    ]);
+    assert.equal(messages.find((message) => message.id === "msg_restart_overlap_user")?.createdAt, "2026-07-20T00:06:00.000Z");
+  } finally {
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("deletes temporary assistant messages for a job while preserving its final message", () => {
   const dir = tempDir();
   const store = new SqliteChatStore(join(dir, "chat.sqlite"));
@@ -205,11 +319,48 @@ test("deletes temporary assistant messages for a job while preserving its final 
     store.addMessage({ id: "job_cleanup", conversationId: conversation.id, role: "assistant", text: "응답을 처리 중입니다…", jobId: "job_cleanup" });
     store.addMessage({ id: "oc_middle_1", conversationId: conversation.id, role: "assistant", text: "중간 답변 1", jobId: "job_cleanup" });
     store.addMessage({ id: "oc_middle_2", conversationId: conversation.id, role: "assistant", text: "중간 답변 2", jobId: "job_cleanup" });
+    store.addMessage({ id: "oc_message_tool", conversationId: conversation.id, role: "assistant", text: "message send 답변", jobId: "job_cleanup", retainOnFinalCleanup: true });
     store.addMessage({ id: "oc_final", conversationId: conversation.id, role: "assistant", text: "최종 답변", jobId: "job_cleanup" });
     store.addMessage({ id: "msg_other", conversationId: conversation.id, role: "assistant", text: "다른 작업", jobId: "job_other" });
 
     assert.equal(store.deleteAssistantMessagesForJob("job_cleanup", "oc_final"), 3);
-    assert.deepEqual(new Set(store.listMessages(conversation.id).map((message) => message.id)), new Set(["oc_final", "msg_other"]));
+    assert.deepEqual(new Set(store.listMessages(conversation.id).map((message) => message.id)), new Set(["oc_message_tool", "oc_final", "msg_other"]));
+  } finally {
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("deletes a queued job with its user request and pending assistant bubble", () => {
+  const dir = tempDir();
+  const store = new SqliteChatStore(join(dir, "chat.sqlite"));
+  try {
+    const conversation = store.createConversation();
+    store.createJob({ id: "job_queued_delete", conversationId: conversation.id, state: "queued" });
+    store.addMessage({ id: "msg_queued_user", conversationId: conversation.id, role: "user", text: "대기 요청", jobId: "job_queued_delete" });
+    store.addMessage({ id: "job_queued_delete", conversationId: conversation.id, role: "assistant", text: "응답 대기 중입니다…", jobId: "job_queued_delete" });
+
+    assert.deepEqual(store.listMessages(conversation.id).map((message) => message.jobState), ["queued", "queued"]);
+    assert.equal(store.deleteQueuedJob("job_queued_delete"), true);
+    assert.deepEqual(store.listMessages(conversation.id), []);
+    assert.equal(store.getJob("job_queued_delete"), null);
+  } finally {
+    store.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("does not delete a job after processing has started", () => {
+  const dir = tempDir();
+  const store = new SqliteChatStore(join(dir, "chat.sqlite"));
+  try {
+    const conversation = store.createConversation();
+    store.createJob({ id: "job_running_keep", conversationId: conversation.id, state: "running" });
+    store.addMessage({ id: "msg_running_user", conversationId: conversation.id, role: "user", text: "실행 요청", jobId: "job_running_keep" });
+
+    assert.equal(store.deleteQueuedJob("job_running_keep"), false);
+    assert.equal(store.getJob("job_running_keep")?.state, "running");
+    assert.equal(store.listMessages(conversation.id).length, 1);
   } finally {
     store.close();
     rmSync(dir, { recursive: true, force: true });

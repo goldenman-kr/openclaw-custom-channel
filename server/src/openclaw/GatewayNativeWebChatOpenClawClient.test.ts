@@ -150,6 +150,39 @@ test("uses conversation id as the native PWA Gateway conversation contract", asy
   });
 });
 
+test("includes private location metadata in the native PWA Gateway message", async () => {
+  await withFakeWebSocket(async () => {
+    const client = new GatewayNativeWebChatOpenClawClient(
+      "http://127.0.0.1:18789",
+      "gateway-token",
+      "gateway-password",
+      5_000,
+      "main",
+      "token",
+    );
+    await client.sendMessage({
+      sessionId: "conv_location_test",
+      message: "여기서 출발",
+      metadata: {
+        location: {
+          latitude: 37.33115767493675,
+          longitude: 127.16082002027727,
+          accuracy: 39.6,
+          captured_at: "2026-07-21T05:47:58.000Z",
+        },
+      },
+    });
+
+    const sendFrame = FakeWebSocket.sentFrames.find((frame) => frame.method === "webchat.send");
+    const message = (sendFrame?.params as { message?: string })?.message ?? "";
+    assert.match(message, /^여기서 출발/);
+    assert.match(message, /비공개 클라이언트 metadata: 사용자의 현재 위치가 제공되었습니다/);
+    assert.match(message, /latitude=37\.33115767493675, longitude=127\.16082002027727/);
+    assert.match(message, /accuracy_m=40/);
+    assert.match(message, /captured_at=2026-07-21T05:47:58\.000Z/);
+  });
+});
+
 test("passes the active PWA session model override to webchat.send", async (t) => {
   const sessionDir = await mkdtemp(join(tmpdir(), "openclaw-native-webchat-session-store-"));
   const sessionStorePath = join(sessionDir, "sessions.json");

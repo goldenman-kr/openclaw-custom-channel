@@ -8,6 +8,7 @@ export interface JobRouteDeps {
   makeErrorResponse(code: ErrorResponseDto["error"]["code"], message: string, details?: Record<string, unknown>): ErrorResponseDto;
   getJob(jobId: string, request: IncomingMessage, url: URL): JobEventRecord | null;
   cancelJob(jobId: string, request: IncomingMessage, url: URL): JobEventRecord | null;
+  discardQueuedJob(jobId: string, request: IncomingMessage, url: URL): "deleted" | "not-queued" | "not-found";
   eventPublisher: SseJobEventPublisher;
 }
 
@@ -35,6 +36,25 @@ export function handleJobRoute(
       return true;
     }
     deps.sendJson(response, 200, job);
+    return true;
+  }
+
+  if (request.method === "DELETE" && url.pathname.startsWith("/v1/jobs/")) {
+    if (!deps.isAuthorized(request)) {
+      deps.sendJson(response, 401, deps.makeErrorResponse("AUTH_INVALID_TOKEN", "API key is invalid."));
+      return true;
+    }
+    const jobId = decodeURIComponent(url.pathname.slice("/v1/jobs/".length));
+    const result = deps.discardQueuedJob(jobId, request, url);
+    if (result === "not-queued") {
+      deps.sendJson(response, 409, deps.makeErrorResponse("INTERNAL_SERVER_ERROR", "이미 처리가 시작된 요청은 대기열에서 삭제할 수 없습니다."));
+      return true;
+    }
+    if (result === "not-found") {
+      deps.sendJson(response, 404, deps.makeErrorResponse("INTERNAL_SERVER_ERROR", "대기 중인 요청을 찾을 수 없습니다."));
+      return true;
+    }
+    deps.sendJson(response, 200, { ok: true, id: jobId, state: "cancelled", deleted: true });
     return true;
   }
 

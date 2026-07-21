@@ -6,14 +6,22 @@ export function updateModelPickerButtonState(button, { hasConversation, expanded
   button.setAttribute('aria-expanded', expanded ? 'true' : 'false');
   const label = button.querySelector('.model-picker-button-label');
   const summaryText = hasConversation && summary ? summary : 'AI';
-  if (label) {
+  const [modelText = 'AI', thinkingText = ''] = summaryText.split('\n', 2);
+  const accessibleSummary = thinkingText ? `${modelText}, Think level ${thinkingText}` : modelText;
+  const modelLabel = label?.querySelector('.model-picker-model-label');
+  const thinkingLabel = label?.querySelector('.model-picker-thinking-label');
+  if (modelLabel && thinkingLabel) {
+    modelLabel.textContent = modelText;
+    thinkingLabel.textContent = thinkingText;
+    thinkingLabel.classList.toggle('hidden', !thinkingText);
+  } else if (label) {
     label.textContent = summaryText;
   }
-  button.title = hasConversation && summary ? `AI 모델 선택: ${summary}` : (hasConversation ? 'AI 모델 선택' : '대화를 먼저 선택하세요');
-  button.setAttribute('aria-label', hasConversation && summary ? `AI 모델 선택, 현재 ${summary}` : (hasConversation ? 'AI 모델 선택' : '대화를 먼저 선택하세요'));
+  button.title = hasConversation && summary ? `AI 모델 선택: ${accessibleSummary}` : (hasConversation ? 'AI 모델 선택' : '대화를 먼저 선택하세요');
+  button.setAttribute('aria-label', hasConversation && summary ? `AI 모델 선택, 현재 ${accessibleSummary}` : (hasConversation ? 'AI 모델 선택' : '대화를 먼저 선택하세요'));
 }
 
-export function renderModelPicker(elements, state, onSelectModel, onSelectThinking) {
+export function renderModelPicker(elements, state, onSelectModel, onSelectThinking, onSelectSpeed) {
   if (!elements.modelPickerPanel || !elements.modelPickerStatus || !elements.modelPickerList) {
     return;
   }
@@ -28,18 +36,29 @@ export function renderModelPicker(elements, state, onSelectModel, onSelectThinki
   const canChange = Boolean(state.canChange);
   const models = Array.isArray(state.models) ? state.models : [];
   const thinkingLevels = Array.isArray(state.thinkingLevels) ? state.thinkingLevels : [];
+  const speedModes = Array.isArray(state.speedModes) ? state.speedModes : [];
   elements.modelPickerStatus.textContent = state.loading
     ? '모델 목록을 불러오는 중입니다…'
     : (!state.hasConversation
       ? '대화를 먼저 선택하세요.'
-      : (canChange ? '이 대화에서 사용할 모델과 Think level을 선택하세요.' : '현재 모델과 Think level만 확인할 수 있습니다.'));
-  elements.modelPickerStatus.classList.toggle('hidden', !state.loading && (models.length > 0 || thinkingLevels.length > 0));
+      : (canChange ? '이 대화에서 사용할 모델, Think level, Speed를 선택하세요.' : '현재 모델, Think level, Speed만 확인할 수 있습니다.'));
+  elements.modelPickerStatus.classList.toggle('hidden', !state.loading && (models.length > 0 || thinkingLevels.length > 0 || speedModes.length > 0));
 
   appendPickerSection(elements.modelPickerList, '모델', models, canChange, state.loading, 'modelRef', onSelectModel);
   appendPickerSection(elements.modelPickerList, 'Think level', thinkingLevels, canChange, state.loading, 'thinkingRef', onSelectThinking);
+  appendPickerSection(
+    elements.modelPickerList,
+    'Speed',
+    speedModes,
+    canChange && state.speedSupported,
+    state.loading,
+    'speedRef',
+    onSelectSpeed,
+    state.speedSupported ? '' : 'OpenAI 모델에서만 사용할 수 있습니다.',
+  );
 }
 
-function appendPickerSection(root, title, items, canChange, loading, dataKey, onSelect) {
+function appendPickerSection(root, title, items, canChange, loading, dataKey, onSelect, disabledReason = '') {
   if (!items.length) {
     return;
   }
@@ -56,6 +75,10 @@ function appendPickerSection(root, title, items, canChange, loading, dataKey, on
     button.setAttribute('role', 'menuitemradio');
     button.setAttribute('aria-checked', item.selected ? 'true' : 'false');
     button.disabled = !canChange || loading;
+    if (disabledReason) {
+      button.title = disabledReason;
+      button.setAttribute('aria-description', disabledReason);
+    }
     button.dataset[dataKey] = item.ref;
 
     const check = document.createElement('span');

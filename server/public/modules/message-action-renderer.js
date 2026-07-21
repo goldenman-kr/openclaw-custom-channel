@@ -1,5 +1,5 @@
 import { extractMediaRefs } from './media.js';
-import { createCancelJobButton, createCopyButton, createRetryButton, ensureMessageActions, isPendingAssistantJobMessage, setCancelJobButtonBusy } from './message-actions.js';
+import { createCancelJobButton, createCopyButton, createDeleteQueuedMessageButton, createRetryButton, ensureMessageActions, isPendingAssistantJobMessage, isQueuedUserJobMessage, setCancelJobButtonBusy, setDeleteQueuedMessageButtonBusy } from './message-actions.js?v=pwa-client-2026-07-21-speed-mode-008';
 
 export function retryTextForNode(node, messageTextWithoutAttachmentPreview) {
   let current = node.previousElementSibling;
@@ -77,6 +77,36 @@ export function appendCancelJobAction(node, role, text, options = {}, deps) {
       setCancelJobButtonBusy(button, false);
       deps.appendMessage('system', detail, { persist: false });
       deps.setStatus('');
+    }
+  });
+  node.append(button);
+}
+
+export function appendDeleteQueuedMessageAction(node, role, options = {}, deps) {
+  const jobId = options.jobId;
+  if (!isQueuedUserJobMessage({ role, jobId, jobState: options.jobState })) {
+    return;
+  }
+  const button = createDeleteQueuedMessageButton(async () => {
+    if (!window.confirm('대기 중인 요청을 취소/삭제할까요?')) {
+      return;
+    }
+    const conversationId = deps.activeConversationId();
+    setDeleteQueuedMessageButtonBusy(button, true);
+    try {
+      await deps.deleteQueuedJob(jobId, conversationId);
+      if (deps.loadPendingJob(conversationId)?.job_id === jobId) {
+        deps.clearPendingJob(conversationId);
+      }
+      node.remove();
+      deps.messagesRoot.querySelector(`[data-message-id="${jobId}"]`)?.remove();
+      await deps.refreshHistoryIfChanged().catch(() => {});
+      await deps.refreshConversations().catch(() => {});
+      deps.showToast('대기 중인 요청을 삭제했습니다.', { kind: 'success' });
+    } catch (error) {
+      setDeleteQueuedMessageButtonBusy(button, false);
+      await deps.refreshHistoryIfChanged().catch(() => {});
+      deps.showToast(error instanceof Error ? error.message : String(error), { kind: 'error', durationMs: 3200 });
     }
   });
   node.append(button);

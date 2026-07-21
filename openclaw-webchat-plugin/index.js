@@ -449,7 +449,7 @@ function isWebchatTarget(value) {
   return /^conv_[A-Za-z0-9-]+$/.test(raw);
 }
 
-async function sendWebchatText(ctx, phase = "final", messageId) {
+async function sendWebchatText(ctx, phase = "final", messageId, options = {}) {
   const target = parseTarget(ctx.to);
   if (!target.conversationId) {
     throw new Error("PWA webchat target must include a stable conv_<id> conversation id.");
@@ -479,6 +479,7 @@ async function sendWebchatText(ctx, phase = "final", messageId) {
     jobId: target.jobId,
     messageId: resolvedMessageId,
     text: ctx.text,
+    ...(options.retainOnFinalCleanup === true ? { retainOnFinalCleanup: true } : {}),
     ...(mediaUrls.length > 0 ? { mediaUrls } : {}),
     createdAt: new Date().toISOString(),
   });
@@ -529,9 +530,9 @@ const messageAdapter = defineChannelMessageAdapter({
     },
   },
   send: {
-    text: async (ctx) => sendWebchatText(ctx, "final"),
-    media: async (ctx) => sendWebchatText(ctx, "final"),
-    payload: async (ctx) => sendWebchatText(ctx, "final"),
+    text: async (ctx) => sendWebchatText(ctx, "final", undefined, { retainOnFinalCleanup: true }),
+    media: async (ctx) => sendWebchatText(ctx, "final", undefined, { retainOnFinalCleanup: true }),
+    payload: async (ctx) => sendWebchatText(ctx, "final", undefined, { retainOnFinalCleanup: true }),
   },
 });
 
@@ -572,7 +573,7 @@ const plugin = {
     },
     sendText: async (ctx) => {
       const target = parseTarget(ctx.to);
-      const result = await sendWebchatText(ctx, "final");
+      const result = await sendWebchatText(ctx, "final", undefined, { retainOnFinalCleanup: true });
       const response = {
         ok: true,
         channel: CHANNEL_ID,
@@ -586,7 +587,7 @@ const plugin = {
     },
     sendMedia: async (ctx) => {
       const target = parseTarget(ctx.to);
-      const result = await sendWebchatText(ctx, "final");
+      const result = await sendWebchatText(ctx, "final", undefined, { retainOnFinalCleanup: true });
       const response = {
         ok: true,
         channel: CHANNEL_ID,

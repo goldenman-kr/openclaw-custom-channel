@@ -13,6 +13,7 @@ interface SessionStoreEntry {
   fallbackNoticeSelectedModel?: string;
   fallbackNoticeActiveModel?: string;
   fallbackNoticeReason?: string;
+  fastMode?: boolean | "auto";
   [key: string]: unknown;
 }
 
@@ -92,6 +93,28 @@ export function getSessionThinkingOverride(sessionKey?: string): string | null {
   return thinking || null;
 }
 
+export function getSessionFastMode(sessionKey?: string): boolean {
+  const resolved = readSessionEntry(sessionKey);
+  if (!resolved) return false;
+  return resolved.entry.fastMode === true || resolved.entry.fastMode === "auto";
+}
+
+export function ensureSessionStandardSpeed(sessionKey: string): boolean {
+  const resolved = readSessionEntry(sessionKey);
+  if (!resolved) {
+    throw new Error("sessionKey is required");
+  }
+  const { targetKey, entry, store } = resolved;
+  if (entry.fastMode !== undefined) {
+    return getSessionFastMode(sessionKey);
+  }
+  entry.fastMode = false;
+  entry.updatedAt = Date.now();
+  store[targetKey] = entry;
+  writeSessionStore(store);
+  return false;
+}
+
 export function setSessionModelOverride(sessionKey: string, modelRef: string | null): string | null {
   const resolved = readSessionEntry(sessionKey);
   if (!resolved) {
@@ -142,6 +165,19 @@ export function setSessionThinkingOverride(sessionKey: string, level: string | n
   store[targetKey] = entry;
   writeSessionStore(store);
   return typeof entry.thinkingLevel === "string" && entry.thinkingLevel.trim() ? entry.thinkingLevel.trim() : null;
+}
+
+export function setSessionFastMode(sessionKey: string, enabled: boolean): boolean {
+  const resolved = readSessionEntry(sessionKey);
+  if (!resolved) {
+    throw new Error("sessionKey is required");
+  }
+  const { targetKey, entry, store } = resolved;
+  entry.fastMode = enabled;
+  entry.updatedAt = Date.now();
+  store[targetKey] = entry;
+  writeSessionStore(store);
+  return enabled;
 }
 
 export function activeGatewayModel(defaultModel = process.env.OPENCLAW_GATEWAY_MODEL ?? "openclaw"): string {

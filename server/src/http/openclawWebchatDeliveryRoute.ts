@@ -28,6 +28,7 @@ interface WebchatDeliveryBody {
   mediaUrl?: string;
   mediaUrls?: unknown;
   attachments?: unknown;
+  retainOnFinalCleanup?: boolean;
 }
 
 const DELIVERY_PATH = "/internal/openclaw/webchat-delivery";
@@ -246,6 +247,7 @@ export async function handleOpenClawWebchatDeliveryRoute(
     role: body.phase === "error" ? "system" : "assistant",
     text,
     ...(body.jobId ? { jobId: body.jobId } : {}),
+    ...(body.retainOnFinalCleanup === true ? { retainOnFinalCleanup: true } : {}),
     completedAt: body.phase === "partial" ? null : now,
     ...(attachments.length > 0 ? { attachments } : {}),
   });
@@ -257,6 +259,7 @@ export async function handleOpenClawWebchatDeliveryRoute(
       role: body.phase === "error" ? "system" : "assistant",
       text,
       ...(body.jobId ? { jobId: body.jobId } : {}),
+      ...(body.retainOnFinalCleanup === true ? { retainOnFinalCleanup: true } : {}),
       createdAt: now,
       completedAt: body.phase === "partial" ? null : now,
       ...(attachments.length > 0 ? { attachments } : {}),

@@ -17,6 +17,13 @@ writeFileSync(process.env.OPENCLAW_CONFIG_PATH, JSON.stringify({
         primary: "openai-codex/gpt-5.5",
         fallbacks: ["openai-codex/gpt-5.4"],
       },
+      models: {
+        "openai-codex/gpt-5.5": {},
+        "openai-codex/gpt-5.4": {},
+        "openai/gpt-5.6-luna": {},
+        "openai/gpt-5.6-sol": {},
+        "openai/gpt-5.6-terra": {},
+      },
     },
   },
   models: {
@@ -33,8 +40,8 @@ writeFileSync(process.env.OPENCLAW_SESSION_STORE_PATH, JSON.stringify({
   },
 }, null, 2));
 
-const { executeNativeCommand, getNativeModelMenu, applyNativeModelSelection, applyNativeThinkingSelection } = await import("./nativeCommands.js");
-const { ensureSessionEntry, getSessionThinkingOverride, setSessionThinkingOverride } = await import("../openclaw/modelOverride.js");
+const { executeNativeCommand, getNativeModelMenu, applyNativeModelSelection, applyNativeSpeedSelection, applyNativeThinkingSelection, isOpenAiSpeedModel } = await import("./nativeCommands.js");
+const { ensureSessionEntry, ensureSessionStandardSpeed, getSessionFastMode, getSessionThinkingOverride, setSessionFastMode, setSessionThinkingOverride } = await import("../openclaw/modelOverride.js");
 
 test("/model changes are admin-only", async () => {
   const denied = await executeNativeCommand("/model llamacpp/Qwen3.6-27B-MTP", { userRole: "user", sessionKey: "web-conv_test" });
@@ -50,11 +57,21 @@ test("model menu hides provider in labels and marks current selection", async ()
   const menu = await getNativeModelMenu({ userRole: "admin", sessionKey: "web-conv_test" });
   assert.equal(menu.currentModel, "openai-codex/gpt-5.5");
   assert.equal(menu.currentThinking, "medium");
+  assert.equal(menu.currentSpeed, "standard");
+  assert.equal(menu.speedSupported, true);
   assert.equal(menu.canChange, true);
-  assert.deepEqual(menu.models.map((entry) => entry.label), ["gpt-5.4", "gpt-5.5"]);
+  assert.deepEqual(menu.models.map((entry) => entry.label), ["gpt-5.4", "gpt-5.5", "gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol"]);
   assert.equal(menu.models.find((entry) => entry.ref === "openai-codex/gpt-5.5")?.selected, true);
   assert.deepEqual(menu.thinkingLevels.map((entry) => entry.ref), ["off", "low", "medium", "high", "xhigh", "max", "ultra"]);
   assert.equal(menu.thinkingLevels.find((entry) => entry.ref === "medium")?.selected, true);
+  assert.deepEqual(menu.speedModes.map((entry) => entry.ref), ["standard", "fast"]);
+  assert.equal(menu.speedModes.find((entry) => entry.ref === "standard")?.selected, true);
+});
+
+test("OpenAI and OpenAI Codex models support Speed while local models do not", () => {
+  assert.equal(isOpenAiSpeedModel("openai/gpt-5.6-sol"), true);
+  assert.equal(isOpenAiSpeedModel("openai-codex/gpt-5.5"), true);
+  assert.equal(isOpenAiSpeedModel("llamacpp/Qwen3.6-27B-MTP"), false);
 });
 
 test("/model admin response updates current chat session only", async () => {
@@ -113,6 +130,31 @@ test("applyNativeThinkingSelection accepts GPT-5.6 extended thinking levels", as
   setSessionThinkingOverride("web-conv_test", null);
 });
 
+test("applyNativeSpeedSelection persists Standard and Fast for the current OpenAI session", async () => {
+  const fast = await applyNativeSpeedSelection("fast", { userRole: "admin", sessionKey: "web-conv_test" });
+  assert.equal(fast.currentSpeed, "fast");
+  assert.equal(fast.speedSupported, true);
+  assert.equal(getSessionFastMode("web-conv_test"), true);
+
+  const standard = await applyNativeSpeedSelection("standard", { userRole: "admin", sessionKey: "web-conv_test" });
+  assert.equal(standard.currentSpeed, "standard");
+  assert.equal(getSessionFastMode("web-conv_test"), false);
+  await assert.rejects(() => applyNativeSpeedSelection("turbo", { userRole: "admin", sessionKey: "web-conv_test" }), /Speed 값은/);
+});
+
+test("switching to a non-OpenAI model disables Speed and forces Standard", async () => {
+  setSessionFastMode("web-conv_test", true);
+  await applyNativeModelSelection("llamacpp/Qwen3.6-27B-MTP", { userRole: "admin", sessionKey: "web-conv_test" });
+
+  const menu = await getNativeModelMenu({ userRole: "admin", sessionKey: "web-conv_test" });
+  assert.equal(menu.speedSupported, false);
+  assert.equal(menu.currentSpeed, "standard");
+  assert.equal(getSessionFastMode("web-conv_test"), false);
+  await assert.rejects(() => applyNativeSpeedSelection("fast", { userRole: "admin", sessionKey: "web-conv_test" }), /OpenAI 모델에서만/);
+
+  await applyNativeModelSelection("default", { userRole: "admin", sessionKey: "web-conv_test" });
+});
+
 test("ensureSessionEntry does not create explicit-session aliases", () => {
   const sessionKey = "web-conv_precreated";
   ensureSessionEntry(sessionKey);
@@ -125,4 +167,13 @@ test("ensureSessionEntry does not create explicit-session aliases", () => {
   store = JSON.parse(readFileSync(process.env.OPENCLAW_SESSION_STORE_PATH!, "utf8")) as Record<string, { thinkingLevel?: string }>;
   assert.equal(store[sessionKey]?.thinkingLevel, "medium");
   assert.equal(getSessionThinkingOverride(sessionKey), "medium");
+});
+
+test("new PWA sessions initialize Speed to Standard", () => {
+  const sessionKey = "pwa-webchat:conv_speed_default";
+  ensureSessionEntry(sessionKey);
+  assert.equal(ensureSessionStandardSpeed(sessionKey), false);
+
+  const store = JSON.parse(readFileSync(process.env.OPENCLAW_SESSION_STORE_PATH!, "utf8")) as Record<string, { fastMode?: boolean }>;
+  assert.equal(store[sessionKey]?.fastMode, false);
 });

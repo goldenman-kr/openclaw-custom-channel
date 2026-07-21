@@ -19,7 +19,8 @@ import { handleJobRoute } from "./http/jobRoutes.js";
 import { handleMessageRoute } from "./http/messageRoutes.js";
 import { handleOpenClawWebchatDeliveryRoute } from "./http/openclawWebchatDeliveryRoute.js";
 import { handlePushRoute } from "./http/pushRoutes.js";
-import { applyNativeModelSelection, applyNativeThinkingSelection, getNativeModelMenu } from "./http/nativeCommands.js";
+import { applyNativeModelSelection, applyNativeSpeedSelection, applyNativeThinkingSelection, getNativeModelMenu } from "./http/nativeCommands.js";
+import { ensureSessionStandardSpeed } from "./openclaw/modelOverride.js";
 import { handleOrbsBridgePluginRoute, resumeOrbsBridgeCheckpointPolling } from "./http/orbsBridgePluginRoutes.js";
 import { handleSpotPluginRoute, resumeSpotOrderPolling } from "./http/spotPluginRoutes.js";
 import { handleMediaRoute, handleStaticRoute } from "./http/staticRoutes.js";
@@ -40,7 +41,7 @@ import { RestartFollowupStore, type RestartFollowupRecord } from "./session/Rest
 import { PushSubscriptionStore } from "./session/PushSubscriptionStore.js";
 import { OrbsBridgeStore } from "./session/OrbsBridgeStore.js";
 import { SpotOrderStore } from "./session/SpotOrderStore.js";
-import { SqliteChatStore, type ConversationRecord } from "./session/SqliteChatStore.js";
+import { SqliteChatStore, type ChatMessageRecord, type ConversationRecord } from "./session/SqliteChatStore.js";
 
 const host = process.env.HOST ?? "0.0.0.0";
 const port = Number(process.env.PORT ?? 29999);
@@ -128,7 +129,7 @@ const openClawWebchatDeliveryRouteDeps = {
 setImmediate(() => resumeSpotOrderPolling(spotOrderRouteDeps));
 setImmediate(() => resumeOrbsBridgeCheckpointPolling(orbsBridgeRouteDeps));
 const staleJobCleanup = chatStore.cancelStaleJobs({
-  olderThanMs: Number(process.env.STALE_JOB_CLEANUP_AFTER_MS ?? 30 * 60 * 1000),
+  olderThanMs: Number(process.env.STALE_JOB_CLEANUP_AFTER_MS ?? 200 * 60 * 1000),
   reason: "Cancelled stale job on PWA service startup.",
 });
 if (staleJobCleanup.jobs > 0) {
@@ -601,6 +602,41 @@ function cancelJobForRequest(jobId: string, request: IncomingMessage, url: URL):
   return cancelled;
 }
 
+function discardQueuedJobForRequest(jobId: string, request: IncomingMessage, url: URL): "deleted" | "not-queued" | "not-found" {
+  const visibleJob = jobForRequest(jobId, request, url);
+  if (!visibleJob) {
+    return "not-found";
+  }
+  if (visibleJob.state !== "queued") {
+    return "not-queued";
+  }
+
+  const now = new Date().toISOString();
+  const memoryJob = jobs.get(jobId);
+  if (memoryJob) {
+    memoryJob.state = "cancelled";
+    memoryJob.updatedAt = now;
+    delete memoryJob.error;
+    jobs.delete(jobId);
+    jobEventPublisher.publishJob(publicJob(memoryJob));
+  }
+
+  const storedJob = chatStore.getJob(jobId);
+  if (!storedJob || storedJob.state !== "queued") {
+    return storedJob ? "not-queued" : "not-found";
+  }
+  if (!chatStore.deleteQueuedJob(jobId, { now })) {
+    return "not-queued";
+  }
+  conversationEventPublisher.publish({
+    id: `evt_${randomUUID()}`,
+    type: "changed",
+    conversationId: storedJob.conversationId,
+    createdAt: now,
+  });
+  return "deleted";
+}
+
 const jobEventPublisher = new SseJobEventPublisher({
   corsHeaders,
   isAuthorized,
@@ -646,6 +682,9 @@ const messageJobRunner = new MessageJobRunner({
   historyStore,
   shouldPersistMessage,
   updateJob,
+  hasEarlierRunningJob(job) {
+    return Boolean(job.conversationId && chatStore.hasEarlierRunningJob(job.id));
+  },
   publishToken(job, token) {
     jobEventPublisher.publishToken({ id: job.id, token });
   },
@@ -671,13 +710,13 @@ const messageJobRunner = new MessageJobRunner({
   generatedMediaDirs: assistantGeneratedMediaDirs,
 });
 
-async function persistConversationUserMessage(conversation: ConversationRecord, payload: MessageRequestDto): Promise<void> {
+async function persistConversationUserMessage(conversation: ConversationRecord, payload: MessageRequestDto): Promise<ChatMessageRecord | null> {
   if (payload.metadata?.hiddenFromHistory || !shouldPersistMessage(payload.message)) {
-    return;
+    return null;
   }
   const isFirstMessage = chatStore.listMessages(conversation.id, { limit: 1 }).length === 0;
   const attachments = await saveHistoryAttachments(conversation.id, payload);
-  chatStore.addMessage({
+  const message = chatStore.addMessage({
     conversationId: conversation.id,
     role: "user",
     text: formatUserHistoryText(payload),
@@ -686,6 +725,7 @@ async function persistConversationUserMessage(conversation: ConversationRecord, 
   if (isFirstMessage && conversation.title === "새 대화") {
     chatStore.updateConversation(conversation.id, { title: titleFromMessage(payload.message) });
   }
+  return message;
 }
 
 const server = createServer(async (request, response) => {
@@ -763,6 +803,7 @@ const server = createServer(async (request, response) => {
     makeErrorResponse,
     getJob: jobForRequest,
     cancelJob: cancelJobForRequest,
+    discardQueuedJob: discardQueuedJobForRequest,
     eventPublisher: jobEventPublisher,
   })) {
     return;
@@ -797,6 +838,7 @@ const server = createServer(async (request, response) => {
         userId: auth.user.id,
         userLabel: auth.user.displayName ?? auth.user.username ?? auth.user.id,
       });
+      ensureSessionStandardSpeed(conversation.openclawSessionId);
     },
     deleteConversationJobs(conversationId) {
       for (const [jobId, job] of jobs.entries()) {
@@ -860,9 +902,19 @@ const server = createServer(async (request, response) => {
     }
 
     const payload = await readJsonBody(request).catch(() => ({}));
+    const requestedSpeed = typeof (payload as { speed?: unknown }).speed === "string" ? (payload as { speed: string }).speed : "";
     const requestedThinking = typeof (payload as { thinking?: unknown }).thinking === "string" ? (payload as { thinking: string }).thinking : "";
     const requestedModel = typeof (payload as { model?: unknown }).model === "string" ? (payload as { model: string }).model : "";
     try {
+      if (requestedSpeed) {
+        const result = await applyNativeSpeedSelection(requestedSpeed, modelContext);
+        sendJson(response, 200, {
+          ok: true,
+          current_speed: result.currentSpeed,
+          speed_supported: result.speedSupported,
+        });
+        return;
+      }
       if (requestedThinking) {
         const result = await applyNativeThinkingSelection(requestedThinking, modelContext);
         sendJson(response, 200, {

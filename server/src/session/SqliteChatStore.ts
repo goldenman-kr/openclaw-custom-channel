@@ -14,6 +14,7 @@ export interface ConversationRecord {
   openclawSessionId: string;
   createdAt: string;
   updatedAt: string;
+  finalResponseAt?: string;
   archivedAt?: string;
   pinned: boolean;
 }
@@ -24,6 +25,7 @@ export interface ChatMessageRecord {
   role: ConversationRole;
   text: string;
   jobId?: string;
+  jobState?: JobState;
   createdAt: string;
   completedAt?: string;
   attachments?: HistoryAttachment[];
@@ -57,9 +59,10 @@ export interface MessageStore {
     jobId?: string;
     createdAt?: string;
     completedAt?: string | null;
+    retainOnFinalCleanup?: boolean;
     attachments?: HistoryAttachment[];
   }): ChatMessageRecord;
-  updateMessage(id: string, patch: { role?: ConversationRole; text?: string; jobId?: string | null; createdAt?: string; completedAt?: string | null; attachments?: HistoryAttachment[] }): ChatMessageRecord | null;
+  updateMessage(id: string, patch: { role?: ConversationRole; text?: string; jobId?: string | null; createdAt?: string; completedAt?: string | null; retainOnFinalCleanup?: boolean; attachments?: HistoryAttachment[] }): ChatMessageRecord | null;
   deleteMessage(id: string): boolean;
   deleteAssistantMessagesForJob?(jobId: string, exceptMessageId?: string): number;
   listMessages(conversationId: string, input?: { limit?: number }): ChatMessageRecord[];
@@ -74,6 +77,8 @@ export interface JobStore {
   createJob(input: { conversationId: string; id?: string; state?: JobState; error?: string; now?: string }): JobRecord;
   getJob(id: string): JobRecord | null;
   updateJob(id: string, patch: { state?: JobState; error?: string | null; now?: string }): JobRecord | null;
+  hasEarlierRunningJob(id: string): boolean;
+  deleteQueuedJob(id: string, input?: { now?: string }): boolean;
 }
 
 export interface StaleJobCleanupResult {
@@ -88,6 +93,7 @@ interface ConversationRow {
   openclaw_session_id: string;
   created_at: string;
   updated_at: string;
+  final_response_at: string | null;
   archived_at: string | null;
   pinned: number;
 }
@@ -98,8 +104,10 @@ interface MessageRow {
   role: ConversationRole;
   text: string;
   job_id: string | null;
+  job_state?: JobState | null;
   created_at: string;
   completed_at: string | null;
+  retain_on_final_cleanup: number;
 }
 
 interface AttachmentRow {
@@ -255,6 +263,7 @@ export class SqliteChatStore implements ConversationStore, MessageStore, JobStor
     jobId?: string;
     createdAt?: string;
     completedAt?: string | null;
+    retainOnFinalCleanup?: boolean;
     attachments?: HistoryAttachment[];
   }): ChatMessageRecord {
     const id = input.id ?? `msg_${randomUUID()}`;
@@ -262,8 +271,8 @@ export class SqliteChatStore implements ConversationStore, MessageStore, JobStor
     const insert = this.db.transaction(() => {
       this.db
         .prepare(
-          `INSERT INTO messages (id, conversation_id, role, text, job_id, created_at, completed_at)
-           VALUES (@id, @conversationId, @role, @text, @jobId, @createdAt, @completedAt)`,
+          `INSERT INTO messages (id, conversation_id, role, text, job_id, created_at, completed_at, retain_on_final_cleanup)
+           VALUES (@id, @conversationId, @role, @text, @jobId, @createdAt, @completedAt, @retainOnFinalCleanup)`,
         )
         .run({
           id,
@@ -273,6 +282,7 @@ export class SqliteChatStore implements ConversationStore, MessageStore, JobStor
           jobId: input.jobId ?? null,
           createdAt,
           completedAt: input.completedAt ?? null,
+          retainOnFinalCleanup: input.retainOnFinalCleanup === true ? 1 : 0,
         });
       this.insertAttachments(id, input.attachments ?? [], createdAt);
       this.db.prepare("UPDATE conversations SET updated_at = ? WHERE id = ?").run(createdAt, input.conversationId);
@@ -285,7 +295,7 @@ export class SqliteChatStore implements ConversationStore, MessageStore, JobStor
     return mapMessage(row, this.attachmentsFor([id]).get(id) ?? []);
   }
 
-  updateMessage(id: string, patch: { role?: ConversationRole; text?: string; jobId?: string | null; createdAt?: string; completedAt?: string | null; attachments?: HistoryAttachment[] }): ChatMessageRecord | null {
+  updateMessage(id: string, patch: { role?: ConversationRole; text?: string; jobId?: string | null; createdAt?: string; completedAt?: string | null; retainOnFinalCleanup?: boolean; attachments?: HistoryAttachment[] }): ChatMessageRecord | null {
     const current = this.db.prepare("SELECT * FROM messages WHERE id = ?").get(id) as MessageRow | undefined;
     if (!current) {
       return null;
@@ -296,7 +306,8 @@ export class SqliteChatStore implements ConversationStore, MessageStore, JobStor
       this.db
         .prepare(
           `UPDATE messages
-           SET role = @role, text = @text, job_id = @jobId, created_at = @createdAt, completed_at = @completedAt
+           SET role = @role, text = @text, job_id = @jobId, created_at = @createdAt, completed_at = @completedAt,
+               retain_on_final_cleanup = @retainOnFinalCleanup
            WHERE id = @id`,
         )
         .run({
@@ -306,6 +317,9 @@ export class SqliteChatStore implements ConversationStore, MessageStore, JobStor
           jobId: patch.jobId === undefined ? current.job_id : patch.jobId,
           createdAt,
           completedAt: patch.completedAt === undefined ? current.completed_at : patch.completedAt,
+          retainOnFinalCleanup: patch.retainOnFinalCleanup === undefined
+            ? current.retain_on_final_cleanup
+            : patch.retainOnFinalCleanup ? 1 : 0,
         });
       if (patch.attachments !== undefined) {
         this.db.prepare("DELETE FROM attachments WHERE message_id = ?").run(id);
@@ -338,7 +352,7 @@ export class SqliteChatStore implements ConversationStore, MessageStore, JobStor
       .prepare(
         `SELECT id, conversation_id
          FROM messages
-         WHERE job_id = ? AND role = 'assistant' AND id != ?`,
+         WHERE job_id = ? AND role = 'assistant' AND id != ? AND retain_on_final_cleanup = 0`,
       )
       .all(jobId, exceptMessageId ?? "") as Array<{ id: string; conversation_id: string }>;
     if (rows.length === 0) {
@@ -374,13 +388,17 @@ export class SqliteChatStore implements ConversationStore, MessageStore, JobStor
     const rows = this.db
       .prepare(
         `SELECT * FROM (
-           SELECT * FROM messages
+           SELECT messages.*,
+                  (SELECT jobs.state FROM jobs WHERE jobs.id = messages.job_id) AS job_state
+           FROM messages
            WHERE conversation_id = ?
-           ORDER BY created_at DESC,
+           ORDER BY CASE WHEN job_state = 'queued' THEN 1 ELSE 0 END DESC,
+                    created_at DESC,
                     CASE role WHEN 'assistant' THEN 2 WHEN 'system' THEN 2 ELSE 1 END DESC,
                     id DESC
            LIMIT ?
-         ) ORDER BY created_at ASC,
+         ) ORDER BY CASE WHEN job_state = 'queued' THEN 1 ELSE 0 END ASC,
+                  created_at ASC,
                   CASE role WHEN 'user' THEN 1 WHEN 'assistant' THEN 2 ELSE 3 END ASC,
                   id ASC`,
       )
@@ -416,10 +434,76 @@ export class SqliteChatStore implements ConversationStore, MessageStore, JobStor
       return null;
     }
     const now = patch.now ?? new Date().toISOString();
-    this.db
-      .prepare("UPDATE jobs SET state = @state, error = @error, updated_at = @updatedAt WHERE id = @id")
-      .run({ id, state: patch.state ?? current.state, error: patch.error === undefined ? current.error ?? null : patch.error, updatedAt: now });
+    const nextState = patch.state ?? current.state;
+    const update = this.db.transaction(() => {
+      this.db
+        .prepare("UPDATE jobs SET state = @state, error = @error, updated_at = @updatedAt WHERE id = @id")
+        .run({ id, state: nextState, error: patch.error === undefined ? current.error ?? null : patch.error, updatedAt: now });
+      if (nextState === "running" && current.state === "queued") {
+        this.db.prepare("UPDATE messages SET created_at = ? WHERE job_id = ?").run(now, id);
+        this.db.prepare("UPDATE conversations SET updated_at = ? WHERE id = ?").run(now, current.conversationId);
+      }
+      if (nextState === "completed" && current.state !== "completed") {
+        const priorCompletion = this.db
+          .prepare(
+            `SELECT MAX(earlier.updated_at) AS completed_at
+             FROM jobs AS current
+             JOIN jobs AS earlier
+               ON earlier.conversation_id = current.conversation_id
+              AND earlier.rowid < current.rowid
+              AND earlier.state = 'completed'
+             WHERE current.id = ?`,
+          )
+          .get(id) as { completed_at: string | null } | undefined;
+        const userMessage = this.db
+          .prepare("SELECT MIN(created_at) AS created_at FROM messages WHERE job_id = ? AND role = 'user'")
+          .get(id) as { created_at: string | null } | undefined;
+        if (priorCompletion?.completed_at && userMessage?.created_at && userMessage.created_at < priorCompletion.completed_at) {
+          this.db.prepare("UPDATE messages SET created_at = ? WHERE job_id = ? AND role = 'user'").run(now, id);
+        }
+        this.db.prepare("UPDATE conversations SET final_response_at = ? WHERE id = ?").run(now, current.conversationId);
+      }
+    });
+    update();
     return this.getJob(id);
+  }
+
+  hasEarlierRunningJob(id: string): boolean {
+    const row = this.db
+      .prepare(
+        `SELECT 1
+         FROM jobs AS current
+         JOIN jobs AS earlier
+           ON earlier.conversation_id = current.conversation_id
+          AND earlier.rowid < current.rowid
+          AND earlier.state = 'running'
+         WHERE current.id = ?
+         LIMIT 1`,
+      )
+      .get(id);
+    return Boolean(row);
+  }
+
+  deleteQueuedJob(id: string, input: { now?: string } = {}): boolean {
+    const current = this.db.prepare("SELECT conversation_id, state FROM jobs WHERE id = ?").get(id) as { conversation_id: string; state: JobState } | undefined;
+    if (!current || current.state !== "queued") {
+      return false;
+    }
+    const now = input.now ?? new Date().toISOString();
+    const discard = this.db.transaction(() => {
+      const messageIds = this.db.prepare("SELECT id FROM messages WHERE job_id = ?").all(id) as Array<{ id: string }>;
+      if (messageIds.length > 0) {
+        const placeholders = messageIds.map(() => "?").join(",");
+        this.db.prepare(`DELETE FROM attachments WHERE message_id IN (${placeholders})`).run(...messageIds.map((row) => row.id));
+        this.db.prepare(`DELETE FROM messages WHERE id IN (${placeholders})`).run(...messageIds.map((row) => row.id));
+      }
+      const deleted = this.db.prepare("DELETE FROM jobs WHERE id = ? AND state = 'queued'").run(id).changes > 0;
+      if (deleted) {
+        this.db.prepare("UPDATE conversations SET updated_at = ? WHERE id = ?").run(now, current.conversation_id);
+      }
+      return deleted;
+    });
+    return discard();
   }
 
   cancelStaleJobs(input: { olderThanMs: number; now?: string; reason?: string }): StaleJobCleanupResult {
@@ -476,6 +560,7 @@ export class SqliteChatStore implements ConversationStore, MessageStore, JobStor
           owner_id TEXT NOT NULL DEFAULT 'admin',
           created_at TEXT NOT NULL,
           updated_at TEXT NOT NULL,
+          final_response_at TEXT,
           archived_at TEXT,
           pinned INTEGER NOT NULL DEFAULT 0
         );
@@ -488,6 +573,7 @@ export class SqliteChatStore implements ConversationStore, MessageStore, JobStor
           job_id TEXT,
           created_at TEXT NOT NULL,
           completed_at TEXT,
+          retain_on_final_cleanup INTEGER NOT NULL DEFAULT 0,
           FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
         );
 
@@ -534,11 +620,17 @@ export class SqliteChatStore implements ConversationStore, MessageStore, JobStor
       if (!conversationColumns.has("owner_id")) {
         this.db.exec("ALTER TABLE conversations ADD COLUMN owner_id TEXT NOT NULL DEFAULT 'admin'");
       }
+      if (!conversationColumns.has("final_response_at")) {
+        this.db.exec("ALTER TABLE conversations ADD COLUMN final_response_at TEXT");
+      }
       const messageColumns = new Set(
         (this.db.prepare("PRAGMA table_info(messages)").all() as Array<{ name: string }>).map((column) => column.name),
       );
       if (!messageColumns.has("completed_at")) {
         this.db.exec("ALTER TABLE messages ADD COLUMN completed_at TEXT");
+      }
+      if (!messageColumns.has("retain_on_final_cleanup")) {
+        this.db.exec("ALTER TABLE messages ADD COLUMN retain_on_final_cleanup INTEGER NOT NULL DEFAULT 0");
       }
       this.setMeta("schema_version", "1");
     });
@@ -632,6 +724,7 @@ function mapConversation(row: ConversationRow): ConversationRecord {
     openclawSessionId: row.openclaw_session_id,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    ...(row.final_response_at ? { finalResponseAt: row.final_response_at } : {}),
     ...(row.archived_at ? { archivedAt: row.archived_at } : {}),
     pinned: row.pinned === 1,
   };
@@ -644,6 +737,7 @@ function mapMessage(row: MessageRow, attachments: HistoryAttachment[]): ChatMess
     role: row.role,
     text: row.text,
     ...(row.job_id ? { jobId: row.job_id } : {}),
+    ...(row.job_state ? { jobState: row.job_state } : {}),
     createdAt: row.created_at,
     ...(row.completed_at ? { completedAt: row.completed_at } : {}),
     ...(attachments.length > 0 ? { attachments } : {}),

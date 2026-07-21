@@ -34,3 +34,16 @@ export async function patchConversationThinking({ apiFetch, apiHeaders, conversa
   }
   return body;
 }
+
+export async function patchConversationSpeed({ apiFetch, apiHeaders, conversationId, speed }) {
+  const response = await apiFetch(`/v1/conversations/${encodeURIComponent(conversationId)}/model`, {
+    method: 'PATCH',
+    headers: await apiHeaders({ 'content-type': 'application/json' }),
+    body: JSON.stringify({ speed }),
+  });
+  const body = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error(body?.error?.message || `Speed 변경을 실패했습니다: HTTP ${response.status}`);
+  }
+  return body;
+}

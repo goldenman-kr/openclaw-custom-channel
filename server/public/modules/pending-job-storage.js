@@ -15,6 +15,10 @@ export function loadPendingJobFromStorage(storage, key) {
   }
 }
 
+export function pendingJobMatches(pendingJob, jobId) {
+  return Boolean(jobId && pendingJob?.job_id === jobId);
+}
+
 export function pendingJobStorageScope({ storageKey, apiUrl, apiKey, authUserId }) {
   return {
     storageKey,

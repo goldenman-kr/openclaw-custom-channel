@@ -1,6 +1,7 @@
 import {
   clearPendingJobFromStorage,
   loadPendingJobFromStorage,
+  pendingJobMatches,
   pendingJobStorageKey,
   pendingJobStoragePrefix,
   pendingJobStorageScope,
@@ -84,6 +85,10 @@ export function createPendingJobController({
     }
   }
 
+  function matches(jobId, conversationId = activeConversationId()) {
+    return pendingJobMatches(load(conversationId), jobId);
+  }
+
   async function prune(conversationList = []) {
     await prunePendingJobStorage({
       storage,
@@ -127,5 +132,5 @@ export function createPendingJobController({
     return true;
   }
 
-  return { scope, key, prefix, save, ensureBubble, load, clear, prune, cancelActive };
+  return { scope, key, prefix, save, ensureBubble, load, matches, clear, prune, cancelActive };
 }

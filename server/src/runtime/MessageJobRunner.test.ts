@@ -58,6 +58,12 @@ function unusedConversationStore(): ConversationStore & MessageStore & JobStore 
     updateJob() {
       return null;
     },
+    hasEarlierRunningJob() {
+      return false;
+    },
+    deleteQueuedJob() {
+      return false;
+    },
   };
 }
 
@@ -96,6 +102,47 @@ async function waitUntil(predicate: () => boolean, timeoutMs = 1_000): Promise<v
     await delay(10);
   }
 }
+
+test("waits for an earlier durable running job before starting after a server restart", async () => {
+  let blocked = true;
+  let sendCount = 0;
+  const job: MessageJob = {
+    id: "job_after_restart_blocker",
+    sessionId: "session-after-restart-blocker",
+    conversationId: "conv_after_restart_blocker",
+    state: "queued",
+    createdAt: "2026-07-20T00:01:00.000Z",
+    updatedAt: "2026-07-20T00:01:00.000Z",
+  };
+  const runner = new MessageJobRunner({
+    chatRuntime: {
+      async sendMessage() {
+        sendCount += 1;
+        return { reply: "완료" };
+      },
+    },
+    sessionStore: new InMemorySessionStore(),
+    validApiKeys: new Set(["test-key"]),
+    conversationStore: unusedConversationStore(),
+    historyStore: memoryHistoryStore(),
+    shouldPersistMessage: () => false,
+    updateJob(jobToUpdate, patch) {
+      Object.assign(jobToUpdate, patch);
+    },
+    hasEarlierRunningJob: () => blocked,
+    queueTurnPollMs: 5,
+  });
+
+  runner.enqueue(job, { authorization: "Bearer test-key" }, { message: "재시작 뒤 대기 요청" });
+  await delay(30);
+
+  assert.equal(job.state, "queued");
+  assert.equal(sendCount, 0);
+
+  blocked = false;
+  await waitUntil(() => job.state === "completed");
+  assert.equal(sendCount, 1);
+});
 
 test("preserves all payload text and media refs from embedded agent JSON", async () => {
   const runtime: ChatRuntime = {

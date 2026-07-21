@@ -5,7 +5,7 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
-import { activeGatewayModel, getSessionModelOverride, getSessionThinkingOverride, setSessionModelOverride, setSessionThinkingOverride } from "../openclaw/modelOverride.js";
+import { activeGatewayModel, ensureSessionStandardSpeed, getSessionFastMode, getSessionModelOverride, getSessionThinkingOverride, setSessionFastMode, setSessionModelOverride, setSessionThinkingOverride } from "../openclaw/modelOverride.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -415,6 +415,24 @@ async function loadOpenClawConfig(): Promise<OpenClawConfig> {
   return JSON.parse(raw) as OpenClawConfig;
 }
 
+const PWA_GPT_56_MODEL_ORDER = [
+  "openai/gpt-5.6-luna",
+  "openai/gpt-5.6-terra",
+  "openai/gpt-5.6-sol",
+] as const;
+
+function orderConfiguredModels(models: string[]): string[] {
+  const ordered = [...models];
+  const targetPositions = ordered
+    .map((model, index) => PWA_GPT_56_MODEL_ORDER.includes(model as (typeof PWA_GPT_56_MODEL_ORDER)[number]) ? index : -1)
+    .filter((index) => index >= 0);
+  const targetModels = PWA_GPT_56_MODEL_ORDER.filter((model) => ordered.includes(model));
+  targetPositions.forEach((position, index) => {
+    ordered[position] = targetModels[index];
+  });
+  return ordered;
+}
+
 async function loadConfiguredModels(): Promise<string[]> {
   const config = await loadOpenClawConfig();
   const defaultModels = config.agents?.defaults?.models ?? {};
@@ -423,7 +441,7 @@ async function loadConfiguredModels(): Promise<string[]> {
     .filter(Boolean);
 
   if (names.length > 0) {
-    return [...new Set(names)].sort();
+    return orderConfiguredModels([...new Set(names)].sort());
   }
 
   const fallbackNames = [
@@ -433,7 +451,7 @@ async function loadConfiguredModels(): Promise<string[]> {
     ...(config.model?.fallbacks ?? []),
   ].map((name) => String(name || '').trim()).filter(Boolean);
 
-  return [...new Set(fallbackNames)].sort();
+  return orderConfiguredModels([...new Set(fallbackNames)].sort());
 }
 
 async function defaultConfiguredModel(): Promise<string> {
@@ -473,13 +491,22 @@ export interface NativeThinkingMenuEntry {
   selected: boolean;
 }
 
+export interface NativeSpeedMenuEntry {
+  ref: "standard" | "fast";
+  label: "Standard" | "Fast";
+  selected: boolean;
+}
+
 export interface NativeModelMenuState {
   currentModel: string;
   gatewayModel: string;
   currentThinking: string;
+  currentSpeed: "standard" | "fast";
+  speedSupported: boolean;
   canChange: boolean;
   models: NativeModelMenuEntry[];
   thinkingLevels: NativeThinkingMenuEntry[];
+  speedModes: NativeSpeedMenuEntry[];
 }
 
 const THINKING_LEVELS = ["off", "low", "medium", "high", "xhigh", "max", "ultra"] as const;
@@ -490,15 +517,31 @@ function modelLabel(modelRef: string): string {
   return slash >= 0 ? modelRef.slice(slash + 1) : modelRef;
 }
 
+export function isOpenAiSpeedModel(modelRef: string): boolean {
+  const provider = modelRef.trim().split("/", 1)[0]?.toLowerCase();
+  return provider === "openai" || provider === "openai-codex";
+}
+
+function resolveSessionSpeed(sessionKey?: string): "standard" | "fast" {
+  return getSessionFastMode(sessionKey) ? "fast" : "standard";
+}
+
 export async function getNativeModelMenu(context: NativeCommandContext): Promise<NativeModelMenuState> {
   const currentModel = await resolveSessionSelectedModel(context.sessionKey);
   const currentThinking = resolveSessionThinkingLevel(context.sessionKey);
+  if (context.sessionKey?.trim()) {
+    ensureSessionStandardSpeed(context.sessionKey);
+  }
+  const currentSpeed = resolveSessionSpeed(context.sessionKey);
+  const speedSupported = isOpenAiSpeedModel(currentModel);
   const configuredModels = await loadConfiguredModels().catch(() => [] as string[]);
   const refs = [...new Set([...(configuredModels.length > 0 ? configuredModels : []), currentModel].filter(Boolean))];
   return {
     currentModel,
     gatewayModel: activeGatewayModel(),
     currentThinking,
+    currentSpeed,
+    speedSupported,
     canChange: context.userRole === "admin",
     models: refs.map((ref) => ({
       ref,
@@ -509,6 +552,13 @@ export async function getNativeModelMenu(context: NativeCommandContext): Promise
       ref,
       label: ref,
       selected: ref === currentThinking,
+    })),
+    speedModes: ([
+      { ref: "standard", label: "Standard" },
+      { ref: "fast", label: "Fast" },
+    ] as const).map((entry) => ({
+      ...entry,
+      selected: entry.ref === currentSpeed,
     })),
   };
 }
@@ -554,6 +604,11 @@ export interface ApplyNativeThinkingSelectionResult {
   reset: boolean;
 }
 
+export interface ApplyNativeSpeedSelectionResult {
+  currentSpeed: "standard" | "fast";
+  speedSupported: boolean;
+}
+
 export async function applyNativeModelSelection(requestedModel: string, context: NativeCommandContext): Promise<ApplyNativeModelSelectionResult> {
   const requested = requestedModel.trim();
   if (context.userRole !== "admin") {
@@ -566,8 +621,12 @@ export async function applyNativeModelSelection(requestedModel: string, context:
 
   if (["default", "reset", "clear"].includes(requested.toLowerCase())) {
     setSessionModelOverride(context.sessionKey, null);
+    const currentModel = await resolveSessionSelectedModel(context.sessionKey);
+    if (!isOpenAiSpeedModel(currentModel)) {
+      setSessionFastMode(context.sessionKey, false);
+    }
     return {
-      currentModel: await resolveSessionSelectedModel(context.sessionKey),
+      currentModel,
       reset: true,
     };
   }
@@ -581,10 +640,39 @@ export async function applyNativeModelSelection(requestedModel: string, context:
     ? "⚠️ 설정 파일의 모델 목록에는 없는 이름입니다. 그래도 현재 채팅 override로 저장했습니다."
     : "";
   setSessionModelOverride(context.sessionKey, requested);
+  if (!isOpenAiSpeedModel(requested)) {
+    setSessionFastMode(context.sessionKey, false);
+  }
   return {
     currentModel: await resolveSessionSelectedModel(context.sessionKey),
     warning,
     reset: false,
+  };
+}
+
+export async function applyNativeSpeedSelection(requestedSpeed: string, context: NativeCommandContext): Promise<ApplyNativeSpeedSelectionResult> {
+  if (context.userRole !== "admin") {
+    throw new Error("❌ Speed 변경은 관리자만 할 수 있습니다. 현재 Speed 확인만 허용됩니다.");
+  }
+  if (!context.sessionKey?.trim()) {
+    throw new Error("❌ 현재 채팅의 세션 키를 확인할 수 없어 Speed를 변경할 수 없습니다.");
+  }
+
+  const currentModel = await resolveSessionSelectedModel(context.sessionKey);
+  const speedSupported = isOpenAiSpeedModel(currentModel);
+  if (!speedSupported) {
+    setSessionFastMode(context.sessionKey, false);
+    throw new Error("❌ Speed는 OpenAI 모델에서만 사용할 수 있습니다.");
+  }
+
+  const normalized = requestedSpeed.trim().toLowerCase();
+  if (normalized !== "standard" && normalized !== "fast") {
+    throw new Error("❌ Speed 값은 `standard|fast` 중 하나여야 합니다.");
+  }
+  setSessionFastMode(context.sessionKey, normalized === "fast");
+  return {
+    currentSpeed: resolveSessionSpeed(context.sessionKey),
+    speedSupported,
   };
 }
 

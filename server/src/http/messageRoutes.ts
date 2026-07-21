@@ -13,7 +13,7 @@ import type { RuntimeWorkspaceScope } from "../openclaw/OpenClawClient.js";
 import type { ChatRuntime } from "../runtime/ChatRuntime.js";
 import type { MessageJob } from "../runtime/MessageJob.js";
 import type { HistoryStore } from "../session/HistoryStore.js";
-import type { ConversationRecord, ConversationStore, JobStore, MessageStore } from "../session/SqliteChatStore.js";
+import type { ChatMessageRecord, ConversationRecord, ConversationStore, JobStore, MessageStore } from "../session/SqliteChatStore.js";
 import type { SessionStore } from "../session/SessionStore.js";
 import type { AuthContext } from "./authRoutes.js";
 
@@ -28,7 +28,7 @@ export interface MessageRouteDeps {
   sendJson(response: ServerResponse, statusCode: number, body: unknown): void;
   readJsonBody(request: IncomingMessage): Promise<unknown>;
   sessionIdFromRequest(request: IncomingMessage): string;
-  persistConversationUserMessage(conversation: ConversationRecord, payload: MessageRequestDto): Promise<void>;
+  persistConversationUserMessage(conversation: ConversationRecord, payload: MessageRequestDto): Promise<ChatMessageRecord | null>;
   persistUserHistory(sessionId: string, payload: MessageRequestDto): Promise<void>;
   enqueueMessageJob(job: MessageJob, headers: IncomingMessage["headers"], payload: MessageRequestDto): void;
   registerJob(job: MessageJob): void;
@@ -155,9 +155,10 @@ export async function handleMessageRoute(
 
     const sessionId = conversation?.id ?? deps.sessionIdFromRequest(request);
     const runtimeWorkspace = auth && auth.user.role !== "admin" && deps.workspaceScopeForAuth ? await deps.workspaceScopeForAuth(auth) : undefined;
-    if (conversation) {
-      await deps.persistConversationUserMessage(conversation, payload);
-    } else {
+    const persistedUserMessage = conversation
+      ? await deps.persistConversationUserMessage(conversation, payload)
+      : null;
+    if (!conversation) {
       await deps.persistUserHistory(sessionId, payload);
     }
 
@@ -214,6 +215,9 @@ export async function handleMessageRoute(
     deps.registerJob(job);
     if (conversation) {
       deps.conversationStore.createJob({ id: job.id, conversationId: conversation.id, state: "queued", now });
+      if (persistedUserMessage) {
+        deps.conversationStore.updateMessage(persistedUserMessage.id, { jobId: job.id });
+      }
     }
     if (deps.shouldPersistMessage(payload.message)) {
       if (conversation) {
