@@ -385,6 +385,38 @@ test("sends SVG image attachments as text instead of image_url parts", async () 
   }
 });
 
+test("includes XML attachment content as text in Gateway requests", async () => {
+  const requests: Array<{ body: Record<string, unknown> }> = [];
+  const server = await withServer(async (req, res) => {
+    requests.push({ body: await readJson(req) });
+    res.writeHead(200, { "content-type": "text/event-stream; charset=utf-8" });
+    res.end('data: {"choices":[{"delta":{"content":"ok"}}]}\n\ndata: [DONE]\n\n');
+  });
+
+  try {
+    const client = new GatewayOpenAiOpenClawClient(server.baseUrl, undefined, "openclaw-test", 5_000);
+    await client.sendMessage({
+      sessionId: "session-xml-test",
+      message: "analyze this",
+      attachments: [
+        {
+          type: "file",
+          name: "document.xml",
+          mime_type: "application/xml",
+          content_base64: Buffer.from("<root><value>42</value></root>").toString("base64"),
+        },
+      ],
+    });
+
+    const messages = requests[0]?.body.messages as Array<{ content: unknown }>;
+    assert.equal(typeof messages[0]?.content, "string");
+    assert.match(messages[0]?.content as string, /document\.xml \(application\/xml, file\)/);
+    assert.match(messages[0]?.content as string, /<root><value>42<\/value><\/root>/);
+  } finally {
+    await server.close();
+  }
+});
+
 test("passes runtime workspace metadata to Gateway requests", async () => {
   const requests: Array<{ headers: IncomingMessage["headers"]; body: Record<string, unknown> }> = [];
   const server = await withServer(async (req, res) => {

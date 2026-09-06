@@ -37,3 +37,20 @@ test("PWA attachment selection rejects an eleventh file", () => {
     /첨부 파일은 최대 10개까지 가능합니다/,
   );
 });
+
+test("PWA attachment selection accepts XML MIME types and .xml extension fallback", () => {
+  const xmlFiles = [
+    { name: "document.xml", type: "application/xml", size: 12 },
+    { name: "legacy.xml", type: "text/xml", size: 12 },
+    { name: "detected-by-extension.xml", type: "", size: 12 },
+  ];
+
+  const selected = attachmentInput.addAttachmentFilesToSelection(
+    [],
+    xmlFiles,
+    { maxAttachments: attachments.MAX_ATTACHMENTS },
+  );
+
+  assert.equal(selected.length, 3);
+  assert.equal(attachments.inferAttachmentMimeType("detected-by-extension.xml", ""), "application/xml");
+});

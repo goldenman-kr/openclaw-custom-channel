@@ -310,9 +310,22 @@ export class GatewayOpenAiOpenClawClient implements OpenClawClient {
   }
 
   private extractTextAttachment(attachment: MessageAttachment): string | null {
-    const textMimeTypes = new Set(["text/plain", "text/markdown", "text/csv", "application/csv", "image/svg+xml"]);
+    const textMimeTypes = new Set([
+      "text/plain",
+      "text/markdown",
+      "text/csv",
+      "application/csv",
+      "application/xml",
+      "text/xml",
+      "image/svg+xml",
+    ]);
     const lowerName = attachment.name.toLowerCase();
-    const looksText = textMimeTypes.has(attachment.mime_type) || lowerName.endsWith(".txt") || lowerName.endsWith(".md") || lowerName.endsWith(".csv") || lowerName.endsWith(".svg");
+    const looksText = textMimeTypes.has(attachment.mime_type)
+      || lowerName.endsWith(".txt")
+      || lowerName.endsWith(".md")
+      || lowerName.endsWith(".csv")
+      || lowerName.endsWith(".xml")
+      || lowerName.endsWith(".svg");
     if (!looksText || !attachment.content_base64) {
       return null;
     }

@@ -799,6 +799,8 @@ Request rules:
 - Allowed file MIME types:
   - `application/pdf`
   - `text/plain`
+  - `application/xml`
+  - `text/xml`
   - `application/zip`
 
 If any attachment violates constraints, the server returns validation error and does not partially process the request.
