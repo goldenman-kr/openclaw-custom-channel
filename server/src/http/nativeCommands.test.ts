@@ -28,8 +28,14 @@ writeFileSync(process.env.OPENCLAW_CONFIG_PATH, JSON.stringify({
   },
   models: {
     providers: {
-      "openai-codex": { models: [{ id: "gpt-5.5" }, { id: "gpt-5.4" }] },
-      llamacpp: { models: [{ id: "Qwen3.6-27B-MTP" }] },
+      "openai-codex": {
+        baseUrl: "https://chatgpt.com/backend-api/codex",
+        models: [{ id: "gpt-5.5", name: "GPT-5.5" }, { id: "gpt-5.4", name: "GPT-5.4" }],
+      },
+      llamacpp: {
+        baseUrl: "http://127.0.0.1:18080/v1",
+        models: [{ id: "Qwen3.6-27B-MTP", name: "Qwen3.6-27B-MTP" }],
+      },
     },
   },
 }, null, 2));
@@ -40,7 +46,7 @@ writeFileSync(process.env.OPENCLAW_SESSION_STORE_PATH, JSON.stringify({
   },
 }, null, 2));
 
-const { executeNativeCommand, getNativeModelMenu, applyNativeModelSelection, applyNativeSpeedSelection, applyNativeThinkingSelection, isOpenAiSpeedModel } = await import("./nativeCommands.js");
+const { executeNativeCommand, getNativeModelMenu, applyNativeModelSelection, applyNativeSpeedSelection, applyNativeThinkingSelection, isOpenAiSpeedModel, resolveModelThinkingOptions } = await import("./nativeCommands.js");
 const { ensureSessionEntry, ensureSessionStandardSpeed, getSessionFastMode, getSessionThinkingOverride, setSessionFastMode, setSessionThinkingOverride } = await import("../openclaw/modelOverride.js");
 
 test("/model changes are admin-only", async () => {
@@ -62,10 +68,29 @@ test("model menu hides provider in labels and marks current selection", async ()
   assert.equal(menu.canChange, true);
   assert.deepEqual(menu.models.map((entry) => entry.label), ["gpt-5.4", "gpt-5.5", "gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol"]);
   assert.equal(menu.models.find((entry) => entry.ref === "openai-codex/gpt-5.5")?.selected, true);
-  assert.deepEqual(menu.thinkingLevels.map((entry) => entry.ref), ["off", "low", "medium", "high", "xhigh", "max", "ultra"]);
+  assert.deepEqual(menu.thinkingLevels.map((entry) => entry.ref), ["off", "minimal", "low", "medium", "high", "xhigh"]);
   assert.equal(menu.thinkingLevels.find((entry) => entry.ref === "medium")?.selected, true);
   assert.deepEqual(menu.speedModes.map((entry) => entry.ref), ["standard", "fast"]);
   assert.equal(menu.speedModes.find((entry) => entry.ref === "standard")?.selected, true);
+});
+
+test("think level menu follows the selected model's OpenClaw support policy", async () => {
+  assert.deepEqual(
+    (await resolveModelThinkingOptions("openai/gpt-5.6-luna")).map((entry) => entry.ref),
+    ["off", "minimal", "low", "medium", "high", "xhigh", "max"],
+  );
+  assert.deepEqual(
+    (await resolveModelThinkingOptions("openai/gpt-5.6-sol")).map((entry) => entry.ref),
+    ["off", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"],
+  );
+  assert.deepEqual(
+    (await resolveModelThinkingOptions("anthropic/claude-opus-4-8")).map((entry) => entry.ref),
+    ["off", "minimal", "low", "medium", "adaptive", "high", "xhigh", "max"],
+  );
+  assert.deepEqual(
+    (await resolveModelThinkingOptions("anthropic/claude-sonnet-4-6")).map((entry) => entry.ref),
+    ["off", "minimal", "low", "medium", "adaptive", "high", "max"],
+  );
 });
 
 test("OpenAI and OpenAI Codex models support Speed while local models do not", () => {

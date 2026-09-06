@@ -392,6 +392,7 @@ interface OpenClawConfigModel {
   id?: string;
   name?: string;
   label?: string;
+  agentRuntime?: { id?: string };
 }
 
 interface OpenClawConfigProvider {
@@ -403,7 +404,7 @@ interface OpenClawConfig {
   model?: { primary?: string; fallbacks?: string[] };
   agents?: {
     defaults?: {
-      models?: Record<string, unknown>;
+      models?: Record<string, { agentRuntime?: { id?: string } }>;
       model?: { primary?: string; fallbacks?: string[] };
     };
   };
@@ -509,8 +510,72 @@ export interface NativeModelMenuState {
   speedModes: NativeSpeedMenuEntry[];
 }
 
-const THINKING_LEVELS = ["off", "low", "medium", "high", "xhigh", "max", "ultra"] as const;
 const ACCEPTED_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "adaptive", "max", "ultra"] as const;
+
+interface OpenClawThinkingPolicy {
+  levels: Array<{ id: string; label: string }>;
+  defaultLevel?: string;
+}
+
+interface OpenClawPluginRuntimeModule {
+  createPluginRuntime?: () => {
+    agent?: {
+      resolveThinkingPolicy?: (params: { provider: string; model: string; agentRuntime?: string }) => OpenClawThinkingPolicy;
+    };
+  };
+}
+
+const FALLBACK_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high"] as const;
+let openClawPluginRuntimePromise: Promise<OpenClawPluginRuntimeModule | null> | null = null;
+let openClawThinkingPolicyResolver: ((params: { provider: string; model: string; agentRuntime?: string }) => OpenClawThinkingPolicy) | null | undefined;
+
+async function importOpenClawPluginRuntime(): Promise<OpenClawPluginRuntimeModule | null> {
+  openClawPluginRuntimePromise ??= import(pathToFileURL(join(openClawDistDir(), "plugins/runtime/index.js")).href)
+    .then((module) => module as OpenClawPluginRuntimeModule)
+    .catch(() => null);
+  return await openClawPluginRuntimePromise;
+}
+
+function splitModelRef(modelRef: string): { provider: string; model: string } {
+  const slash = modelRef.indexOf("/");
+  const provider = slash >= 0 ? modelRef.slice(0, slash) : "";
+  return {
+    provider: provider === "openai-codex" ? "openai" : provider,
+    model: slash >= 0 ? modelRef.slice(slash + 1) : modelRef,
+  };
+}
+
+function configuredAgentRuntime(config: OpenClawConfig, modelRef: string): string | undefined {
+  const direct = config.agents?.defaults?.models?.[modelRef]?.agentRuntime?.id?.trim();
+  if (direct) return direct;
+  const { provider, model } = splitModelRef(modelRef);
+  return config.models?.providers?.[provider]?.models?.find((entry) => entry.id === model)?.agentRuntime?.id?.trim();
+}
+
+export async function resolveModelThinkingOptions(modelRef: string): Promise<NativeThinkingMenuEntry[]> {
+  const config = await loadOpenClawConfig().catch(() => ({} as OpenClawConfig));
+  const runtimeModule = await importOpenClawPluginRuntime();
+  if (openClawThinkingPolicyResolver === undefined) {
+    openClawThinkingPolicyResolver = runtimeModule?.createPluginRuntime?.().agent?.resolveThinkingPolicy ?? null;
+  }
+  const { provider, model } = splitModelRef(modelRef);
+  let policy: OpenClawThinkingPolicy | undefined;
+  try {
+    policy = openClawThinkingPolicyResolver?.({
+      provider,
+      model,
+      agentRuntime: configuredAgentRuntime(config, modelRef),
+    });
+  } catch {
+    policy = undefined;
+  }
+  const supported = policy?.levels
+    .filter((entry) => (ACCEPTED_THINKING_LEVELS as readonly string[]).includes(entry.id))
+    .map((entry) => ({ ref: entry.id, label: entry.label, selected: false }));
+  return supported?.length
+    ? supported
+    : FALLBACK_THINKING_LEVELS.map((ref) => ({ ref, label: ref, selected: false }));
+}
 
 function modelLabel(modelRef: string): string {
   const slash = modelRef.indexOf("/");
@@ -529,6 +594,7 @@ function resolveSessionSpeed(sessionKey?: string): "standard" | "fast" {
 export async function getNativeModelMenu(context: NativeCommandContext): Promise<NativeModelMenuState> {
   const currentModel = await resolveSessionSelectedModel(context.sessionKey);
   const currentThinking = resolveSessionThinkingLevel(context.sessionKey);
+  const thinkingLevels = await resolveModelThinkingOptions(currentModel);
   if (context.sessionKey?.trim()) {
     ensureSessionStandardSpeed(context.sessionKey);
   }
@@ -548,10 +614,9 @@ export async function getNativeModelMenu(context: NativeCommandContext): Promise
       label: modelLabel(ref),
       selected: ref === currentModel,
     })),
-    thinkingLevels: THINKING_LEVELS.map((ref) => ({
-      ref,
-      label: ref,
-      selected: ref === currentThinking,
+    thinkingLevels: thinkingLevels.map((entry) => ({
+      ...entry,
+      selected: entry.ref === currentThinking,
     })),
     speedModes: ([
       { ref: "standard", label: "Standard" },
