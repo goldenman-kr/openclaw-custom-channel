@@ -33,23 +33,23 @@ import { getCurrentLocationMetadata } from './modules/location.js';
 import { messageTextWithoutAttachmentPreview, renderedHistorySignature } from './modules/history-render-signature.js';
 import { sendMessage as sendMessageToApi } from './modules/message-api.js';
 import { isPendingHistoryMessage, isPlaceholderPendingText, isRunningJobHistoryMessage, pendingJobPlaceholdersAfterJobMessages, shouldRerenderHistory as shouldRerenderHistorySnapshot } from './modules/history-state.js';
-import { cancelJobById, deleteQueuedJobById, fetchJobById, isAlreadyFinishedJobError, isJobResolvedInHistory as isJobResolvedInHistoryFromApi, waitForJobPolling } from './modules/job-api.js?v=pwa-client-2026-07-21-speed-mode-008';
-import { waitForJobEventStream } from './modules/job-events.js?v=pwa-client-2026-07-21-speed-mode-008';
+import { cancelJobById, deleteQueuedJobById, fetchJobById, isAlreadyFinishedJobError, isJobResolvedInHistory as isJobResolvedInHistoryFromApi, waitForJobPolling } from './modules/job-api.js?v=pwa-client-2026-07-29-search-above-list-010';
+import { waitForJobEventStream } from './modules/job-events.js?v=pwa-client-2026-07-29-search-above-list-010';
 import { delay, isTerminalJobState, parseSseBlock } from './modules/job-utils.js';
 import { appendMarkdown as appendMarkdownView } from './modules/markdown-renderer.js';
 import { canonicalMediaRefKey, extractMediaRefs, mediaRefsFromHistoryAttachments } from './modules/media.js';
 import { createMediaViewerController } from './modules/media-viewer-controller.js';
 import { appendMediaRef as appendMediaRefView } from './modules/media-ref-renderer.js';
 import { collectBlobUrlsInUse, pruneMediaUrlCache as pruneMediaUrlCacheEntries, revokeCachedMediaUrl as revokeCachedMediaUrlEntry } from './modules/media-url-cache.js';
-import { appendCancelJobAction as appendCancelJobActionView, appendCopyAction as appendCopyActionView, appendDeleteQueuedMessageAction as appendDeleteQueuedMessageActionView, appendRetryAction as appendRetryActionView } from './modules/message-action-renderer.js?v=pwa-client-2026-07-21-speed-mode-008';
+import { appendCancelJobAction as appendCancelJobActionView, appendCopyAction as appendCopyActionView, appendDeleteQueuedMessageAction as appendDeleteQueuedMessageActionView, appendRetryAction as appendRetryActionView } from './modules/message-action-renderer.js?v=pwa-client-2026-07-29-search-above-list-010';
 import { appendAttachmentPreview as appendAttachmentPreviewView, createMessageNode } from './modules/message-dom.js';
 import { mergeMediaRefs } from './modules/message-actions.js';
-import { createModelPickerController } from './modules/model-picker-controller.js?v=pwa-client-2026-07-21-speed-mode-008';
-import { renderModelPicker as renderModelPickerView, updateModelPickerButtonState as updateModelPickerButtonStateView } from './modules/model-picker.js?v=pwa-client-2026-07-21-speed-mode-008';
+import { createModelPickerController } from './modules/model-picker-controller.js?v=pwa-client-2026-07-29-search-above-list-010';
+import { renderModelPicker as renderModelPickerView, updateModelPickerButtonState as updateModelPickerButtonStateView } from './modules/model-picker.js?v=pwa-client-2026-07-29-search-above-list-010';
 import { closeDrawer, drawerSwipeGesture, isDesktopLayout as isDesktopViewport, isDrawerOpen, openDrawer, shouldIgnoreDrawerSwipe as shouldIgnoreDrawerSwipeTarget, toggleDesktopSidebar } from './modules/mobile-drawer.js';
 import { getPushNotificationSupportState, notificationsSupported, notifyReplyReady as notifyReplyReadyBrowser, requestNotificationPermission, subscribeToPushNotifications, unsubscribeFromPushNotifications, updateNotificationButton as updateNotificationButtonView } from './modules/notifications.js';
 import { clearConversationEventRefreshTimer, closeConversationEventSource, conversationEventsSupported, createConversationEventSource } from './modules/conversation-events.js';
-import { conversationFinalNotificationVersion } from './modules/conversation-notifications.js?v=pwa-client-2026-07-21-speed-mode-008';
+import { conversationFinalNotificationVersion } from './modules/conversation-notifications.js?v=pwa-client-2026-07-29-search-above-list-010';
 import { conversationIdFromPath, conversationUrl, syncConversationUrl } from './modules/navigation.js';
 import { startIntervalIfNeeded, stopIntervalIfNeeded, syncVisiblePagePolling } from './modules/page-lifecycle.js';
 import { createPendingJobController } from './modules/pending-job-controller.js';
@@ -78,7 +78,7 @@ import './plugins/wallet-transaction-card.js';
 
 const PENDING_JOB_KEY = 'openclaw-web-channel-pending-job-v1';
 const PUSH_DEVICE_ID_KEY = 'openclaw-web-channel-push-device-id-v1';
-const CLIENT_ASSET_VERSION = 'pwa-client-2026-07-21-speed-mode-008';
+const CLIENT_ASSET_VERSION = 'pwa-client-2026-07-29-search-above-list-010';
 const CLIENT_API_VERSION = 1;
 const elements = {
   loginScreen: document.querySelector('#loginScreen'),
@@ -2782,6 +2782,6 @@ renderModelPicker();
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-07-21-speed-mode-008').catch(() => {});
+    navigator.serviceWorker.register('/sw.js?v=pwa-client-2026-07-29-search-above-list-010').catch(() => {});
   });
 }
